@@ -167,9 +167,9 @@ insane_preempt :: proc() -> norn.Hand {
 	return hand_of({R2, R3}, {R2, R3}, {R2}, {A, K, Q, J, T, R9, R8, R7})
 }
 
-// 5-3-3-2, AKQ in three suits plus a fourth ace, 29 hcp, ~2 losers — a powerhouse.
+// 5-3-3-2, solid AKQ(JT) across the board, 0 half-losers — a powerhouse / 4NT opener.
 powerhouse :: proc() -> norn.Hand {
-	return hand_of({A, K, Q, R5, R6}, {A, K, Q}, {A, K}, {A, R3, R4})
+	return hand_of({A, K, Q, J, T}, {A, K, Q}, {A, K, Q}, {A, K})
 }
 
 // 4-3-3-3, 13 hcp, balanced — a weak 1C / balanced 1NT response.

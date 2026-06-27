@@ -11,3 +11,7 @@ trace.spall
 .agents
 .claude
 .codegraph
+
+# parity harness scratch outputs
+parity_*.txt
+probe_*.txt

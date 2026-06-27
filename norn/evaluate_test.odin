@@ -157,12 +157,12 @@ test_is_nt5cM_shape :: proc(t: ^testing.T) {
 
 @(test)
 test_losers :: proc(t: ^testing.T) {
-	// spades AKQJ = 0, three low tripletons = 3 each.
-	testing.expect_value(t, losers(balanced_4333()), 9)
-	// spades AKQJT = 0, hearts AKQJ = 0, two low doubletons = 2 each.
-	testing.expect_value(t, losers(two_suiter_5422()), 4)
-	// spades AKQ.. = 0, three low doubletons = 2 each.
-	testing.expect_value(t, losers(unbalanced_7222()), 6)
+	// Half-losers (deal's units). spades AKQJ = 0, three low tripletons = 6 each.
+	testing.expect_value(t, losers(balanced_4333()), 18)
+	// spades AKQJT = 0, hearts AKQJ = 0, two low doubletons = 4 each.
+	testing.expect_value(t, losers(two_suiter_5422()), 8)
+	// spades AKQ.. = 0, three low doubletons = 4 each.
+	testing.expect_value(t, losers(unbalanced_7222()), 12)
 }
 
 @(test)

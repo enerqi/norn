@@ -25,6 +25,7 @@ lint *args:
 	odin check conditions -vet -strict-style -no-entry-point {{args}}
 	odin check {{cli_pkg}} -vet -strict-style {{args}}
 	odin check cmd/bench -vet -strict-style {{args}}
+	odin check cmd/parity -vet -strict-style {{args}}
 	odin check examples/strong-1c -vet -strict-style {{args}}
 	odin check examples/1major-gf-support -vet -strict-style {{args}}
 
