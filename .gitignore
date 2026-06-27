@@ -1,0 +1,8 @@
+# Build artifacts (Odin output tree, like Cargo's target/)
+target/
+
+# Compiled executables
+*.exe
+
+# Spall profiler trace (emitted when built with -define:SPALL_ENABLE=true)
+trace.spall
