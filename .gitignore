@@ -6,3 +6,8 @@ target/
 
 # Spall profiler trace (emitted when built with -define:SPALL_ENABLE=true)
 trace.spall
+
+# agents
+.agents
+.claude
+.codegraph

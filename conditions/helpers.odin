@@ -12,10 +12,10 @@ package conditions
 import "../norn"
 
 // `5CM_nt $hand low high`: a notrump shape (4-3-3-3 / 4-4-3-2 / 5-3-3-2) with hcp in [low, high].
-// The shape test itself lives in `norn` (`is_nt5cm_shape`); pairing it with an hcp band is policy.
+// The shape test itself lives in `norn` (`is_nt5cM_shape`); pairing it with an hcp band is policy.
 @(private)
-nt5cm :: proc(hand: norn.Hand, low, high: int) -> bool {
-	if !norn.is_nt5cm_shape(hand) {
+nt5cM :: proc(hand: norn.Hand, low, high: int) -> bool {
+	if !norn.is_nt5cM_shape(hand) {
 		return false
 	}
 	points := norn.hcp(hand)

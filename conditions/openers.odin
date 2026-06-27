@@ -14,7 +14,7 @@ import "../norn"
 // A weak (13-15) balanced 1C opening — the limited natural side of the artificial 1C. (deal-utils
 // `is_weak_1c`.)
 is_weak_1c :: proc(hand: norn.Hand) -> bool {
-	return nt5cm(hand, 13, 15)
+	return nt5cM(hand, 13, 15)
 }
 
 // Any artificial 1C opening: the weak balanced one or the strong one. (deal-utils
@@ -36,8 +36,8 @@ is_1d_unbal_opener :: proc(hand: norn.Hand) -> bool {
 	if is_2c_opener(hand) || is_2d_intermediate_opener(hand) {
 		return false
 	}
-	ds := norn.suit_length(hand, .Diamonds)
-	if ds < 4 || norn.suit_length(hand, .Spades) >= ds || norn.suit_length(hand, .Hearts) >= ds {
+	ds := norn.diamond_length(hand)
+	if ds < 4 || norn.spade_length(hand) >= ds || norn.heart_length(hand) >= ds {
 		return false
 	}
 	return true
@@ -52,7 +52,7 @@ is_1d_opener :: proc(hand: norn.Hand) -> bool {
 	if is_1major_opener(hand) {
 		return false
 	}
-	return nt5cm(hand, 11, 13)
+	return nt5cM(hand, 11, 13)
 }
 
 // A limited (11-15) 1-major opening: a 5+ card major as longest suit, not a 13-15 balanced (1C)
@@ -62,16 +62,16 @@ is_1major_opener :: proc(hand: norn.Hand) -> bool {
 	if points < 11 || points > 15 {
 		return false
 	}
-	hs := norn.suit_length(hand, .Hearts)
-	ss := norn.suit_length(hand, .Spades)
+	hs := norn.heart_length(hand)
+	ss := norn.spade_length(hand)
 	if hs < 5 && ss < 5 {
 		return false
 	}
-	if nt5cm(hand, 13, 15) {
+	if nt5cM(hand, 13, 15) {
 		return false
 	}
-	cs := norn.suit_length(hand, .Clubs)
-	ds := norn.suit_length(hand, .Diamonds)
+	cs := norn.club_length(hand)
+	ds := norn.diamond_length(hand)
 	if cs > hs && cs > ss {
 		return false
 	}
@@ -91,16 +91,16 @@ is_light_1major_opener :: proc(hand: norn.Hand) -> bool {
 	if points < 9 || points > 11 {
 		return false
 	}
-	hs := norn.suit_length(hand, .Hearts)
-	ss := norn.suit_length(hand, .Spades)
+	hs := norn.heart_length(hand)
+	ss := norn.spade_length(hand)
 	if hs < 5 && ss < 5 {
 		return false
 	}
-	if nt5cm(hand, 13, 15) {
+	if nt5cM(hand, 13, 15) {
 		return false
 	}
-	cs := norn.suit_length(hand, .Clubs)
-	ds := norn.suit_length(hand, .Diamonds)
+	cs := norn.club_length(hand)
+	ds := norn.diamond_length(hand)
 	if cs > hs && cs > ss {
 		return false
 	}
@@ -115,12 +115,12 @@ is_light_1major_opener :: proc(hand: norn.Hand) -> bool {
 
 // A 16-18 balanced 1NT opening. (deal-utils `is_1nt_opener`.)
 is_1nt_opener :: proc(hand: norn.Hand) -> bool {
-	return nt5cm(hand, 16, 18)
+	return nt5cM(hand, 16, 18)
 }
 
 // A 19-20 balanced 2NT opening. (deal-utils `is_2nt_opener`.)
 is_2nt_opener :: proc(hand: norn.Hand) -> bool {
-	return nt5cm(hand, 19, 20)
+	return nt5cM(hand, 19, 20)
 }
 
 // The "Marmic" 4-4-4-1 shape. (deal-utils `is_marmic`.)
@@ -132,12 +132,9 @@ is_marmic :: proc(hand: norn.Hand) -> bool {
 // other 6+ suit. (deal-utils `is_2c_opener`.)
 is_2c_opener :: proc(hand: norn.Hand) -> bool {
 	points := norn.hcp(hand)
-	clublen := norn.suit_length(hand, .Clubs)
+	clublen := norn.club_length(hand)
 	min_7carder := points == 10 && clublen == 7
-	long_other :=
-		norn.suit_length(hand, .Spades) > 5 ||
-		norn.suit_length(hand, .Hearts) > 5 ||
-		norn.suit_length(hand, .Diamonds) > 5
+	long_other := norn.spade_length(hand) > 5 || norn.heart_length(hand) > 5 || norn.diamond_length(hand) > 5
 	if !long_other && (min_7carder || (clublen >= 6 && points >= 11)) && points <= 15 {
 		return true
 	}
@@ -169,10 +166,10 @@ is_2d_intermediate_opener :: proc(hand: norn.Hand) -> bool {
 	if points < 9 || points > 15 {
 		return false
 	}
-	cs := norn.suit_length(hand, .Clubs)
-	ds := norn.suit_length(hand, .Diamonds)
-	hs := norn.suit_length(hand, .Hearts)
-	ss := norn.suit_length(hand, .Spades)
+	cs := norn.club_length(hand)
+	ds := norn.diamond_length(hand)
+	hs := norn.heart_length(hand)
+	ss := norn.spade_length(hand)
 	if ds < 6 || ds < cs || hs > 4 || ss > 4 {
 		return false
 	}
@@ -222,11 +219,11 @@ opens_std_1minor_prepared :: proc(hand: norn.Hand) -> bool {
 	if points < 11 || points > 21 {
 		return false
 	}
-	cs := norn.suit_length(hand, .Clubs)
-	ds := norn.suit_length(hand, .Diamonds)
-	hs := norn.suit_length(hand, .Hearts)
-	ss := norn.suit_length(hand, .Spades)
-	if nt5cm(hand, 15, 17) {
+	cs := norn.club_length(hand)
+	ds := norn.diamond_length(hand)
+	hs := norn.heart_length(hand)
+	ss := norn.spade_length(hand)
+	if nt5cM(hand, 15, 17) {
 		return false
 	}
 	if is_flattish(hand) && points >= 20 {
@@ -268,8 +265,8 @@ is_standard_3cd_7carder :: proc(hand: norn.Hand) -> bool {
 	if norn.controls(hand) > 3 {
 		return false
 	}
-	cs := norn.suit_length(hand, .Clubs)
-	ds := norn.suit_length(hand, .Diamonds)
+	cs := norn.club_length(hand)
+	ds := norn.diamond_length(hand)
 	// Tcl precedence (&& over ||): a club 7-bagger with short diamonds, OR a diamond 7-bagger AND
 	// short clubs. The asymmetry is faithfully ported from the original.
 	if (cs == 7 && norn.top_count(hand, .Clubs, 4) <= 2 && ds < 4) ||

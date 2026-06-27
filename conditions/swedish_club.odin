@@ -47,14 +47,14 @@ is_1d_swedish_club_resp :: proc(hand: norn.Hand) -> bool {
 		return false
 	}
 	// Not if worth a 1M response.
-	ss := norn.suit_length(hand, .Spades)
-	hs := norn.suit_length(hand, .Hearts)
+	ss := norn.spade_length(hand)
+	hs := norn.heart_length(hand)
 	if (ss >= 4 || hs >= 4) && points >= 8 {
 		return false
 	}
 	// Not if worth a minor response.
-	cs := norn.suit_length(hand, .Clubs)
-	ds := norn.suit_length(hand, .Diamonds)
+	cs := norn.club_length(hand)
+	ds := norn.diamond_length(hand)
 	if (cs >= 6 || ds >= 6) && points >= 8 {
 		return false
 	}
@@ -138,10 +138,10 @@ is_3n_swedish_club_resp :: proc(hand: norn.Hand) -> bool {
 		return false
 	}
 	return(
-		(is_akqj(hand, .Spades) && norn.suit_length(hand, .Spades) == 6) ||
-		(is_akqj(hand, .Hearts) && norn.suit_length(hand, .Hearts) == 6) ||
-		(is_akqj(hand, .Diamonds) && norn.suit_length(hand, .Diamonds) == 6) ||
-		(is_akqj(hand, .Clubs) && norn.suit_length(hand, .Clubs) == 6) \
+		(is_akqj(hand, .Spades) && norn.spade_length(hand) == 6) ||
+		(is_akqj(hand, .Hearts) && norn.heart_length(hand) == 6) ||
+		(is_akqj(hand, .Diamonds) && norn.diamond_length(hand) == 6) ||
+		(is_akqj(hand, .Clubs) && norn.club_length(hand) == 6) \
 	)
 }
 
@@ -155,7 +155,7 @@ is_4cd_swedish_club_response :: proc(hand: norn.Hand) -> bool {
 	// A spade 8-bagger headed by AQJ or KQJ (missing one top honour), nothing else of note.
 	if norn.top_count(hand, .Spades, 4) != 4 &&
 	   (has_aqj(hand, .Spades) || has_kqj(hand, .Spades)) &&
-	   norn.suit_length(hand, .Spades) == 8 &&
+	   norn.spade_length(hand) == 8 &&
 	   norn.top_count(hand, .Hearts, 2) == 0 &&
 	   norn.top_count(hand, .Diamonds, 2) == 0 &&
 	   norn.top_count(hand, .Clubs, 2) == 0 {
@@ -163,7 +163,7 @@ is_4cd_swedish_club_response :: proc(hand: norn.Hand) -> bool {
 	}
 	if norn.top_count(hand, .Hearts, 4) != 4 &&
 	   (has_aqj(hand, .Hearts) || has_kqj(hand, .Hearts)) &&
-	   norn.suit_length(hand, .Hearts) == 8 &&
+	   norn.heart_length(hand) == 8 &&
 	   norn.top_count(hand, .Spades, 2) == 0 &&
 	   norn.top_count(hand, .Diamonds, 2) == 0 &&
 	   norn.top_count(hand, .Clubs, 2) == 0 {
@@ -179,8 +179,8 @@ is_4hs_swedish_club_response :: proc(hand: norn.Hand) -> bool {
 		return false
 	}
 	return(
-		(is_akqj(hand, .Spades) && norn.suit_length(hand, .Spades) == 7) ||
-		(is_akqj(hand, .Hearts) && norn.suit_length(hand, .Hearts) == 7) \
+		(is_akqj(hand, .Spades) && norn.spade_length(hand) == 7) ||
+		(is_akqj(hand, .Hearts) && norn.heart_length(hand) == 7) \
 	)
 }
 
@@ -209,7 +209,7 @@ is_possible_inverted_diamond_raise :: proc(hand: norn.Hand) -> bool {
 	if has_side_major(hand) {
 		return false
 	}
-	return norn.suit_length(hand, .Diamonds) >= 4
+	return norn.diamond_length(hand) >= 4
 }
 
 // A possible weak jump-shift response to 1D: sub-10 with a 6+ heart, spade or club suit. (deal-utils
@@ -218,11 +218,7 @@ is_possible_wjs_1d_response :: proc(hand: norn.Hand) -> bool {
 	if norn.hcp(hand) >= 10 {
 		return false
 	}
-	return(
-		norn.suit_length(hand, .Hearts) >= 6 ||
-		norn.suit_length(hand, .Spades) >= 6 ||
-		norn.suit_length(hand, .Clubs) >= 6 \
-	)
+	return norn.heart_length(hand) >= 6 || norn.spade_length(hand) >= 6 || norn.club_length(hand) >= 6
 }
 
 // A possible splinter response to 1D: 13+, 6+ diamonds with a side singleton. (deal-utils
@@ -231,14 +227,10 @@ is_possible_splinter_1d_response :: proc(hand: norn.Hand) -> bool {
 	if norn.hcp(hand) < 13 {
 		return false
 	}
-	if norn.suit_length(hand, .Diamonds) < 6 {
+	if norn.diamond_length(hand) < 6 {
 		return false
 	}
-	return(
-		norn.suit_length(hand, .Clubs) == 1 ||
-		norn.suit_length(hand, .Hearts) == 1 ||
-		norn.suit_length(hand, .Spades) == 1 \
-	)
+	return norn.club_length(hand) == 1 || norn.heart_length(hand) == 1 || norn.spade_length(hand) == 1
 }
 
 // A possible diamond-preempt response to 1D: at most 10 hcp with 6+ diamonds. (deal-utils
@@ -247,5 +239,5 @@ is_possible_diamond_preempt_1d_response :: proc(hand: norn.Hand) -> bool {
 	if norn.hcp(hand) > 10 {
 		return false
 	}
-	return norn.suit_length(hand, .Diamonds) >= 6
+	return norn.diamond_length(hand) >= 6
 }

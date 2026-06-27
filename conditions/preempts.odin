@@ -35,12 +35,10 @@ is_generic_weak2d :: proc(hand: norn.Hand) -> bool {
 	if points < 6 || points > 10 {
 		return false
 	}
-	if norn.suit_length(hand, .Spades) >= 4 || norn.suit_length(hand, .Hearts) >= 4 {
+	if norn.spade_length(hand) >= 4 || norn.heart_length(hand) >= 4 {
 		return false
 	}
-	if norn.suit_length(hand, .Diamonds) == 6 &&
-	   norn.suit_length(hand, .Clubs) <= 5 &&
-	   norn.top_count(hand, .Diamonds, 4) >= 1 {
+	if norn.diamond_length(hand) == 6 && norn.club_length(hand) <= 5 && norn.top_count(hand, .Diamonds, 4) >= 1 {
 		return true
 	}
 	return false
@@ -62,9 +60,9 @@ is_generic_5card_unbal_weak2 :: proc(hand: norn.Hand) -> bool {
 		   has_pattern(hand, 5, 5, 2, 1)) {
 		return false
 	}
-	ss := norn.suit_length(hand, .Spades)
-	hs := norn.suit_length(hand, .Hearts)
-	ds := norn.suit_length(hand, .Diamonds)
+	ss := norn.spade_length(hand)
+	hs := norn.heart_length(hand)
+	ds := norn.diamond_length(hand)
 	if ss >= 4 && hs >= 4 {
 		return false
 	}
@@ -91,12 +89,12 @@ is_weak2_5card_major :: proc(hand: norn.Hand) -> bool {
 		   has_pattern(hand, 5, 5, 2, 1)) {
 		return false
 	}
-	ss := norn.suit_length(hand, .Spades)
-	hs := norn.suit_length(hand, .Hearts)
+	ss := norn.spade_length(hand)
+	hs := norn.heart_length(hand)
 	if ss >= 4 && hs >= 4 {
 		return false
 	}
-	if norn.suit_length(hand, .Diamonds) > 5 || norn.suit_length(hand, .Clubs) > 5 {
+	if norn.diamond_length(hand) > 5 || norn.club_length(hand) > 5 {
 		return false
 	}
 	return (ss == 5 && norn.top_count(hand, .Spades, 4) >= 2) || (hs == 5 && norn.top_count(hand, .Hearts, 4) >= 2)
@@ -115,12 +113,12 @@ is_weak2_major :: proc(hand: norn.Hand) -> bool {
 	if points > 9 && (has_pattern(hand, 6, 5, 1, 1) || has_pattern(hand, 6, 5, 2, 0)) {
 		return false
 	}
-	ss := norn.suit_length(hand, .Spades)
-	hs := norn.suit_length(hand, .Hearts)
+	ss := norn.spade_length(hand)
+	hs := norn.heart_length(hand)
 	if ss >= 4 && hs >= 4 {
 		return false
 	}
-	if norn.suit_length(hand, .Diamonds) > 5 || norn.suit_length(hand, .Clubs) > 5 {
+	if norn.diamond_length(hand) > 5 || norn.club_length(hand) > 5 {
 		return false
 	}
 	return (ss == 6 && norn.top_count(hand, .Spades, 4) >= 1) || (hs == 6 && norn.top_count(hand, .Hearts, 4) >= 1)
@@ -144,12 +142,12 @@ is_semi_positive_weak_two_hearts :: proc(hand: norn.Hand) -> bool {
 	if points > 6 && (has_pattern(hand, 6, 5, 1, 1) || has_pattern(hand, 6, 5, 2, 0)) {
 		return false
 	}
-	ss := norn.suit_length(hand, .Spades)
-	hs := norn.suit_length(hand, .Hearts)
+	ss := norn.spade_length(hand)
+	hs := norn.heart_length(hand)
 	if ss >= 4 && hs >= 4 {
 		return false
 	}
-	if norn.suit_length(hand, .Diamonds) > 5 || norn.suit_length(hand, .Clubs) > 5 {
+	if norn.diamond_length(hand) > 5 || norn.club_length(hand) > 5 {
 		return false
 	}
 	return hs == 6 && norn.top_count(hand, .Hearts, 4) >= 1
@@ -161,7 +159,7 @@ is_semi_positive_majors_two_suiter :: proc(hand: norn.Hand) -> bool {
 	if !two_suiter(hand) {
 		return false
 	}
-	if norn.suit_length(hand, .Hearts) < 5 || norn.suit_length(hand, .Spades) < 5 {
+	if norn.heart_length(hand) < 5 || norn.spade_length(hand) < 5 {
 		return false
 	}
 	points := norn.hcp(hand)
@@ -180,7 +178,7 @@ is_gf_majors_two_suiter :: proc(hand: norn.Hand) -> bool {
 	if !two_suiter(hand) {
 		return false
 	}
-	if norn.suit_length(hand, .Hearts) < 5 || norn.suit_length(hand, .Spades) < 5 {
+	if norn.heart_length(hand) < 5 || norn.spade_length(hand) < 5 {
 		return false
 	}
 	points := norn.hcp(hand)
@@ -199,9 +197,9 @@ is_gf_hearts_minor_two_suiter :: proc(hand: norn.Hand) -> bool {
 	if !two_suiter(hand) {
 		return false
 	}
-	hs := norn.suit_length(hand, .Hearts)
-	cs := norn.suit_length(hand, .Clubs)
-	ds := norn.suit_length(hand, .Diamonds)
+	hs := norn.heart_length(hand)
+	cs := norn.club_length(hand)
+	ds := norn.diamond_length(hand)
 	if hs < 5 || (cs < 5 && ds < 5) {
 		return false
 	}
@@ -227,7 +225,7 @@ is_minors_2n_preempt :: proc(hand: norn.Hand) -> bool {
 		   has_pattern(hand, 5, 5, 2, 1)) {
 		return false
 	}
-	return norn.suit_length(hand, .Clubs) >= 5 && norn.suit_length(hand, .Diamonds) >= 5
+	return norn.club_length(hand) >= 5 && norn.diamond_length(hand) >= 5
 }
 
 // A shapely minor preempt: sub-opening, no side major, limited controls, a 7+ minor with a side
@@ -242,10 +240,10 @@ is_shapely_minor_preempt :: proc(hand: norn.Hand) -> bool {
 	if norn.controls(hand) > 4 {
 		return false
 	}
-	ss := norn.suit_length(hand, .Spades)
-	hs := norn.suit_length(hand, .Hearts)
-	ds := norn.suit_length(hand, .Diamonds)
-	cs := norn.suit_length(hand, .Clubs)
+	ss := norn.spade_length(hand)
+	hs := norn.heart_length(hand)
+	ds := norn.diamond_length(hand)
+	cs := norn.club_length(hand)
 	if cs >= 7 && (ss <= 1 || hs <= 1 || ds <= 1) {
 		return true
 	}
@@ -261,8 +259,8 @@ is_likely_3major_preempt :: proc(hand: norn.Hand) -> bool {
 	if norn.hcp(hand) > 10 {
 		return false
 	}
-	ss := norn.suit_length(hand, .Spades)
-	hs := norn.suit_length(hand, .Hearts)
+	ss := norn.spade_length(hand)
+	hs := norn.heart_length(hand)
 	return (ss >= 7 && hs < 4) || (hs >= 7 && ss < 4)
 }
 
@@ -322,7 +320,7 @@ is_weak_2DH :: proc(hand: norn.Hand) -> bool {
 	if points < 5 || points > 11 {
 		return false
 	}
-	return norn.suit_length(hand, .Hearts) >= 6 || norn.suit_length(hand, .Diamonds) >= 6
+	return norn.heart_length(hand) >= 6 || norn.diamond_length(hand) >= 6
 }
 
 // A weak major two-bid within an explicit point range, requiring 2+ honours in the 6-card major.
@@ -332,12 +330,12 @@ is_weak2_major_in_range :: proc(hand: norn.Hand, low, high: int) -> bool {
 	if points < low || points > high {
 		return false
 	}
-	ss := norn.suit_length(hand, .Spades)
-	hs := norn.suit_length(hand, .Hearts)
+	ss := norn.spade_length(hand)
+	hs := norn.heart_length(hand)
 	if ss >= 4 && hs >= 4 {
 		return false
 	}
-	if norn.suit_length(hand, .Diamonds) > 5 || norn.suit_length(hand, .Clubs) > 5 {
+	if norn.diamond_length(hand) > 5 || norn.club_length(hand) > 5 {
 		return false
 	}
 	return (ss == 6 && norn.top_count(hand, .Spades, 4) >= 2) || (hs == 6 && norn.top_count(hand, .Hearts, 4) >= 2)

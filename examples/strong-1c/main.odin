@@ -18,9 +18,12 @@ import "core:strings"
 import "../../conditions"
 import "../../norn"
 
-// The condition: North holds a strong, artificial 1C opening.
-north_opens_strong_1c :: proc(board: norn.Deal) -> bool {
-	return conditions.is_strong_1c(board[.North])
+north_opens_gf_strong_spades :: proc(board: norn.Deal) -> bool {
+	return(
+		conditions.is_strong_1c(board[.North]) &&
+		norn.hcp(board[.North]) >= 22 &&
+		norn.spade_length(board[.North]) >= 7 \
+	)
 }
 
 main :: proc() {
@@ -32,7 +35,7 @@ main :: proc() {
 	defer strings.builder_destroy(&builder)
 
 	// Keep 10 matching deals; cap attempts so an over-restrictive condition can't loop forever.
-	accepted, attempts := norn.generate_accepted(&builder, 10, .Line, north_opens_strong_1c, 1_000_000)
+	accepted, attempts := norn.generate_accepted(&builder, 10, .Line, north_opens_gf_strong_spades, 1_000_0000)
 	fmt.eprintfln("strong-1c: accepted %d of %d deals tried", accepted, attempts)
 
 	os.write_string(os.stdout, strings.to_string(builder))

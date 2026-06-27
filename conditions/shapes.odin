@@ -91,16 +91,16 @@ is_6_plus_other_11_or_more_card_two_suiter :: proc(hand: norn.Hand) -> bool {
 
 // Exactly four spades and four hearts. (deal-utils `majors_4_4`.)
 majors_4_4 :: proc(hand: norn.Hand) -> bool {
-	return norn.suit_length(hand, .Spades) == 4 && norn.suit_length(hand, .Hearts) == 4
+	return norn.spade_length(hand) == 4 && norn.heart_length(hand) == 4
 }
 
 // An unbalanced hand whose longest suit is a minor: not flattish, with a minor strictly longer than
 // both majors. (deal-utils `is_unbalanced_minor`.)
 is_unbalanced_minor :: proc(hand: norn.Hand) -> bool {
-	ss := norn.suit_length(hand, .Spades)
-	hs := norn.suit_length(hand, .Hearts)
-	ds := norn.suit_length(hand, .Diamonds)
-	cs := norn.suit_length(hand, .Clubs)
+	ss := norn.spade_length(hand)
+	hs := norn.heart_length(hand)
+	ds := norn.diamond_length(hand)
+	cs := norn.club_length(hand)
 	if is_flattish(hand) {
 		return false
 	}
@@ -109,43 +109,43 @@ is_unbalanced_minor :: proc(hand: norn.Hand) -> bool {
 
 // Nine+ cards in the two majors combined. (deal-utils `has_9_plus_majors`.)
 has_9_plus_majors :: proc(hand: norn.Hand) -> bool {
-	return norn.suit_length(hand, .Spades) + norn.suit_length(hand, .Hearts) >= 9
+	return norn.spade_length(hand) + norn.heart_length(hand) >= 9
 }
 
 // A four-card-or-longer major on the side. (deal-utils `has_side_major`.)
 has_side_major :: proc(hand: norn.Hand) -> bool {
-	return norn.suit_length(hand, .Spades) >= 4 || norn.suit_length(hand, .Hearts) >= 4
+	return norn.spade_length(hand) >= 4 || norn.heart_length(hand) >= 4
 }
 
 // Does the hand hold an n-card-or-longer suit anywhere? (deal-utils `has_n_plus_carder`.)
 has_n_plus_carder :: proc(hand: norn.Hand, n: int) -> bool {
 	return(
-		norn.suit_length(hand, .Spades) >= n ||
-		norn.suit_length(hand, .Hearts) >= n ||
-		norn.suit_length(hand, .Diamonds) >= n ||
-		norn.suit_length(hand, .Clubs) >= n \
+		norn.spade_length(hand) >= n ||
+		norn.heart_length(hand) >= n ||
+		norn.diamond_length(hand) >= n ||
+		norn.club_length(hand) >= n \
 	)
 }
 
 // Both minors: 9+ cards combined with at least four of each. (deal-utils `both_minors`.)
 both_minors :: proc(hand: norn.Hand) -> bool {
-	cs := norn.suit_length(hand, .Clubs)
-	ds := norn.suit_length(hand, .Diamonds)
+	cs := norn.club_length(hand)
+	ds := norn.diamond_length(hand)
 	return cs + ds >= 9 && cs >= 4 && ds >= 4
 }
 
 // Shortness (singleton or void) in at least one major. (deal-utils `singleton_or_void_major`.)
 singleton_or_void_major :: proc(hand: norn.Hand) -> bool {
-	return norn.suit_length(hand, .Spades) <= 1 || norn.suit_length(hand, .Hearts) <= 1
+	return norn.spade_length(hand) <= 1 || norn.heart_length(hand) <= 1
 }
 
 // Shortness in any suit at all. (deal-utils `any_singleton_or_void`.)
 any_singleton_or_void :: proc(hand: norn.Hand) -> bool {
 	return(
-		norn.suit_length(hand, .Spades) <= 1 ||
-		norn.suit_length(hand, .Hearts) <= 1 ||
-		norn.suit_length(hand, .Diamonds) <= 1 ||
-		norn.suit_length(hand, .Clubs) <= 1 \
+		norn.spade_length(hand) <= 1 ||
+		norn.heart_length(hand) <= 1 ||
+		norn.diamond_length(hand) <= 1 ||
+		norn.club_length(hand) <= 1 \
 	)
 }
 
@@ -164,9 +164,9 @@ side_ace :: proc(hand: norn.Hand, suit: norn.Suit) -> bool {
 // Does the responder hold `support_length`+ cards in a 5+ card major the opener has? A two-hand
 // test (opener and responder), so it takes both hands explicitly. (deal-utils `has_major_support`.)
 has_major_support :: proc(opener, responder: norn.Hand, support_length: int) -> bool {
-	opener_s := norn.suit_length(opener, .Spades)
-	opener_h := norn.suit_length(opener, .Hearts)
-	resp_s := norn.suit_length(responder, .Spades)
-	resp_h := norn.suit_length(responder, .Hearts)
+	opener_s := norn.spade_length(opener)
+	opener_h := norn.heart_length(opener)
+	resp_s := norn.spade_length(responder)
+	resp_h := norn.heart_length(responder)
 	return (opener_s >= 5 && resp_s >= support_length) || (opener_h >= 5 && resp_h >= support_length)
 }

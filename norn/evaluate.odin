@@ -28,6 +28,14 @@ suit_length :: proc(hand: Hand, suit: Suit) -> int {
 	return length
 }
 
+// Named per-suit length shortcuts, mirroring deal's `spades $hand` / `hearts $hand` vocabulary.
+// These are just `suit_length` with the suit fixed; reach for them when the suit is a literal (most
+// predicates) and keep `suit_length` for when the suit is a variable.
+spade_length :: proc(hand: Hand) -> int {return suit_length(hand, .Spades)}
+heart_length :: proc(hand: Hand) -> int {return suit_length(hand, .Hearts)}
+diamond_length :: proc(hand: Hand) -> int {return suit_length(hand, .Diamonds)}
+club_length :: proc(hand: Hand) -> int {return suit_length(hand, .Clubs)}
+
 // Does the hand hold this exact card?
 holds :: proc(hand: Hand, suit: Suit, rank: Rank) -> bool {
 	target := make_card(suit, rank)

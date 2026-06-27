@@ -24,7 +24,9 @@ lint *args:
 	odin check norn -vet -strict-style -no-entry-point {{args}}
 	odin check conditions -vet -strict-style -no-entry-point {{args}}
 	odin check {{cli_pkg}} -vet -strict-style {{args}}
+	odin check cmd/bench -vet -strict-style {{args}}
 	odin check examples/strong-1c -vet -strict-style {{args}}
+	odin check examples/1major-gf-support -vet -strict-style {{args}}
 
 
 # ensure the build artifacts top level directory exists
@@ -59,7 +61,15 @@ run_release *args: mktarget_dirs
 
 # run the example single-condition generator program
 example *args: mktarget_dirs
-	odin run examples/strong-1c -debug -microarch:native -out:target/debug/strong-1c.exe {{args}}
+	odin run examples/strong-1c -o:speed  -show-timings -microarch:native -out:target/debug/strong-1c.exe {{args}}
+
+# run the multi-seat opener+responder example generator program
+example2 *args: mktarget_dirs
+	odin run examples/1major-gf-support -o:speed -show-timings -microarch:native -out:target/debug/1major-gf.exe {{args}}
+
+# run the scan-vs-bitmask-index hand-evaluation benchmark (release, optimised)
+bench *args: mktarget_dirs
+	odin run cmd/bench -o:speed -microarch:native -out:target/release/bench.exe {{args}}
 
 # run all tests in every package that has them
 test *args: mktarget_dirs

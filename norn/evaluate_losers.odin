@@ -8,7 +8,7 @@ package norn
 	one-liners — the loser/offense estimators and the two notrump-shape / honour-weight helpers.
 	They are generic bridge evaluation (no system policy), so they belong in `norn`:
 
-	  - `is_nt5cm_shape`  — the `5CM_nt` shape test (deal `lib/utility.tcl`), minus the hcp range.
+	  - `is_nt5cM_shape`  — the `5CM_nt` shape test (deal `lib/utility.tcl`), minus the hcp range.
 	  - `losers`          — basic Losing Trick Count (deal builtin `losers`).
 	  - `offense`         — per-suit offensive-trick estimate (deal `lib/utility.tcl` `offense`).
 	  - `top5q`           — weighted honours A/K/Q=2, J/T=1 (deal `defvector Top5Q 2 2 2 1 1`).
@@ -25,7 +25,7 @@ package norn
 // The rule: every suit is a 2-, 3-, 4- or 5-carder (no void, singleton, or 6+ suit), and the hand
 // is not simultaneously 5-something and 4-something (which would be a 5-4-2-2). An 8+ suit can't
 // occur here anyway — it forces a short suit elsewhere — so checking lengths 2..5 is sufficient.
-is_nt5cm_shape :: proc(hand: Hand) -> bool {
+is_nt5cM_shape :: proc(hand: Hand) -> bool {
 	has_four := false
 	has_five := false
 	for suit in Suit {

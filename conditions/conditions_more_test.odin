@@ -33,10 +33,10 @@ R2 :: norn.Rank.Two
 hand_of :: proc(spades, hearts, diamonds, clubs: []norn.Rank) -> norn.Hand {
 	hand: norn.Hand
 	i := 0
-	for r in spades {hand[i] = norn.make_card(.Spades, r);i += 1}
-	for r in hearts {hand[i] = norn.make_card(.Hearts, r);i += 1}
-	for r in diamonds {hand[i] = norn.make_card(.Diamonds, r);i += 1}
-	for r in clubs {hand[i] = norn.make_card(.Clubs, r);i += 1}
+	for r in spades {hand[i] = norn.make_card(.Spades, r); i += 1}
+	for r in hearts {hand[i] = norn.make_card(.Hearts, r); i += 1}
+	for r in diamonds {hand[i] = norn.make_card(.Diamonds, r); i += 1}
+	for r in clubs {hand[i] = norn.make_card(.Clubs, r); i += 1}
 	return hand
 }
 
@@ -264,7 +264,7 @@ test_one_level_openers :: proc(t: ^testing.T) {
 
 @(test)
 test_notrump_and_marmic_openers :: proc(t: ^testing.T) {
-	testing.expect(t, is_1nt_opener(unbalanced_16()), "5-5-2-1 is not a 1NT opener")
+	testing.expect(t, !is_1nt_opener(unbalanced_16()), "5-5-2-1 is not a 1NT opener")
 	testing.expect(t, is_2nt_opener(balanced_20()), "balanced 20 opens 2NT")
 	testing.expect(t, !is_1nt_opener(balanced_20()), "20 is too strong for 1NT")
 	testing.expect(t, is_marmic(marmic12()), "4-4-4-1 is Marmic")

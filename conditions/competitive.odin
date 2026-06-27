@@ -18,20 +18,20 @@ is_1major_overcall :: proc(hand: norn.Hand) -> bool {
 	if points < 8 || points > 16 {
 		return false
 	}
-	hs := norn.suit_length(hand, .Hearts)
-	ss := norn.suit_length(hand, .Spades)
+	hs := norn.heart_length(hand)
+	ss := norn.spade_length(hand)
 	if hs < 5 && ss < 5 {
 		return false
 	}
-	cs := norn.suit_length(hand, .Clubs)
-	ds := norn.suit_length(hand, .Diamonds)
+	cs := norn.club_length(hand)
+	ds := norn.diamond_length(hand)
 	if cs > hs && cs > ss {
 		return false
 	}
 	if ds > hs && ds > ss {
 		return false
 	}
-	if nt5cm(hand, 15, 18) {
+	if nt5cM(hand, 15, 18) {
 		return false
 	}
 	return true
@@ -46,10 +46,10 @@ is_1d_takeout :: proc(hand: norn.Hand) -> bool {
 	if is_1major_overcall(hand) {
 		return false
 	}
-	if nt5cm(hand, 15, 18) {
+	if nt5cM(hand, 15, 18) {
 		return false
 	}
-	return norn.suit_length(hand, .Diamonds) < 3
+	return norn.diamond_length(hand) < 3
 }
 
 // A Michaels-style both-majors hand: 5-15 with 5+ cards in each major. (deal-utils
@@ -59,7 +59,7 @@ has_both_majors_michaels :: proc(hand: norn.Hand) -> bool {
 	if points < 5 || points > 15 {
 		return false
 	}
-	return norn.suit_length(hand, .Hearts) >= 5 && norn.suit_length(hand, .Spades) >= 5
+	return norn.heart_length(hand) >= 5 && norn.spade_length(hand) >= 5
 }
 
 // May North-South overcall the opponents' 1NT? A multi-seat judgement (East is assumed to open):

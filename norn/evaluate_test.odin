@@ -72,6 +72,11 @@ test_suit_length :: proc(t: ^testing.T) {
 	testing.expect_value(t, suit_length(hand, .Hearts), 4)
 	testing.expect_value(t, suit_length(hand, .Diamonds), 2)
 	testing.expect_value(t, suit_length(hand, .Clubs), 2)
+	// The named shortcuts agree with the general primitive.
+	testing.expect_value(t, spade_length(hand), 5)
+	testing.expect_value(t, heart_length(hand), 4)
+	testing.expect_value(t, diamond_length(hand), 2)
+	testing.expect_value(t, club_length(hand), 2)
 }
 
 @(test)
@@ -143,11 +148,11 @@ balanced_5332 :: proc() -> Hand {
 }
 
 @(test)
-test_is_nt5cm_shape :: proc(t: ^testing.T) {
-	testing.expect(t, is_nt5cm_shape(balanced_4333()), "4-3-3-3 is a 5CM_nt shape")
-	testing.expect(t, is_nt5cm_shape(balanced_5332()), "5-3-3-2 is a 5CM_nt shape")
-	testing.expect(t, !is_nt5cm_shape(two_suiter_5422()), "5-4-2-2 is not (it is a 5-4)")
-	testing.expect(t, !is_nt5cm_shape(unbalanced_7222()), "7-2-2-2 is not (6+ suit)")
+test_is_nt5cM_shape :: proc(t: ^testing.T) {
+	testing.expect(t, is_nt5cM_shape(balanced_4333()), "4-3-3-3 is a 5CM_nt shape")
+	testing.expect(t, is_nt5cM_shape(balanced_5332()), "5-3-3-2 is a 5CM_nt shape")
+	testing.expect(t, !is_nt5cM_shape(two_suiter_5422()), "5-4-2-2 is not (it is a 5-4)")
+	testing.expect(t, !is_nt5cM_shape(unbalanced_7222()), "7-2-2-2 is not (6+ suit)")
 }
 
 @(test)
