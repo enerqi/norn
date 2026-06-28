@@ -49,29 +49,34 @@ Current sims don't need it. If makeable-tricks analysis is added later, the DDS 
 
 Chose native Odin: predicates in a real language, no interpreter, max throughput, and it unifies with a from-scratch design we control.
 
-## Conditions as code (current model)
+## Conditions as code
 
 A condition is Odin code, not an interpreted script. `Predicate :: proc(board: Deal) -> bool` is the
 equivalent of a `deal` Tcl `main { accept/reject }` body; it reads one or more seats (multi-seat
 conditions are common — opener + responder) using the `evaluate.odin` primitives (`hcp`,
-`suit_length`, `pattern`/`shape`, `top_count`, `is_balanced`, …). `generate_accepted` runs the
-reject-sampling loop over a predicate. The ~85 `deal-utils.tcl` predicates port on top of these
-primitives.
+`suit_length`, `pattern`/`shape`, `top_count`, `is_balanced`, losers, …). `generate_accepted` runs
+the reject-sampling loop over a predicate. The `deal-utils.tcl` predicates port on top of these
+primitives — that port (and the named-scenario registry built from it) lives in the *consumer*
+bidding-system project, keeping `norn` itself system-agnostic.
 
-## Planned structure (future, not built yet)
+## Structure (built)
 
-The reusable core is deliberately I/O-free and free of process-lifecycle assumptions so it can be
-embedded and called repeatedly. Anticipated direction:
+The split anticipated here has shipped. The reusable core is I/O-free and free of process-lifecycle
+assumptions so it can be embedded and called repeatedly:
 
-- **Library package split.** Move the core (cards, deal, shuffle, render, evaluate, generate) into a
-  `norn` library package, leaving a thin `main` for the CLI. Then each condition — e.g. the bridge
-  repo's `3n-opener.tcl` — becomes a small single-file Odin program that imports `norn`, defines its
-  `Predicate`, and calls the generator. (Mechanical `package main` → `package norn` rename + a `cmd/`
-  dir for the CLI; deferred until the API settles.)
-- **Many generators in one binary.** Several conditions may be compiled into a single program that
-  calls `generate_accepted` once per condition (different predicate / count / output each time). This
-  is why generation is a plain reusable proc — no `os.exit`, no global one-shot state — rather than
-  baked into `main`.
+- **Library / framework / consumer.** The engine (cards, deal, shuffle, render, evaluate, generate)
+  is the `norn` package; a generic CLI + scenario framework is the `cli` package; the bidding policy
+  (predicates + the scenario registry) lives in a separate consumer program that wires its registry
+  into `cli.main_program`. See `AGENTS.md` for the package layout.
+- **Many generators in one binary.** The scenario registry is exactly this: one program holds many
+  conditions and runs the generator (or HTML export, or frequency measurement) per scenario. This is
+  why generation is a plain reusable proc — no `os.exit`, no global one-shot state.
+- **Frequency mode** measures each scenario's accept rate over N deals without rendering, seeding
+  each scenario independently so the result is reproducible and identical whether run on one core or
+  many (it parallelises across physical cores).
+
+Still future: **predeal** (fixing specific cards before the split — `deal_from_deck` is where it
+hooks in) and shape-biased generation; see below.
 
 ## Integration with bridge-bidding-system
 
