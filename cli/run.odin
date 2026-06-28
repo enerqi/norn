@@ -44,8 +44,18 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = norn.seeded_xoshiro(&state, seed)
 
-	builder := strings.builder_make()
+	// Presize the buffer to the expected output so it rarely has to grow (and copy) mid-run.
+	builder := strings.builder_make_len_cap(0, output_size_hint(opts.format, opts.count))
 	defer strings.builder_destroy(&builder)
+
+	// Take a pointer to the SmartStack spec (if any) for the generation calls; nil otherwise. The
+	// copy lives in `spec` for the duration of this proc.
+	ss: ^norn.Smart_Stack
+	spec: norn.Smart_Stack
+	if got, has := opts.smartstack.?; has {
+		spec = got
+		ss = &spec
+	}
 
 	if opts.scenario == "" {
 		norn.render_deals(
@@ -54,6 +64,7 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 			opts.format,
 			randomize_table = opts.randomize_table,
 			predeal = opts.predeal,
+			smartstack = ss,
 		)
 	} else {
 		// Reject sampling: deal until `count` deals satisfy the scenario. Report the hit rate on
@@ -65,6 +76,7 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 			scenario.predicate,
 			randomize_table = opts.randomize_table,
 			predeal = opts.predeal,
+			smartstack = ss,
 		)
 		fmt.eprintfln(
 			"norn: scenario %q — %d accepted from %d deals (%.3f%%)",
@@ -109,9 +121,21 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = norn.seeded_xoshiro(&state, seed)
 
+	ss: ^norn.Smart_Stack
+	spec: norn.Smart_Stack
+	if got, has := opts.smartstack.?; has {
+		spec = got
+		ss = &spec
+	}
+
+	// One builder reused across every scenario: `builder_reset` keeps the backing buffer and just
+	// rewinds the length, so we pay the (presized) allocation once instead of churning a fresh buffer
+	// per scenario.
+	builder := strings.builder_make_len_cap(0, output_size_hint(.Html, opts.count))
+	defer strings.builder_destroy(&builder)
+
 	for s in selected {
-		builder := strings.builder_make()
-		defer strings.builder_destroy(&builder)
+		strings.builder_reset(&builder)
 
 		// Cap attempts so a very rare scenario can't loop indefinitely; warn if it under-fills.
 		accepted, attempts := norn.generate_accepted(
@@ -122,6 +146,7 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 			HTML_EXPORT_MAX_ATTEMPTS,
 			opts.randomize_table,
 			opts.predeal,
+			ss,
 		)
 		if accepted < opts.count {
 			fmt.eprintfln(
@@ -185,18 +210,21 @@ select_scenarios :: proc(
 // `predicate` keeps, using an RNG seeded by `seed`, and store the answer in `result`. Each task owns
 // a distinct `result` slot, so the workers never write the same memory.
 Freq_Task :: struct {
-	trials:    int,
-	seed:      u64,
-	predicate: norn.Predicate,
-	predeal:   Maybe(norn.Predeal),
-	result:    ^int,
+	trials:     int,
+	seed:       u64,
+	predicate:  norn.Predicate,
+	predeal:    Maybe(norn.Predeal),
+	// Shared, read-only across workers: the sampler only reads the spec (randomness comes from each
+	// task's own seeded RNG), so one pointer is safe to hand to every thread. nil if no --smartstack.
+	smartstack: ^norn.Smart_Stack,
+	result:     ^int,
 }
 
 // Thread-pool body: run one scenario's measurement. Self-contained — `count_accepted_seeded`
 // installs its own RNG, so nothing here touches shared mutable state.
 freq_worker :: proc(t: thread.Task) {
 	job := cast(^Freq_Task)t.data
-	job.result^ = norn.count_accepted_seeded(job.trials, job.predicate, job.seed, job.predeal)
+	job.result^ = norn.count_accepted_seeded(job.trials, job.predicate, job.seed, job.predeal, job.smartstack)
 }
 
 // Derive a per-scenario seed from the run's base seed and the scenario's index, so each scenario
@@ -241,12 +269,20 @@ measure_frequencies :: proc(registry: []Scenario, opts: Options) -> (ok: bool, m
 	}
 	thread_count = clamp(thread_count, 1, len(selected))
 
+	// Shared SmartStack spec (read-only) handed to every worker; lives until the pool finishes.
+	ss: ^norn.Smart_Stack
+	spec: norn.Smart_Stack
+	if got, has := opts.smartstack.?; has {
+		spec = got
+		ss = &spec
+	}
+
 	results := make([]int, len(selected))
 	defer delete(results)
 	jobs := make([]Freq_Task, len(selected))
 	defer delete(jobs)
 	for s, i in selected {
-		jobs[i] = Freq_Task{opts.trials, scenario_seed(seed, i), s.predicate, opts.predeal, &results[i]}
+		jobs[i] = Freq_Task{opts.trials, scenario_seed(seed, i), s.predicate, opts.predeal, ss, &results[i]}
 	}
 
 	if thread_count <= 1 {
@@ -294,6 +330,26 @@ measure_frequencies :: proc(registry: []Scenario, opts: Options) -> (ok: bool, m
 // Attempt budget per scenario in `export_all_html`, so a rare condition under-fills rather than
 // hanging the whole batch. Generous because norn deals far faster than the interpreted engine.
 HTML_EXPORT_MAX_ATTEMPTS :: 20_000_000
+
+// Rough upper estimate of the rendered byte size of `count` deals in `format`, used to presize the
+// output builder so it rarely has to grow (and copy) mid-run. Over-estimates are harmless (a little
+// reserved memory that is freed with the builder); the per-deal figures are padded above the worst
+// real case, and HTML adds the one-off page header/footer plus an iframe wrapper per deal.
+@(private = "file")
+output_size_hint :: proc(format: norn.Output_Format, count: int) -> int {
+	per_deal := 80 // Line / Pbn / Numeric all sit well under this
+	overhead := 0
+	#partial switch format {
+	case .Pretty:
+		per_deal = 160
+	case .Handviewer:
+		per_deal = 140
+	case .Html:
+		per_deal = 600 // iframe wrapper + handviewer URL
+		overhead = 512 // page header + footer, emitted once around the run
+	}
+	return per_deal * max(count, 0) + overhead + 64
+}
 
 // Write `text` to `path`, or to stdout when `path` is "-".
 write_output :: proc(path: string, text: string) -> (ok: bool, message: string) {

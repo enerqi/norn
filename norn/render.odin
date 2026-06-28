@@ -56,6 +56,22 @@ Output_Format :: enum {
 	// is emitted once before the deals and a footer once after — see the generation driver). This is
 	// the Odin equivalent of the `run-deal.py --html-output-path` export.
 	Html,
+	// `Pbn` is the Portable Bridge Notation deal tag, one board per line:
+	//
+	//	[Deal "N:T84.QJ.KQ976.A52 Q9.AK87.J8.KQ964 KJ32.T96.AT.J873 A765.5432.543.T"]
+	//
+	// One hand per seat in clockwise order from the prefix seat (N E S W), each hand's four suits in
+	// S.H.D.C order separated by '.', ranks high-to-low, a void written as the empty string (adjacent
+	// dots). This is the `[Deal]` tag every PBN importer reads; the surrounding per-board tags of a
+	// full PBN export (Event, Board, Dealer, …) are intentionally omitted — add them only if a strict
+	// importer needs them. Matches deal's `pbn` formatter for the deal field itself.
+	Pbn,
+	// `Numeric` is deal's compact `numeric` format: a 52-character digit string per board, one digit
+	// per card giving its owner seat (North 0, East 1, South 2, West 3). The cards are walked in a
+	// fixed order — suits S H D C, and within each suit ranks high-to-low A K Q J T 9 .. 2 — so the
+	// position encodes the card and the digit encodes who holds it. No separators; reversible back to
+	// a full deal. (The seat digits coincide with norn's `Seat` backing values.)
+	Numeric,
 }
 
 // Render `board` into `builder` using the chosen `format`. `randomize_table` only affects the
@@ -71,6 +87,10 @@ render_deal :: proc(builder: ^strings.Builder, board: Deal, format: Output_Forma
 		render_deal_handviewer(builder, board, randomize_table)
 	case .Html:
 		render_deal_html_iframe(builder, board, randomize_table)
+	case .Pbn:
+		render_deal_pbn(builder, board)
+	case .Numeric:
+		render_deal_numeric(builder, board)
 	}
 }
 
@@ -142,6 +162,51 @@ render_deal_pretty :: proc(builder: ^strings.Builder, board: Deal) {
 			strings.write_byte(builder, ' ')
 		}
 		strings.write_byte(builder, '\n')
+	}
+}
+
+// Write `board` as a PBN `[Deal]` tag (see the `Pbn` doc on `Output_Format`), no trailing newline.
+// The prefix seat is North, so the four hands follow in clockwise N E S W order — exactly
+// `SEAT_OUTPUT_ORDER`.
+render_deal_pbn :: proc(builder: ^strings.Builder, board: Deal) {
+	strings.write_string(builder, `[Deal "N:`)
+	for seat, seat_index in SEAT_OUTPUT_ORDER {
+		if seat_index > 0 {
+			strings.write_byte(builder, ' ')
+		}
+		write_hand_pbn(builder, board[seat])
+	}
+	strings.write_string(builder, `"]`)
+}
+
+// Write one hand as `S.H.D.C`: the four suits in S H D C order separated by '.', each suit's ranks
+// high-to-low, a void written as the empty string (so a void surfaces as adjacent/leading/trailing
+// dots, the PBN convention).
+write_hand_pbn :: proc(builder: ^strings.Builder, hand: Hand) {
+	for suit, suit_index in SUIT_OUTPUT_ORDER {
+		if suit_index > 0 {
+			strings.write_byte(builder, '.')
+		}
+		write_suit_ranks(builder, hand, suit)
+	}
+}
+
+// Write `board` as deal's compact `numeric` string (see the `Numeric` doc on `Output_Format`), no
+// trailing newline: 52 owner-seat digits, the cards walked in S H D C order and, within each suit,
+// ranks high-to-low.
+render_deal_numeric :: proc(builder: ^strings.Builder, board: Deal) {
+	// Owner seat of each card, indexed by the card's value, so the walk below is a plain lookup.
+	owner: [DECK_SIZE]Seat
+	for seat in Seat {
+		for card in board[seat] {
+			owner[int(card)] = seat
+		}
+	}
+	for suit in SUIT_OUTPUT_ORDER {
+		for rank := RANK_COUNT - 1; rank >= 0; rank -= 1 {
+			card := make_card(suit, Rank(rank))
+			strings.write_byte(builder, '0' + u8(owner[int(card)]))
+		}
 	}
 }
 

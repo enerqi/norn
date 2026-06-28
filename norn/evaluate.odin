@@ -81,12 +81,13 @@ controls :: proc(hand: Hand) -> int {
 }
 
 // How many of the top `n` ranks the hand holds in `suit`. `top_count(hand, suit, 2)` counts A and
-// K present; `top_count(hand, suit, 4)` counts A K Q J (the "honours"). `n` must be 0..5.
+// K present; `top_count(hand, suit, 4)` counts A K Q J (the "honours"). `n` must be 0..7 (A K Q J T
+// 9 8).
 //
-// This is the equivalent of `deal`'s `TopN` honour vectors, e.g. `[Top4 $hand spades]`.
+// This is the equivalent of `deal`'s `TopN` honour vectors, e.g. `[Top4 $hand spades]` / `[Top7 …]`.
 top_count :: proc(hand: Hand, suit: Suit, n: int) -> int {
 	// The honour ranks from the top down; index 0 is the highest.
-	top_ranks := [5]Rank{.Ace, .King, .Queen, .Jack, .Ten}
+	top_ranks := [7]Rank{.Ace, .King, .Queen, .Jack, .Ten, .Nine, .Eight}
 	count := 0
 	for i in 0 ..< n {
 		if holds(hand, suit, top_ranks[i]) {
@@ -148,4 +149,65 @@ is_semibalanced :: proc(hand: Hand) -> bool {
 	d := suit_length(hand, .Diamonds)
 	c := suit_length(hand, .Clubs)
 	return s >= 2 && h >= 2 && d >= 2 && c >= 2 && s <= 5 && h <= 5 && d <= 6 && c <= 6
+}
+
+// Is the hand a notrump opening of `min`..`max` high-card points: balanced AND in the hcp range
+// (deal's `nt $hand min max`). The common pairing of `is_balanced` with an hcp band, named once so
+// the notrump openers/overcalls that recur across systems don't re-spell it.
+is_nt :: proc(hand: Hand, min, max: int) -> bool {
+	if !is_balanced(hand) {
+		return false
+	}
+	points := hcp(hand)
+	return points >= min && points <= max
+}
+
+// The four "longest-suit" shape classes (deal's `shapeclass spade_shape`/`heart_shape`/… in
+// `lib/shapes.tcl`): they PARTITION all hands — every hand matches exactly one. A MAJOR class
+// requires a genuine 5+ suit (so a hand whose only 4+ suit is a major is NOT a major shape); the two
+// MINOR classes pick up the rest, including all flat hands, so they double as the catch-all. The net
+// effect identifies the trump/long suit when one exists, with length ties resolved so the four stay
+// mutually exclusive (majors beat minors; the higher major wins a major tie; clubs/diamonds resolve
+// as written). Note the quirk: a 4-3-3-3 with the four-card suit a major still classifies as a minor
+// shape, because the major classes gate on 5+.
+//
+// `is_spade_shape`: spades are a 5+ suit, at least as long as hearts and the minors (spades win all
+// ties). e.g. a 5-5 in the majors is a spade shape.
+is_spade_shape :: proc(hand: Hand) -> bool {
+	s := suit_length(hand, .Spades)
+	h := suit_length(hand, .Hearts)
+	d := suit_length(hand, .Diamonds)
+	c := suit_length(hand, .Clubs)
+	return s >= 5 && s >= h && d <= s && c <= s
+}
+
+// `is_heart_shape`: hearts are a 5+ suit, strictly longer than spades and at least as long as the
+// minors.
+is_heart_shape :: proc(hand: Hand) -> bool {
+	s := suit_length(hand, .Spades)
+	h := suit_length(hand, .Hearts)
+	d := suit_length(hand, .Diamonds)
+	c := suit_length(hand, .Clubs)
+	return h >= 5 && s < h && d <= h && c <= h
+}
+
+// `is_diamond_shape`: diamonds are the long minor and beat both majors (a major is either short, or
+// shorter than diamonds), beating clubs on length — a clubs tie counts as diamonds only when both
+// are 5+.
+is_diamond_shape :: proc(hand: Hand) -> bool {
+	s := suit_length(hand, .Spades)
+	h := suit_length(hand, .Hearts)
+	d := suit_length(hand, .Diamonds)
+	c := suit_length(hand, .Clubs)
+	return (s < 5 || d > s) && (h < 5 || d > h) && (d > c || (d == c && d >= 5))
+}
+
+// `is_club_shape`: clubs are the long minor and beat both majors, beating diamonds on length — a
+// diamonds tie counts as clubs only when both are under 5.
+is_club_shape :: proc(hand: Hand) -> bool {
+	s := suit_length(hand, .Spades)
+	h := suit_length(hand, .Hearts)
+	d := suit_length(hand, .Diamonds)
+	c := suit_length(hand, .Clubs)
+	return (s < 5 || c > s) && (h < 5 || c > h) && (d < c || (d == c && c < 5))
 }

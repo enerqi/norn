@@ -78,7 +78,37 @@ assumptions so it can be embedded and called repeatedly:
   around them — a deal conditioned on the fixed holdings, still uniform over the free cards. Lives in
   `norn/predeal.odin` and threads through every generation path (plain, html export, frequency).
 
-Still future: shape-biased generation (SmartStack) — see below.
+- **SmartStack** (`norn/smartstack.odin`) biases ONE seat to a shape-set + hcp-range, building that
+  hand directly from the constraint instead of reject-sampling for it — uniform over the admitted
+  hands via exact importance sampling (count every matching hand in closed form, then sample with
+  that conditional probability). The rare part of a condition is solved up front; any remaining
+  multi-seat predicate still reject-samples on top. Threads through the same generation paths as
+  predeal (`--frequency` included) via an optional `^Smart_Stack`. Build with `smartstack_make` /
+  `smartstack_make_filtered`. v1 is single-seat, hcp-only evaluator; a general point vector and
+  multi-seat stacking are possible later (the honour-distribution machinery generalises).
+
+SmartStack is driven from the command line by `--smartstack "SEAT HCP SHAPE[/SHAPE...]"` (HCP:
+`lo-hi | N | N+ | N-`; SHAPE: a keyword `balanced|semibalanced|any` or four S,H,D,C length fields,
+each `N | N+ | N- | x`, with `/` unioning alternatives). It cannot be combined with `--predeal`.
+
+## Ported from deal (the evaluator surface)
+
+The generic evaluation vocabulary the bidding-system scripts use is ported into `norn/evaluate.odin`
+and `norn/evaluate_losers.odin`: suit lengths, `hcp`, `controls`, `top_count` (deal's `TopN`, now up
+to Top7), `top5q`, `shape`/`pattern`, `is_balanced`/`is_semibalanced`/`is_nt5cM_shape`, the four
+longest-suit classes `is_spade_shape`/`is_heart_shape`/`is_diamond_shape`/`is_club_shape`, `is_nt`
+(deal's `nt min max`), `losers`, `offense`/`defense`/`op`, `dhcp`, `new_ltc`. The system-specific
+predicates built on top live in the
+consumer (see the library boundary), not here.
+
+**Deliberately NOT ported** (no current sim uses them; record kept so the choice is intentional, not
+forgotten):
+
+- `newhcp` — per-suit adjusted point count; fiddly, unused. Add if a predicate ever needs it.
+- `CCCC` / `Quality` — Danil-Suits shapepoints + holding evaluation; large, niche, unused.
+- DDS-dependent output formats (`par`, `ddline`, …) and the niche `count` (= norn's `--frequency`),
+  `okb`, `onehand`, `article`, … ; `symmetric` generation; reading PBN/giblib deals back in.
+- Double-dummy (`tricks`, par scoring) — deferred to the DDS plan above, not dropped.
 
 ## Integration with bridge-bidding-system
 
@@ -86,5 +116,4 @@ The bridge repo (`~/docs/bridge/bridge-bidding-system`) drives deals via `deal-s
 and `regen-html-deals.py`. Those scripts may still be used to scaffold/drive multiple generation
 tasks in future. Keep Norn's text output format compatible so they (and the `just run-scratch` /
 `just regen` recipes) can swap `deal.exe` → `norn` with minimal change. Broader background: that
-repo's `deal-simulations/deal-generator-notes.md`; the engine surface to match is in
-`deal319-reference.md`.
+repo's `deal-simulations/deal-generator-notes.md`.

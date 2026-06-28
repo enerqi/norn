@@ -215,6 +215,77 @@ test_parse_errors :: proc(t: ^testing.T) {
 	testing.expect(t, strings.contains(msg_missing, "requires a value"), "message should explain the missing value")
 }
 
+// --smartstack parses a keyword spec into Options.smartstack with the right seat and hcp window.
+@(test)
+test_parse_smartstack_keyword :: proc(t: ^testing.T) {
+	opts, ok, msg := parse_args({"--smartstack", "N 20-21 balanced"})
+	testing.expectf(t, ok, "valid smartstack should parse: %s", msg)
+	ss, has := opts.smartstack.?
+	testing.expect(t, has, "smartstack should be set")
+	testing.expect_value(t, ss.seat, norn.Seat.North)
+	testing.expect_value(t, ss.hcp_min, 20)
+	testing.expect_value(t, ss.hcp_max, 21)
+	testing.expect(t, ss.shape_count > 0, "balanced should admit shapes")
+	testing.expect(t, ss.total_weight > 0, "balanced 20-21 should admit hands")
+}
+
+// A length pattern keeps only the matching shapes: every chosen shape here has 6+ spades.
+@(test)
+test_parse_smartstack_pattern :: proc(t: ^testing.T) {
+	opts, ok, msg := parse_args({"--smartstack", "S 10-13 6+,x,x,x"})
+	testing.expectf(t, ok, "valid smartstack should parse: %s", msg)
+	ss, has := opts.smartstack.?
+	testing.expect(t, has, "smartstack should be set")
+	testing.expect_value(t, ss.seat, norn.Seat.South)
+	for i in 0 ..< ss.shape_count {
+		testing.expect(t, ss.shapes[i][0] >= 6, "every chosen shape should hold 6+ spades")
+	}
+}
+
+// `N+` opens the hcp window upward; `/` unions alternatives.
+@(test)
+test_parse_smartstack_range_and_alternatives :: proc(t: ^testing.T) {
+	opts_plus, ok_plus, _ := parse_args({"--smartstack", "N 20+ any"})
+	testing.expect(t, ok_plus, "N+ hcp should parse")
+	ss_plus, _ := opts_plus.smartstack.?
+	testing.expect_value(t, ss_plus.hcp_min, 20)
+	testing.expect_value(t, ss_plus.hcp_max, 40)
+
+	opts_alt, ok_alt, msg := parse_args({"--smartstack", "N 8-11 5,5,x,x / 5,x,5,x"})
+	testing.expectf(t, ok_alt, "alternatives should parse: %s", msg)
+	ss_alt, _ := opts_alt.smartstack.?
+	for i in 0 ..< ss_alt.shape_count {
+		sh := ss_alt.shapes[i]
+		// Each chosen shape matches one of the two patterns: 5 spades with either 5 hearts or 5 diamonds.
+		ok := (sh[0] == 5 && sh[1] == 5) || (sh[0] == 5 && sh[2] == 5)
+		testing.expect(t, ok, "chosen shape should match an alternative")
+	}
+}
+
+// Malformed smartstack specs are usage errors.
+@(test)
+test_parse_smartstack_errors :: proc(t: ^testing.T) {
+	_, too_few, _ := parse_args({"--smartstack", "N 20-21"})
+	testing.expect(t, !too_few, "missing shape should fail")
+
+	_, bad_seat, _ := parse_args({"--smartstack", "X 1-2 any"})
+	testing.expect(t, !bad_seat, "unknown seat should fail")
+
+	_, bad_fields, _ := parse_args({"--smartstack", "N 1-2 4,3,3"})
+	testing.expect(t, !bad_fields, "wrong field count should fail")
+
+	_, impossible, _ := parse_args({"--smartstack", "N 0-5 13,0,0,0"})
+	testing.expect(t, !impossible, "13 spades under 6 hcp should fail")
+}
+
+// --predeal and --smartstack cannot be combined.
+@(test)
+test_parse_predeal_smartstack_conflict :: proc(t: ^testing.T) {
+	_, ok, msg := parse_args({"--predeal", "N:AS", "--smartstack", "S 20-21 balanced"})
+	testing.expect(t, !ok, "predeal + smartstack should fail")
+	testing.expect(t, strings.contains(msg, "cannot be combined"), "message should explain the conflict")
+}
+
 // Multiple flags combine, and later flags override earlier ones.
 @(test)
 test_parse_combined :: proc(t: ^testing.T) {

@@ -11,11 +11,12 @@ package cli
 	Supported flags (GNU-ish; both `--flag value` and `--flag=value` work):
 
 		-n, --count    N           number of deals to generate (default 1)
-		-f, --format   line|pretty output format (default line)
+		-f, --format   FORMAT      output format: line|pretty|handviewer|html|pbn|numeric (default line)
 		-o, --output   PATH        output file, or "-" for stdout (default "-")
 		-s, --seed     N           PRNG seed for reproducible deals (default: a fresh seed each run)
 		-S, --scenario NAME        keep only deals matching a named scenario
 		    --predeal      SPEC    fix cards to seats before dealing, e.g. "N:AS,KS S:QH"
+		    --smartstack   SPEC    bias one seat to a shape-set + hcp window, e.g. "N 20-21 balanced"
 		    --frequency    N       measure each scenario's acceptance rate over N deals (no deals emitted)
 		    --list                 list the available scenarios
 		-h, --help                 show usage
@@ -58,6 +59,10 @@ Options :: struct {
 	// Cards fixed to seats before dealing (set by --predeal); nil means a fully random deal. Applies
 	// to every generation path (plain, html export, frequency).
 	predeal:         Maybe(norn.Predeal),
+	// One seat biased to a shape-set + hcp window (set by --smartstack); nil means ordinary dealing.
+	// Mutually exclusive with --predeal (it already lays out a whole seat). Applies to every
+	// generation path. Big by value, but Options is not copied on a hot path.
+	smartstack:      Maybe(norn.Smart_Stack),
 }
 
 // The defaults applied before any flags are read.
@@ -76,6 +81,7 @@ default_options :: proc() -> Options {
 		frequency = false,
 		trials = 0,
 		predeal = nil,
+		smartstack = nil,
 	}
 }
 
@@ -152,6 +158,17 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 			}
 			opts.predeal = pd
 
+		case "--smartstack", "--stack":
+			value, got, why := take_value(has_inline, inline_value, args, &i, flag)
+			if !got {
+				return opts, false, why
+			}
+			ss, ss_ok, ss_why := parse_smartstack(value)
+			if !ss_ok {
+				return opts, false, ss_why
+			}
+			opts.smartstack = ss
+
 		case "-n", "--count":
 			value, got, why := take_value(has_inline, inline_value, args, &i, flag)
 			if !got {
@@ -174,7 +191,7 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 			format, recognised := parse_format(value)
 			if !recognised {
 				return opts, false, fmt.tprintf(
-					"invalid value for %s: %q (expected line, pretty, handviewer or html)",
+					"invalid value for %s: %q (expected line, pretty, handviewer, html, pbn or numeric)",
 					flag,
 					value,
 				)
@@ -203,6 +220,10 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 		case:
 			return opts, false, fmt.tprintf("unknown option: %s", flag)
 		}
+	}
+
+	if opts.predeal != nil && opts.smartstack != nil {
+		return opts, false, "--predeal and --smartstack cannot be combined (smartstack already lays out a seat)"
 	}
 
 	return opts, true, ""
@@ -243,6 +264,10 @@ parse_format :: proc(name: string) -> (format: norn.Output_Format, ok: bool) {
 		return .Handviewer, true
 	case strings.equal_fold(name, "html"):
 		return .Html, true
+	case strings.equal_fold(name, "pbn"):
+		return .Pbn, true
+	case strings.equal_fold(name, "numeric"), strings.equal_fold(name, "num"):
+		return .Numeric, true
 	}
 	return .Line, false
 }

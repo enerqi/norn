@@ -7,7 +7,7 @@ build/tooling/architecture facts that matter for development live here.
 
 **Norn** is a native (Odin) bridge **deal generator** — a replacement for `deal.exe` (Thomas Andrews `deal`, TCL-scripted) used by the `bridge-bidding-system` deal simulations. It generates random bridge deals and filters them by acceptance predicates (reject sampling), emitting deals for analysis / HTML rendering, and can measure how often a predicate accepts.
 
-Name: Norse fate-weavers who *deal out* destiny — ties to the bidding system's Scanian / Swedish-club (Nordic) heritage. See `DESIGN.md` for rationale (why replace `deal.exe`), the DDS plan, and design trade-offs. The engine surface being replaced is documented in `deal319-reference.md`.
+Name: Norse fate-weavers who *deal out* destiny — ties to the bidding system's Scanian / Swedish-club (Nordic) heritage. See `DESIGN.md` for rationale (why replace `deal.exe`), the DDS plan, the ported/not-ported evaluator surface, and design trade-offs.
 
 ## Package layout
 
@@ -15,7 +15,7 @@ One Odin package per directory; the single-file programs are built with `-file`.
 
 | Path | Package | Role |
 |------|---------|------|
-| `norn/` | `norn` | the library: engine (cards, deal, shuffle, predeal, render, evaluate, generate, summary) + generic bridge evaluation. No `main` — imported by everything else. |
+| `norn/` | `norn` | the library: engine (cards, deal, shuffle, predeal, smartstack, render, evaluate, generate, summary) + generic bridge evaluation. No `main` — imported by everything else. |
 | `cli/` | `cli` | the reusable CLI framework: argument parsing (`cli.odin`), the `Scenario` registry type + lookup (`scenario.odin`), and the drivers (`run.odin`) for plain generation, HTML batch export, and frequency measurement. Entry point `main_program` is in `app.odin`. No `main`. Imports `norn`. |
 | `cmd/norn.odin` | `main` | the CLI executable — operational scaffold only. Ships a **nil** scenario registry, so it is the pure deal generator (`--count`/`--format`/`--seed`). |
 | `cmd/bench.odin` | `main` | scan-vs-bitmask hand-evaluation micro-benchmark. |

@@ -32,8 +32,32 @@ render_deals :: proc(
 	format: Output_Format,
 	randomize_table := false,
 	predeal: Maybe(Predeal) = nil,
+	smartstack: ^Smart_Stack = nil,
 ) {
-	generate_accepted(builder, count, format, accept_all, randomize_table = randomize_table, predeal = predeal)
+	generate_accepted(
+		builder,
+		count,
+		format,
+		accept_all,
+		randomize_table = randomize_table,
+		predeal = predeal,
+		smartstack = smartstack,
+	)
+}
+
+// Source the next board: from the SmartStack if one is given (biased rare-hand generation), else
+// from the predeal if one is given (fixed cards), else a plain uniform deal. SmartStack and predeal
+// are mutually exclusive — SmartStack already lays out a whole seat — so SmartStack wins if both are
+// (mistakenly) supplied.
+@(private)
+next_board :: proc(pd: Predeal, has_predeal: bool, smartstack: ^Smart_Stack) -> Deal {
+	if smartstack != nil {
+		return deal_board_smartstack(smartstack)
+	}
+	if has_predeal {
+		return deal_board_predealt(pd)
+	}
+	return deal_board()
 }
 
 // Reject sampling: keep dealing boards and render the ones `accept` keeps, until `count` have been
@@ -52,6 +76,7 @@ generate_accepted :: proc(
 	max_attempts := 0,
 	randomize_table := false,
 	predeal: Maybe(Predeal) = nil,
+	smartstack: ^Smart_Stack = nil,
 ) -> (
 	accepted: int,
 	attempts: int,
@@ -64,7 +89,7 @@ generate_accepted :: proc(
 		if max_attempts > 0 && attempts >= max_attempts {
 			break
 		}
-		board := deal_board_predealt(pd) if has_predeal else deal_board()
+		board := next_board(pd, has_predeal, smartstack)
 		attempts += 1
 		if accept(board) {
 			render_deal(builder, board, format, randomize_table)
@@ -80,10 +105,17 @@ generate_accepted :: proc(
 // return how many were accepted. This is the frequency-estimation counterpart to
 // `generate_accepted` — same dealing, no I/O and no builder, so a caller can profile a condition's
 // rarity over a large sample cheaply. The acceptance rate is `accepted / trials`.
-count_accepted :: proc(trials: int, accept: Predicate, predeal: Maybe(Predeal) = nil) -> (accepted: int) {
+count_accepted :: proc(
+	trials: int,
+	accept: Predicate,
+	predeal: Maybe(Predeal) = nil,
+	smartstack: ^Smart_Stack = nil,
+) -> (
+	accepted: int,
+) {
 	pd, has_predeal := predeal.?
 	for _ in 0 ..< trials {
-		board := deal_board_predealt(pd) if has_predeal else deal_board()
+		board := next_board(pd, has_predeal, smartstack)
 		if accept(board) {
 			accepted += 1
 		}
@@ -101,10 +133,11 @@ count_accepted_seeded :: proc(
 	accept: Predicate,
 	seed: u64,
 	predeal: Maybe(Predeal) = nil,
+	smartstack: ^Smart_Stack = nil,
 ) -> (
 	accepted: int,
 ) {
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = seeded_xoshiro(&state, seed)
-	return count_accepted(trials, accept, predeal)
+	return count_accepted(trials, accept, predeal, smartstack)
 }

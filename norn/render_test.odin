@@ -43,6 +43,40 @@ test_hand_line_sorts_and_marks_void :: proc(t: ^testing.T) {
 	testing.expect_value(t, got, "AKQJ T9  8765432")
 }
 
+// PBN of the ordered deck: each seat holds one whole suit, so every hand is three voids plus a
+// full suit, positioned by S.H.D.C order. North=clubs, East=diamonds, South=hearts, West=spades.
+@(test)
+test_deal_pbn_golden :: proc(t: ^testing.T) {
+	board := deal_from_deck(full_deck())
+
+	builder := strings.builder_make()
+	defer strings.builder_destroy(&builder)
+	render_deal_pbn(&builder, board)
+
+	testing.expect_value(
+		t,
+		strings.to_string(builder),
+		`[Deal "N:...AKQJT98765432 ..AKQJT98765432. .AKQJT98765432.. AKQJT98765432..."]`,
+	)
+}
+
+// Numeric of the ordered deck: walking S H D C, spades are all West (3), hearts all South (2),
+// diamonds all East (1), clubs all North (0) — 13 of each digit, 52 in all.
+@(test)
+test_deal_numeric_golden :: proc(t: ^testing.T) {
+	board := deal_from_deck(full_deck())
+
+	builder := strings.builder_make()
+	defer strings.builder_destroy(&builder)
+	render_deal_numeric(&builder, board)
+
+	testing.expect_value(
+		t,
+		strings.to_string(builder),
+		"3333333333333" + "2222222222222" + "1111111111111" + "0000000000000",
+	)
+}
+
 // Dealing the ordered (unshuffled) deck gives each seat an entire suit, which makes a fully
 // predictable line: North gets all clubs, East all diamonds, South all hearts, West all spades.
 @(test)

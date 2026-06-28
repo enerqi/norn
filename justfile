@@ -41,18 +41,34 @@ lint *args:
 	-mkdir target/release
 
 # run the CLI with a debug build. `--` separates the program's args from odin's own flags.
+# `-keep-executable` leaves the built binary in place (odin run deletes it by default) so `rerun_debug`
+# can execute it again without recompiling.
 run_debug *args: mktarget_dirs
-	odin run {{cli_pkg}} -debug -microarch:native -show-timings -out:target/debug/{{main_name}} -- {{args}}
+	odin run {{cli_pkg}} -debug -microarch:native -show-timings -keep-executable -out:target/debug/{{main_name}} -- {{args}}
 
 alias run := run_debug
 
 # run the CLI with debug and optimizations
 run_fastdebug *args: mktarget_dirs
-	odin run {{cli_pkg}} -debug -o:speed -microarch:native -show-timings -out:target/fastdebug/{{main_name}} -- {{args}}
+	odin run {{cli_pkg}} -debug -o:speed -microarch:native -show-timings -keep-executable -out:target/fastdebug/{{main_name}} -- {{args}}
 
 # run the CLI with optimizations
 run_release *args: mktarget_dirs
-	odin run {{cli_pkg}} -o:speed -microarch:native -show-timings -out:target/release/{{main_name}} -- {{args}}
+	odin run {{cli_pkg}} -o:speed -microarch:native -show-timings -keep-executable -out:target/release/{{main_name}} -- {{args}}
+
+# re-execute the already-built debug binary WITHOUT recompiling (run `run_debug` once first).
+rerun_debug *args:
+	./target/debug/{{main_name}} {{args}}
+
+alias rerun := rerun_debug
+
+# re-execute the already-built fastdebug binary without recompiling (run `run_fastdebug` once first).
+rerun_fastdebug *args:
+	./target/fastdebug/{{main_name}} {{args}}
+
+# re-execute the already-built release binary without recompiling (run `run_release` once first).
+rerun_release *args:
+	./target/release/{{main_name}} {{args}}
 
 # run the example single-condition generator program (single-file, built with -file)
 example *args: mktarget_dirs

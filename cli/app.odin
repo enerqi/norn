@@ -73,13 +73,18 @@ Usage:
 
 Options:
   -n, --count    N            number of deals to generate (default 1)
-  -f, --format   FORMAT       output format: line|pretty|handviewer|html (default line)
+  -f, --format   FORMAT       output format: line|pretty|handviewer|html|pbn|numeric (default line)
   -o, --output   PATH         output file, or "-" for stdout (default "-")
   -s, --seed     N            PRNG seed for reproducible deals (default: fresh each run)
   -S, --scenario NAME[,…]     keep only deals matching the named scenario(s); with --html-dir, a
                               comma-separated subset to export
       --predeal    SPEC       fix cards to seats before dealing, e.g. "N:AS,KS S:QH" (rank+suit
                               labels: AS=ace spades, TH=ten hearts, 2C=two clubs)
+      --smartstack SPEC       bias one seat to a shape-set + hcp window: "SEAT HCP SHAPE[/SHAPE...]",
+                              e.g. "N 20-21 balanced", "S 10-13 6+,x,x,x". HCP: lo-hi | N | N+ | N-.
+                              SHAPE: keyword (balanced|semibalanced|any) or S,H,D,C length fields
+                              (N | N+ | N- | x). Builds the rare seat directly; can't combine with
+                              --predeal
       --list                  list the available scenarios and exit
       --html-dir DIR          export scenarios to DIR/<name>.html and exit (all, or the --scenario subset)
       --frequency N           measure each scenario's acceptance rate over N deals and exit (no deals
@@ -93,6 +98,8 @@ Examples:
   norn --count 12 --format pretty
   norn --count 24 --seed 1234              # reproducible
   norn -n 12 --predeal "N:AS,KS,QS"        # North always holds the top 3 spades
+  norn -n 12 --smartstack "N 20-21 balanced" # North: balanced 20-21 hcp, built directly
+  norn -n 12 --smartstack "S 10-13 6+,x,x,x" # South: 6+ spades, 10-13 hcp
   norn --scenario 1c-any -n 12 -f pretty   # 12 deals where North opens 1C
   norn -S 2c-opener -f handviewer          # BBO handviewer query strings
   norn -S 2c-opener -n 24 -f html -o x.html# one scenario as an HTML page
