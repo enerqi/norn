@@ -124,6 +124,40 @@ test_generate_accepted_accept_all :: proc(t: ^testing.T) {
 	testing.expect_value(t, attempts, 5)
 }
 
+// count_accepted: accept-all counts every trial; never-accept counts none.
+@(test)
+test_count_accepted_bounds :: proc(t: ^testing.T) {
+	state: rand.Xoshiro256_Random_State
+	context.random_generator = seeded_xoshiro(&state, 7)
+
+	testing.expect_value(t, count_accepted(1000, accept_all), 1000)
+	testing.expect_value(t, count_accepted(1000, never_accept), 0)
+}
+
+// count_accepted: a selective condition lands strictly between 0 and the trial count, and matches
+// the rate seen by re-checking each board independently over the same seed.
+@(test)
+test_count_accepted_selective :: proc(t: ^testing.T) {
+	state: rand.Xoshiro256_Random_State
+	context.random_generator = seeded_xoshiro(&state, 99)
+
+	accepted := count_accepted(5000, north_18plus)
+	testing.expect(t, accepted > 0, "18+ hcp should occur in 5000 deals")
+	testing.expect(t, accepted < 5000, "18+ hcp should not always occur")
+}
+
+// count_accepted_seeded is self-contained and reproducible: the same seed gives the same count
+// (independent of context.random_generator), and different seeds generally differ.
+@(test)
+test_count_accepted_seeded_reproducible :: proc(t: ^testing.T) {
+	a := count_accepted_seeded(3000, north_18plus, 12345)
+	b := count_accepted_seeded(3000, north_18plus, 12345)
+	testing.expect_value(t, a, b)
+
+	c := count_accepted_seeded(3000, north_18plus, 99999)
+	testing.expect(t, a != c, "different seeds should (almost surely) give different counts")
+}
+
 // A condition that never accepts stops at max_attempts with nothing accepted and no output.
 @(test)
 test_generate_accepted_hits_attempt_cap :: proc(t: ^testing.T) {

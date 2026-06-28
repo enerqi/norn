@@ -12,6 +12,11 @@ trace.spall
 .claude
 .codegraph
 
-# parity harness scratch outputs
+# parity harness scratch outputs (the harness itself now lives in the consumer project)
 parity_*.txt
 probe_*.txt
+
+# personal scratch notes (not shipped product)
+PARITY.md
+HANDOFF.md
+.sublime/

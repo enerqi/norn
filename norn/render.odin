@@ -21,6 +21,7 @@ package norn
 	ascending order the enums are declared in, so the orders below are spelled out explicitly.
 */
 
+import "core:math/rand"
 import "core:strings"
 
 // Seats in the order they are written out.
@@ -42,15 +43,34 @@ Output_Format :: enum {
 	// `Pretty` is a human-readable, labelled layout — one seat per line. Handy for eyeballing a
 	// few deals; not meant for machine consumption.
 	Pretty,
+	// `Handviewer` is the BBO (Bridge Base Online) handviewer query string for one deal:
+	//
+	//	n=sKQT874hK74d8743c&s=...&e=...&w=...&a=_&v=-&d=n
+	//
+	// One `seat=s<spades>h<hearts>d<diamonds>c<clubs>` field per seat (N S E W order, BBO's), joined
+	// with '&', then a neutral empty auction / no-vulnerability / North-dealer tail. Append it to
+	// `https://www.bridgebase.com/tools/handviewer.html?` to view the deal. See
+	// https://www.bridgebase.com/tools/hvdoc.html.
+	Handviewer,
+	// `Html` wraps each deal as a handviewer `<iframe>` inside a standalone HTML page (a page header
+	// is emitted once before the deals and a footer once after — see the generation driver). This is
+	// the Odin equivalent of the `run-deal.py --html-output-path` export.
+	Html,
 }
 
-// Render `board` into `builder` using the chosen `format`.
-render_deal :: proc(builder: ^strings.Builder, board: Deal, format: Output_Format) {
+// Render `board` into `builder` using the chosen `format`. `randomize_table` only affects the
+// handviewer-based formats: when true the vulnerability and dealer are drawn from
+// `context.random_generator`; when false they are fixed (`v=-`, `d=n`) so output stays deterministic.
+render_deal :: proc(builder: ^strings.Builder, board: Deal, format: Output_Format, randomize_table := false) {
 	switch format {
 	case .Line:
 		render_deal_line(builder, board)
 	case .Pretty:
 		render_deal_pretty(builder, board)
+	case .Handviewer:
+		render_deal_handviewer(builder, board, randomize_table)
+	case .Html:
+		render_deal_html_iframe(builder, board, randomize_table)
 	}
 }
 
@@ -123,6 +143,135 @@ render_deal_pretty :: proc(builder: ^strings.Builder, board: Deal) {
 		}
 		strings.write_byte(builder, '\n')
 	}
+}
+
+// Seats in BBO handviewer parameter order (n, s, e, w) — note this differs from the N E S W output
+// order used by the line/pretty renderers.
+HANDVIEWER_SEAT_ORDER :: [SEAT_COUNT]Seat{.North, .South, .East, .West}
+
+// Handviewer vulnerability codes (none / NS / EW / both) and dealer codes (N S E W), used when
+// `randomize_table` picks a random table; index 0 of each is the deterministic default.
+@(private = "file")
+HANDVIEWER_VULNERABILITIES := [4]string{"-", "n", "e", "b"}
+@(private = "file")
+HANDVIEWER_DEALERS := [4]string{"n", "s", "e", "w"}
+
+// Write `board` as a BBO handviewer query string (see the `Handviewer` doc on `Output_Format`):
+// `n=s..h..d..c..&s=...&e=...&w=...&a=_&v=..&d=..`, no trailing newline. With `randomize_table` the
+// vulnerability and dealer are drawn from `context.random_generator` (matching the Python tool's
+// practice-variety randomisation); otherwise they are fixed to `v=-`, `d=n` for deterministic output.
+render_deal_handviewer :: proc(builder: ^strings.Builder, board: Deal, randomize_table := false) {
+	for seat in HANDVIEWER_SEAT_ORDER {
+		strings.write_rune(builder, handviewer_seat_letter(seat))
+		strings.write_byte(builder, '=')
+		for suit in SUIT_OUTPUT_ORDER {
+			strings.write_rune(builder, handviewer_suit_letter(suit))
+			write_suit_ranks(builder, board[seat], suit)
+		}
+		strings.write_byte(builder, '&')
+	}
+
+	vulnerability := HANDVIEWER_VULNERABILITIES[0]
+	dealer := HANDVIEWER_DEALERS[0]
+	if randomize_table {
+		vulnerability = HANDVIEWER_VULNERABILITIES[rand.int_max(len(HANDVIEWER_VULNERABILITIES))]
+		dealer = HANDVIEWER_DEALERS[rand.int_max(len(HANDVIEWER_DEALERS))]
+	}
+	// Empty auction, then the (fixed or random) vulnerability and dealer.
+	strings.write_string(builder, "a=_&v=")
+	strings.write_string(builder, vulnerability)
+	strings.write_string(builder, "&d=")
+	strings.write_string(builder, dealer)
+}
+
+// The HTML fragment that opens one handviewer iframe, up to (and including) the `?` of the URL.
+@(private = "file")
+HTML_IFRAME_PREFIX :: `    <div>
+        <iframe src="https://www.bridgebase.com/tools/handviewer.html?`
+
+// The HTML fragment that closes the iframe opened by HTML_IFRAME_PREFIX.
+@(private = "file")
+HTML_IFRAME_SUFFIX :: `"
+        height="900px" width="900px"
+        title="Random hand"
+        id="hand_frame"></iframe>
+    </div>`
+
+// Write `board` as a handviewer `<iframe>` div (one deal of an `Html`-format page). The page header
+// and footer that surround a run of these are emitted by the generation driver, not here.
+// `randomize_table` is forwarded to the handviewer params in the iframe URL.
+render_deal_html_iframe :: proc(builder: ^strings.Builder, board: Deal, randomize_table := false) {
+	strings.write_string(builder, HTML_IFRAME_PREFIX)
+	render_deal_handviewer(builder, board, randomize_table)
+	strings.write_string(builder, HTML_IFRAME_SUFFIX)
+}
+
+// The header emitted once before the deals of an `Html`-format run (everything up to the deal divs).
+@(private = "file")
+HTML_PAGE_HEADER :: `<!DOCTYPE html>
+<head>
+    <title>Practice Deals</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://fonts.googleapis.com/css?family=Open Sans" rel="stylesheet">
+    <style>
+        body { font-family: 'Open Sans'; }
+        .content { margin: auto; max-width: 900px; }
+        iframe { margin-top: 4rem; margin-bottom: 4rem; }
+    </style>
+</head>
+<body class="content">
+`
+
+// The footer emitted once after the deals of an `Html`-format run.
+@(private = "file")
+HTML_PAGE_FOOTER :: `</body>
+`
+
+// Write the once-per-run prologue for `format`. Only `Html` has one (the page header); every other
+// format opens with nothing.
+render_page_prologue :: proc(builder: ^strings.Builder, format: Output_Format) {
+	if format == .Html {
+		strings.write_string(builder, HTML_PAGE_HEADER)
+	}
+}
+
+// Write the once-per-run epilogue for `format`. Mirror of `render_page_prologue`.
+render_page_epilogue :: proc(builder: ^strings.Builder, format: Output_Format) {
+	if format == .Html {
+		strings.write_string(builder, HTML_PAGE_FOOTER)
+	}
+}
+
+// The BBO handviewer seat letter (lowercase n/e/s/w).
+@(private = "file")
+handviewer_seat_letter :: proc "contextless" (seat: Seat) -> rune {
+	switch seat {
+	case .North:
+		return 'n'
+	case .East:
+		return 'e'
+	case .South:
+		return 's'
+	case .West:
+		return 'w'
+	}
+	return '?' // unreachable: the switch above is exhaustive over Seat
+}
+
+// The BBO handviewer suit letter (lowercase s/h/d/c).
+@(private = "file")
+handviewer_suit_letter :: proc "contextless" (suit: Suit) -> rune {
+	switch suit {
+	case .Spades:
+		return 's'
+	case .Hearts:
+		return 'h'
+	case .Diamonds:
+		return 'd'
+	case .Clubs:
+		return 'c'
+	}
+	return '?' // unreachable: the switch above is exhaustive over Suit
 }
 
 // The full name of a seat, used by the pretty renderer.

@@ -2,32 +2,26 @@ set windows-shell := ["nu", "-c"]
 set shell := ["bash", "-c"]
 set unstable  # [script("python")] feature - https://github.com/casey/just/issues/1479
 
-# The CLI binary is built from the cmd/norn package; the library lives in the norn package.
-cli_pkg := "cmd/norn"
+# The CLI binary is a single-file program (cmd/norn.odin, built with -file); the library lives in
+# the norn package. The `-file` is baked in here so every recipe that builds it stays in sync.
+cli_pkg := "cmd/norn.odin -file"
 main_name := "norn.exe"
 test_main_name := "test-main.exe"
 
-# odinfmt every odin file under this directory or subdirectories
-[script("python")]
+# odinfmt every .odin file under this directory (odinfmt walks subdirs itself)
 format:
-	import os, subprocess
-	for (root, _, files) in os.walk("."):
-		for filename in files:
-			if filename.endswith(".odin"):
-				path = os.path.join(root, filename)
-				subprocess.check_call(f"odinfmt -w {path}", shell=True)
+	odinfmt -w .
 
 
 # lint checks for style and potential bugs across every package. Accepts extra args like
 # `--show-timings` as needed. Library packages need -no-entry-point; the program packages do not.
 lint *args:
-	odin check norn -vet -strict-style -no-entry-point {{args}}
-	odin check conditions -vet -strict-style -no-entry-point {{args}}
-	odin check {{cli_pkg}} -vet -strict-style {{args}}
-	odin check cmd/bench -vet -strict-style {{args}}
-	odin check cmd/parity -vet -strict-style {{args}}
-	odin check examples/strong-1c -vet -strict-style {{args}}
-	odin check examples/1major-gf-support -vet -strict-style {{args}}
+	odin check norn -vet -vet-cast -strict-style -no-entry-point {{args}}
+	odin check cli -vet -vet-cast -strict-style -no-entry-point {{args}}
+	odin check {{cli_pkg}} -vet -vet-cast -strict-style {{args}}
+	odin check cmd/bench.odin -file -vet -vet-cast -strict-style {{args}}
+	odin check examples/strong-1c.odin -file -vet -vet-cast -strict-style {{args}}
+	odin check examples/1major-gf-support.odin -file -vet -vet-cast -strict-style {{args}}
 
 
 # ensure the build artifacts top level directory exists
@@ -46,37 +40,36 @@ lint *args:
 	-mkdir target/fastdebug
 	-mkdir target/release
 
-# run the CLI with a debug build
+# run the CLI with a debug build. `--` separates the program's args from odin's own flags.
 run_debug *args: mktarget_dirs
-	odin run {{cli_pkg}} -debug -microarch:native -show-timings -out:target/debug/{{main_name}} {{args}}
+	odin run {{cli_pkg}} -debug -microarch:native -show-timings -out:target/debug/{{main_name}} -- {{args}}
 
 alias run := run_debug
 
 # run the CLI with debug and optimizations
 run_fastdebug *args: mktarget_dirs
-	odin run {{cli_pkg}} -debug -o:speed -microarch:native -show-timings -out:target/fastdebug/{{main_name}} {{args}}
+	odin run {{cli_pkg}} -debug -o:speed -microarch:native -show-timings -out:target/fastdebug/{{main_name}} -- {{args}}
 
 # run the CLI with optimizations
 run_release *args: mktarget_dirs
-	odin run {{cli_pkg}} -o:speed -microarch:native -show-timings -out:target/release/{{main_name}} {{args}}
+	odin run {{cli_pkg}} -o:speed -microarch:native -show-timings -out:target/release/{{main_name}} -- {{args}}
 
-# run the example single-condition generator program
+# run the example single-condition generator program (single-file, built with -file)
 example *args: mktarget_dirs
-	odin run examples/strong-1c -o:speed  -show-timings -microarch:native -out:target/debug/strong-1c.exe {{args}}
+	odin run examples/strong-1c.odin -file -o:speed -show-timings -microarch:native -out:target/debug/strong-1c.exe {{args}}
 
-# run the multi-seat opener+responder example generator program
+# run the multi-seat opener+responder example generator program (single-file, built with -file)
 example2 *args: mktarget_dirs
-	odin run examples/1major-gf-support -o:speed -show-timings -microarch:native -out:target/debug/1major-gf.exe {{args}}
+	odin run examples/1major-gf-support.odin -file -o:speed -show-timings -microarch:native -out:target/debug/1major-gf.exe {{args}}
 
 # run the scan-vs-bitmask-index hand-evaluation benchmark (release, optimised)
 bench *args: mktarget_dirs
-	odin run cmd/bench -o:speed -microarch:native -out:target/release/bench.exe {{args}}
+	odin run cmd/bench.odin -file -o:speed -microarch:native -out:target/release/bench.exe {{args}}
 
 # run all tests in every package that has them
 test *args: mktarget_dirs
 	odin test norn -debug -file -microarch:native -show-timings -out:target/debug/test-norn.exe {{args}}
-	odin test conditions -debug -file -microarch:native -show-timings -out:target/debug/test-conditions.exe {{args}}
-	odin test {{cli_pkg}} -debug -file -microarch:native -show-timings -out:target/debug/test-cli.exe {{args}}
+	odin test cli -debug -file -microarch:native -show-timings -out:target/debug/test-cli.exe {{args}}
 
 # run one named test in the library package (where most unit tests live)
 test1 name *args: mktarget_dirs

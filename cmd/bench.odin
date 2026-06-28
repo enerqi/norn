@@ -24,7 +24,7 @@ import "core:fmt"
 import "core:math/rand"
 import "core:time"
 
-import "../../norn"
+import "../norn"
 
 COUNT_ITERATIONS :: #config(COUNT_ITERATIONS, 5_000_000)
 POOL :: 1 << 16 // 65536 deals, power of two so indexing is a mask

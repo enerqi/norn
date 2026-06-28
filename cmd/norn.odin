@@ -9,9 +9,14 @@ import "core:strings"
 import "core:sync"
 import "core:time"
 
+import "../cli"
 
-// `main_program` — the program's semantic entry point — lives in app.odin, keeping this file to
-// operational setup only.
+
+// The program's semantic entry point is the reusable `cli.main_program`; this file is operational
+// setup only. This bare `norn` binary is the pure deal generator — it ships no scenario registry
+// (passing `nil`), so it serves `--count`/`--format`/`--seed`. Named bidding scenarios live in a
+// consumer project that supplies its own registry to `cli.main_program` (see the norn-as-library
+// docs); the generic driver is shared.
 
 
 main :: proc() { 	// Operational setup before calling `main_program`
@@ -20,7 +25,7 @@ main :: proc() { 	// Operational setup before calling `main_program`
 	// all the cleanup defers below — then terminates the process. (Odin evaluates a deferred call's
 	// arguments at scope exit, so `exit_code` carries main_program's final value.) main_program
 	// itself never calls os.exit, so that operational teardown is never skipped.
-	exit_code := EXIT_OK
+	exit_code := cli.EXIT_OK
 	defer os.exit(exit_code)
 
 	// (1) program duration tracking
@@ -56,7 +61,7 @@ main :: proc() { 	// Operational setup before calling `main_program`
 		defer log_program_duration(start_time)
 	}
 
-	exit_code = main_program()
+	exit_code = cli.main_program(nil)
 }
 
 

@@ -10,6 +10,7 @@ package norn
 	somewhere are the caller's job (see the CLI's run.odin).
 */
 
+import "core:math/rand"
 import "core:strings"
 
 // A condition on a generated board: returns true to keep it. A multi-seat condition reads several
@@ -24,8 +25,9 @@ accept_all :: proc(board: Deal) -> bool {
 
 // Append `count` deals to `builder`, one per line, using `context.random_generator`. Each board is
 // rendered with `format` and followed by a newline, so consumers can read the output line by line.
-render_deals :: proc(builder: ^strings.Builder, count: int, format: Output_Format) {
-	generate_accepted(builder, count, format, accept_all)
+// `randomize_table` is forwarded to the renderer (see `render_deal`).
+render_deals :: proc(builder: ^strings.Builder, count: int, format: Output_Format, randomize_table := false) {
+	generate_accepted(builder, count, format, accept_all, randomize_table = randomize_table)
 }
 
 // Reject sampling: keep dealing boards and render the ones `accept` keeps, until `count` have been
@@ -42,10 +44,14 @@ generate_accepted :: proc(
 	format: Output_Format,
 	accept: Predicate,
 	max_attempts := 0,
+	randomize_table := false,
 ) -> (
 	accepted: int,
 	attempts: int,
 ) {
+	// Page-oriented formats (Html) wrap the run in a header/footer; per-deal formats emit nothing
+	// here. The prologue/epilogue bracket the whole accepted set, not each deal.
+	render_page_prologue(builder, format)
 	for accepted < count {
 		if max_attempts > 0 && attempts >= max_attempts {
 			break
@@ -53,10 +59,35 @@ generate_accepted :: proc(
 		board := deal_board()
 		attempts += 1
 		if accept(board) {
-			render_deal(builder, board, format)
+			render_deal(builder, board, format, randomize_table)
 			strings.write_byte(builder, '\n')
 			accepted += 1
 		}
 	}
+	render_page_epilogue(builder, format)
 	return
+}
+
+// Measure how often `accept` keeps a board, without rendering anything: deal `trials` boards and
+// return how many were accepted. This is the frequency-estimation counterpart to
+// `generate_accepted` — same dealing, no I/O and no builder, so a caller can profile a condition's
+// rarity over a large sample cheaply. The acceptance rate is `accepted / trials`.
+count_accepted :: proc(trials: int, accept: Predicate) -> (accepted: int) {
+	for _ in 0 ..< trials {
+		if accept(deal_board()) {
+			accepted += 1
+		}
+	}
+	return
+}
+
+// As `count_accepted`, but self-contained: it installs its OWN seeded RNG into the local `context`
+// rather than reading whatever `context.random_generator` happens to be. This is what makes the
+// measurement safe to run on a worker thread — each call owns an independent xoshiro stream keyed by
+// `seed`, with no shared mutable state — and reproducible: the same `seed` always yields the same
+// count, regardless of which thread runs it or how many run concurrently.
+count_accepted_seeded :: proc(trials: int, accept: Predicate, seed: u64) -> (accepted: int) {
+	state: rand.Xoshiro256_Random_State
+	context.random_generator = seeded_xoshiro(&state, seed)
+	return count_accepted(trials, accept)
 }
