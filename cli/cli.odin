@@ -15,6 +15,7 @@ package cli
 		-o, --output   PATH        output file, or "-" for stdout (default "-")
 		-s, --seed     N           PRNG seed for reproducible deals (default: a fresh seed each run)
 		-S, --scenario NAME        keep only deals matching a named scenario
+		    --predeal      SPEC    fix cards to seats before dealing, e.g. "N:AS,KS S:QH"
 		    --frequency    N       measure each scenario's acceptance rate over N deals (no deals emitted)
 		    --list                 list the available scenarios
 		-h, --help                 show usage
@@ -54,6 +55,9 @@ Options :: struct {
 	frequency:       bool,
 	// Number of deals to sample per scenario in frequency mode (set by --frequency N).
 	trials:          int,
+	// Cards fixed to seats before dealing (set by --predeal); nil means a fully random deal. Applies
+	// to every generation path (plain, html export, frequency).
+	predeal:         Maybe(norn.Predeal),
 }
 
 // The defaults applied before any flags are read.
@@ -71,6 +75,7 @@ default_options :: proc() -> Options {
 		randomize_table = true,
 		frequency = false,
 		trials = 0,
+		predeal = nil,
 	}
 }
 
@@ -135,6 +140,17 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 			}
 			opts.frequency = true
 			opts.trials = n
+
+		case "--predeal":
+			value, got, why := take_value(has_inline, inline_value, args, &i, flag)
+			if !got {
+				return opts, false, why
+			}
+			pd, pd_ok, pd_why := parse_predeal(value)
+			if !pd_ok {
+				return opts, false, pd_why
+			}
+			opts.predeal = pd
 
 		case "-n", "--count":
 			value, got, why := take_value(has_inline, inline_value, args, &i, flag)

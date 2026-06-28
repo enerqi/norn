@@ -74,9 +74,11 @@ assumptions so it can be embedded and called repeatedly:
 - **Frequency mode** measures each scenario's accept rate over N deals without rendering, seeding
   each scenario independently so the result is reproducible and identical whether run on one core or
   many (it parallelises across physical cores).
+- **Predeal** (`--predeal "N:AS,KS S:QH"`) fixes chosen cards to seats and deals the rest at random
+  around them — a deal conditioned on the fixed holdings, still uniform over the free cards. Lives in
+  `norn/predeal.odin` and threads through every generation path (plain, html export, frequency).
 
-Still future: **predeal** (fixing specific cards before the split — `deal_from_deck` is where it
-hooks in) and shape-biased generation; see below.
+Still future: shape-biased generation (SmartStack) — see below.
 
 ## Integration with bridge-bidding-system
 

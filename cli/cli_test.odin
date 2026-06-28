@@ -108,6 +108,30 @@ test_parse_frequency :: proc(t: ^testing.T) {
 	testing.expect(t, !ok_bad, "non-numeric trials should fail")
 }
 
+// --predeal parses a valid spec into Options.predeal and rejects malformed input.
+@(test)
+test_parse_predeal_flag :: proc(t: ^testing.T) {
+	opts, ok, msg := parse_args({"--predeal", "N:AS,KS S:QH"})
+	testing.expectf(t, ok, "valid predeal should parse: %s", msg)
+	pd, has := opts.predeal.?
+	testing.expect(t, has, "predeal should be set")
+	testing.expect_value(t, pd.counts[norn.Seat.North], 2)
+	testing.expect_value(t, pd.counts[norn.Seat.South], 1)
+	testing.expect_value(t, pd.cards[norn.Seat.North][0], norn.make_card(.Spades, .Ace))
+
+	_, bad_seat, _ := parse_args({"--predeal", "X:AS"})
+	testing.expect(t, !bad_seat, "unknown seat should fail")
+
+	_, bad_card, _ := parse_args({"--predeal", "N:ZZ"})
+	testing.expect(t, !bad_card, "bad card should fail")
+
+	_, dup, _ := parse_args({"--predeal", "N:AS S:AS"})
+	testing.expect(t, !dup, "a card on two seats should fail")
+
+	_, no_prefix, _ := parse_args({"--predeal", "AS,KS"})
+	testing.expect(t, !no_prefix, "a group with no SEAT: prefix should fail")
+}
+
 // select_scenarios: empty selector returns the whole registry; a named subset returns just those
 // (in order); an unknown name is an error.
 @(test)

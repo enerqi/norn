@@ -120,6 +120,58 @@ rank_char :: proc "contextless" (rank: Rank) -> rune {
 	return '?' // unreachable: the switch above is exhaustive over Rank
 }
 
+// Parse a rank from its single-character label (the inverse of `rank_char`): A K Q J T for the
+// honours, the digit 2..9 for the spot cards. Case-insensitive. ok = false on any other byte.
+rank_from_char :: proc "contextless" (c: u8) -> (rank: Rank, ok: bool) {
+	switch c {
+	case 'A', 'a':
+		return .Ace, true
+	case 'K', 'k':
+		return .King, true
+	case 'Q', 'q':
+		return .Queen, true
+	case 'J', 'j':
+		return .Jack, true
+	case 'T', 't':
+		return .Ten, true
+	case '2' ..= '9':
+		// '2' -> Two (backing 0); '9' -> Nine (backing 7). Mirrors rank_char's digit branch.
+		return Rank(int(c) - int('0') - 2), true
+	}
+	return .Two, false
+}
+
+// Parse a suit from its single-character label (the inverse of `suit_letter`): S H D C.
+// Case-insensitive. ok = false on any other byte.
+suit_from_letter :: proc "contextless" (c: u8) -> (suit: Suit, ok: bool) {
+	switch c {
+	case 'S', 's':
+		return .Spades, true
+	case 'H', 'h':
+		return .Hearts, true
+	case 'D', 'd':
+		return .Diamonds, true
+	case 'C', 'c':
+		return .Clubs, true
+	}
+	return .Clubs, false
+}
+
+// Parse a two-character card label, rank first then suit letter: "AS" (ace of spades), "TH" (ten of
+// hearts), "2C" (two of clubs). Case-insensitive. ok = false if the length is wrong or either half
+// doesn't parse. The inverse of the `rank_char`/`suit_letter` pair used by the exporters.
+parse_card :: proc "contextless" (text: string) -> (card: Card, ok: bool) {
+	if len(text) != 2 {
+		return 0, false
+	}
+	rank, rank_ok := rank_from_char(text[0])
+	suit, suit_ok := suit_from_letter(text[1])
+	if !rank_ok || !suit_ok {
+		return 0, false
+	}
+	return make_card(suit, rank), true
+}
+
 // The single-character label for a suit: S H D C. Used by the pretty export and anywhere a
 // suit needs naming. (The line export is positional and does not print suit letters.)
 suit_letter :: proc "contextless" (suit: Suit) -> rune {

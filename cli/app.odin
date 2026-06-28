@@ -78,6 +78,8 @@ Options:
   -s, --seed     N            PRNG seed for reproducible deals (default: fresh each run)
   -S, --scenario NAME[,…]     keep only deals matching the named scenario(s); with --html-dir, a
                               comma-separated subset to export
+      --predeal    SPEC       fix cards to seats before dealing, e.g. "N:AS,KS S:QH" (rank+suit
+                              labels: AS=ace spades, TH=ten hearts, 2C=two clubs)
       --list                  list the available scenarios and exit
       --html-dir DIR          export scenarios to DIR/<name>.html and exit (all, or the --scenario subset)
       --frequency N           measure each scenario's acceptance rate over N deals and exit (no deals
@@ -90,6 +92,7 @@ Examples:
   norn -n 1000 -o deals.txt
   norn --count 12 --format pretty
   norn --count 24 --seed 1234              # reproducible
+  norn -n 12 --predeal "N:AS,KS,QS"        # North always holds the top 3 spades
   norn --scenario 1c-any -n 12 -f pretty   # 12 deals where North opens 1C
   norn -S 2c-opener -f handviewer          # BBO handviewer query strings
   norn -S 2c-opener -n 24 -f html -o x.html# one scenario as an HTML page

@@ -13,8 +13,8 @@ package cli
 import "core:fmt"
 import "core:math/rand"
 import "core:os"
-import si "core:sys/info"
 import "core:strings"
+import si "core:sys/info"
 import "core:thread"
 import "core:time"
 
@@ -48,7 +48,13 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 	defer strings.builder_destroy(&builder)
 
 	if opts.scenario == "" {
-		norn.render_deals(&builder, opts.count, opts.format, randomize_table = opts.randomize_table)
+		norn.render_deals(
+			&builder,
+			opts.count,
+			opts.format,
+			randomize_table = opts.randomize_table,
+			predeal = opts.predeal,
+		)
 	} else {
 		// Reject sampling: deal until `count` deals satisfy the scenario. Report the hit rate on
 		// stderr so a rare scenario's cost is visible (and a typo'd-rare one is obvious).
@@ -58,6 +64,7 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 			opts.format,
 			scenario.predicate,
 			randomize_table = opts.randomize_table,
+			predeal = opts.predeal,
 		)
 		fmt.eprintfln(
 			"norn: scenario %q — %d accepted from %d deals (%.3f%%)",
@@ -114,6 +121,7 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 			s.predicate,
 			HTML_EXPORT_MAX_ATTEMPTS,
 			opts.randomize_table,
+			opts.predeal,
 		)
 		if accepted < opts.count {
 			fmt.eprintfln(
@@ -162,10 +170,7 @@ select_scenarios :: proc(
 		s, found := lookup(registry, name)
 		if !found {
 			delete(filter)
-			return nil, nil, false, fmt.tprintf(
-				"unknown scenario %q (run --list to see the catalogue)",
-				name,
-			)
+			return nil, nil, false, fmt.tprintf("unknown scenario %q (run --list to see the catalogue)", name)
 		}
 		append(&filter, s)
 	}
@@ -183,6 +188,7 @@ Freq_Task :: struct {
 	trials:    int,
 	seed:      u64,
 	predicate: norn.Predicate,
+	predeal:   Maybe(norn.Predeal),
 	result:    ^int,
 }
 
@@ -190,7 +196,7 @@ Freq_Task :: struct {
 // installs its own RNG, so nothing here touches shared mutable state.
 freq_worker :: proc(t: thread.Task) {
 	job := cast(^Freq_Task)t.data
-	job.result^ = norn.count_accepted_seeded(job.trials, job.predicate, job.seed)
+	job.result^ = norn.count_accepted_seeded(job.trials, job.predicate, job.seed, job.predeal)
 }
 
 // Derive a per-scenario seed from the run's base seed and the scenario's index, so each scenario
@@ -240,7 +246,7 @@ measure_frequencies :: proc(registry: []Scenario, opts: Options) -> (ok: bool, m
 	jobs := make([]Freq_Task, len(selected))
 	defer delete(jobs)
 	for s, i in selected {
-		jobs[i] = Freq_Task{opts.trials, scenario_seed(seed, i), s.predicate, &results[i]}
+		jobs[i] = Freq_Task{opts.trials, scenario_seed(seed, i), s.predicate, opts.predeal, &results[i]}
 	}
 
 	if thread_count <= 1 {

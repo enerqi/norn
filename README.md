@@ -12,11 +12,12 @@ It is a native replacement for the TCL-scripted [`deal`](http://bridge.thomasoan
 - Accepts/rejects each deal by a condition — high-card points, suit lengths, shape, controls, losers — written as an Odin predicate (reject sampling).
 - Outputs deals as plain text, "pretty" tables, [BBO handviewer](https://www.bridgebase.com/tools/handviewer.html) query strings, or full HTML pages; batch-exports one HTML page per scenario.
 - Measures how often a scenario's predicate accepts over many deals (`--frequency`), parallelised across CPU cores.
+- Pre-places specific cards (`--predeal "N:AS,KS S:QH"`) and deals the rest around them.
 - Reproducible runs via `--seed`.
 
 Conditions are organised as named **scenarios**. Norn itself is the generic engine + CLI framework; the concrete bidding-system scenarios live in a separate consumer project that supplies its registry — so anyone can reuse Norn as a hand-generation engine with their own conditions.
 
-Planned: predeal (pre-placing specific cards) and shape-biased generation so rare hand types still generate fast; optional double-dummy analysis. See [DESIGN.md](DESIGN.md).
+Planned: shape-biased generation (SmartStack) so rare hand types still generate fast; optional double-dummy analysis. See [DESIGN.md](DESIGN.md).
 
 ## Building from source
 

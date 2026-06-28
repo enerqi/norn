@@ -15,7 +15,7 @@ One Odin package per directory; the single-file programs are built with `-file`.
 
 | Path | Package | Role |
 |------|---------|------|
-| `norn/` | `norn` | the library: engine (cards, deal, shuffle, render, evaluate, generate, summary) + generic bridge evaluation. No `main` — imported by everything else. |
+| `norn/` | `norn` | the library: engine (cards, deal, shuffle, predeal, render, evaluate, generate, summary) + generic bridge evaluation. No `main` — imported by everything else. |
 | `cli/` | `cli` | the reusable CLI framework: argument parsing (`cli.odin`), the `Scenario` registry type + lookup (`scenario.odin`), and the drivers (`run.odin`) for plain generation, HTML batch export, and frequency measurement. Entry point `main_program` is in `app.odin`. No `main`. Imports `norn`. |
 | `cmd/norn.odin` | `main` | the CLI executable — operational scaffold only. Ships a **nil** scenario registry, so it is the pure deal generator (`--count`/`--format`/`--seed`). |
 | `cmd/bench.odin` | `main` | scan-vs-bitmask hand-evaluation micro-benchmark. |

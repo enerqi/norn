@@ -26,8 +26,14 @@ accept_all :: proc(board: Deal) -> bool {
 // Append `count` deals to `builder`, one per line, using `context.random_generator`. Each board is
 // rendered with `format` and followed by a newline, so consumers can read the output line by line.
 // `randomize_table` is forwarded to the renderer (see `render_deal`).
-render_deals :: proc(builder: ^strings.Builder, count: int, format: Output_Format, randomize_table := false) {
-	generate_accepted(builder, count, format, accept_all, randomize_table = randomize_table)
+render_deals :: proc(
+	builder: ^strings.Builder,
+	count: int,
+	format: Output_Format,
+	randomize_table := false,
+	predeal: Maybe(Predeal) = nil,
+) {
+	generate_accepted(builder, count, format, accept_all, randomize_table = randomize_table, predeal = predeal)
 }
 
 // Reject sampling: keep dealing boards and render the ones `accept` keeps, until `count` have been
@@ -45,10 +51,12 @@ generate_accepted :: proc(
 	accept: Predicate,
 	max_attempts := 0,
 	randomize_table := false,
+	predeal: Maybe(Predeal) = nil,
 ) -> (
 	accepted: int,
 	attempts: int,
 ) {
+	pd, has_predeal := predeal.?
 	// Page-oriented formats (Html) wrap the run in a header/footer; per-deal formats emit nothing
 	// here. The prologue/epilogue bracket the whole accepted set, not each deal.
 	render_page_prologue(builder, format)
@@ -56,7 +64,7 @@ generate_accepted :: proc(
 		if max_attempts > 0 && attempts >= max_attempts {
 			break
 		}
-		board := deal_board()
+		board := deal_board_predealt(pd) if has_predeal else deal_board()
 		attempts += 1
 		if accept(board) {
 			render_deal(builder, board, format, randomize_table)
@@ -72,9 +80,11 @@ generate_accepted :: proc(
 // return how many were accepted. This is the frequency-estimation counterpart to
 // `generate_accepted` — same dealing, no I/O and no builder, so a caller can profile a condition's
 // rarity over a large sample cheaply. The acceptance rate is `accepted / trials`.
-count_accepted :: proc(trials: int, accept: Predicate) -> (accepted: int) {
+count_accepted :: proc(trials: int, accept: Predicate, predeal: Maybe(Predeal) = nil) -> (accepted: int) {
+	pd, has_predeal := predeal.?
 	for _ in 0 ..< trials {
-		if accept(deal_board()) {
+		board := deal_board_predealt(pd) if has_predeal else deal_board()
+		if accept(board) {
 			accepted += 1
 		}
 	}
@@ -86,8 +96,15 @@ count_accepted :: proc(trials: int, accept: Predicate) -> (accepted: int) {
 // measurement safe to run on a worker thread — each call owns an independent xoshiro stream keyed by
 // `seed`, with no shared mutable state — and reproducible: the same `seed` always yields the same
 // count, regardless of which thread runs it or how many run concurrently.
-count_accepted_seeded :: proc(trials: int, accept: Predicate, seed: u64) -> (accepted: int) {
+count_accepted_seeded :: proc(
+	trials: int,
+	accept: Predicate,
+	seed: u64,
+	predeal: Maybe(Predeal) = nil,
+) -> (
+	accepted: int,
+) {
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = seeded_xoshiro(&state, seed)
-	return count_accepted(trials, accept)
+	return count_accepted(trials, accept, predeal)
 }
