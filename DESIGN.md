@@ -91,6 +91,36 @@ SmartStack is driven from the command line by `--smartstack "SEAT HCP SHAPE[/SHA
 `lo-hi | N | N+ | N-`; SHAPE: a keyword `balanced|semibalanced|any` or four S,H,D,C length fields,
 each `N | N+ | N- | x`, with `/` unioning alternatives). It cannot be combined with `--predeal`.
 
+## Parallelism
+
+Scenarios are independent, so the **batch** commands fan out across physical cores:
+
+- **`--frequency`** (`measure_frequencies`) and **`--html-dir`** (`export_all_html`) both run one task
+  per scenario on a `thread.Pool` (one thread per physical core, capped at the scenario count). Each
+  task owns its RNG (a local Xoshiro seeded by `scenario_seed(base, index)`), its builder, and its
+  result slot — no shared mutable state in the hot loop. Output is therefore **identical on 1 core or
+  N**, and reproducible from `--seed`. HTML writes a separate file per scenario (N independent sinks,
+  no output contention); frequency concatenates its table on the main thread after the join.
+- These are the **only** two multi-scenario paths. Every other format reaches output through `run`,
+  which is a **single** scenario (or `accept_all`) — one ordered stream, nothing to fan out.
+
+**Invariant to keep: one pool per command, leaf tasks only.** Tasks are single-threaded; to use more
+parallelism, emit more tasks into the same pool — never spawn a pool inside a task. Nesting pools
+would give N×N OS threads (each `pool_init` spawns `thread_count` threads that are then reused across
+tasks). Real cross-thread cost here is not the pool's queue mutex (negligible at this coarse task
+granularity) but the shared heap allocator on builder growth — mitigated by presizing builders
+(`output_size_hint`); if it ever shows under profiling, switch to mimalloc (per-thread heaps,
+`MIMALLOC_ENABLE`) and drop the tracking allocator (`-define:TRACKING_ALLOCATOR_ENABLE=false`), not
+the pool.
+
+**Single-scenario generation is left serial, deliberately.** A lone scenario in `run` has no
+cross-scenario axis; the only speedup would be a fine within-scenario axis (probe the accept rate,
+then shard the `count` quota across cores). Skipped because it almost never matters: norn deals
+millions/sec, even a rare ~55-per-million accept rate fills the handful of deals a human actually
+reads near-instantly. If it's ever wanted, build it under the same invariant — `run` has no outer
+pool, so its own pool can't nest — by probing single-threaded first, then running N quota-shard tasks
+(seeded per shard) in one pool and concatenating the shard buffers in index order.
+
 ## Ported from deal (the evaluator surface)
 
 The generic evaluation vocabulary the bidding-system scripts use is ported into `norn/evaluate.odin`
