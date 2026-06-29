@@ -81,17 +81,7 @@ HONOR_VALUES := [HONORS_PER_SUIT]int{1, 2, 3, 4}
 
 // The nine spot ranks (no hcp), the pool the low cards of every holding are drawn from.
 @(private = "file")
-SPOT_RANKS := [SPOTS_PER_SUIT]Rank {
-	.Two,
-	.Three,
-	.Four,
-	.Five,
-	.Six,
-	.Seven,
-	.Eight,
-	.Nine,
-	.Ten,
-}
+SPOT_RANKS := [SPOTS_PER_SUIT]Rank{.Two, .Three, .Four, .Five, .Six, .Seven, .Eight, .Nine, .Ten}
 
 // Binomial coefficients C(9, k) for k = 0..9 — the number of ways to choose the spot cards that fill
 // out a holding. `binom9` guards the out-of-range k (no holding can use more than 9 spots).

@@ -1,7 +1,7 @@
 package norn
 
 /*
-	evaluate_test.odin — unit tests for the hand evaluation primitives (over `HandSummary`).
+	evaluate_test.odin — unit tests for the hand evaluation primitives (over `Hand_Summary`).
 
 	Hands are built explicitly so the expected evaluations are known exactly; each test summarizes
 	the fixture and asserts the evaluator output. `summarize` is exercised transitively throughout.

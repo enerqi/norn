@@ -117,11 +117,7 @@ parse_alternative :: proc(text: string) -> (alt: Alternative, ok: bool, message:
 	fields := strings.split(text, ",")
 	defer delete(fields)
 	if len(fields) != norn.SUIT_COUNT {
-		return {}, false, fmt.tprintf(
-			"smartstack: shape %q needs %d comma-separated suit lengths (S,H,D,C) or a keyword",
-			text,
-			norn.SUIT_COUNT,
-		)
+		return {}, false, fmt.tprintf("smartstack: shape %q needs %d comma-separated suit lengths (S,H,D,C) or a keyword", text, norn.SUIT_COUNT)
 	}
 	for f, i in fields {
 		r, r_ok, why := parse_range(strings.trim_space(f), norn.HAND_SIZE, "suit length")
@@ -221,11 +217,7 @@ parse_smartstack :: proc(spec: string) -> (ss: norn.Smart_Stack, ok: bool, messa
 
 	built, build_ok := norn.smartstack_make(seat, chosen[:chosen_count], hcp.lo, hcp.hi)
 	if !build_ok {
-		return {}, false, fmt.tprintf(
-			"smartstack: no hand matches that shape and %d-%d hcp",
-			hcp.lo,
-			hcp.hi,
-		)
+		return {}, false, fmt.tprintf("smartstack: no hand matches that shape and %d-%d hcp", hcp.lo, hcp.hi)
 	}
 	return built, true, ""
 }

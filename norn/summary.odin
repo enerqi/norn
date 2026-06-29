@@ -7,7 +7,7 @@ package norn
 	what's its shape" by rescanning all 13 on every query is wasteful when a predicate fires dozens
 	of such queries and reject sampling runs that predicate over millions of deals.
 
-	A `HandSummary` is the per-suit index almost every query actually wants: four 16-bit masks, one
+	A `Hand_Summary` is the per-suit index almost every query actually wants: four 16-bit masks, one
 	per suit, with bit `r` set when the hand holds rank `r` (rank backing value 0..12). Built once
 	from a hand in 13 ops (`summarize`), it turns the hot queries into popcount / AND / bit-test:
 
@@ -19,7 +19,7 @@ package norn
 
 	The summary is a LOSSLESS re-encoding of a hand for evaluation — it drops only card ordering
 	(irrelevant) and can't represent duplicates (impossible in bridge) — so every evaluator a
-	predicate needs lives here, over `HandSummary`. `Hand` survives only where the actual cards
+	predicate needs lives here, over `Hand_Summary`. `Hand` survives only where the actual cards
 	matter: predeal/SmartStack construction and rendering. The generation core builds one
 	`Deal_Summary` per board and hands it to the `Predicate` (see generate.odin), so a condition
 	pays the 13-op build once per deal, not once per query.
@@ -34,12 +34,12 @@ package norn
 import "base:intrinsics"
 
 // Per-suit rank bitmasks. `suits[suit]` has bit `int(rank)` set iff the hand holds that card.
-HandSummary :: struct {
+Hand_Summary :: struct {
 	suits: [Suit]u16,
 }
 
 // A whole deal's worth of summaries, indexed by seat (parallel to `Deal`).
-Deal_Summary :: [Seat]HandSummary
+Deal_Summary :: [Seat]Hand_Summary
 
 // Honour bits, by rank backing value (Ace=12 … Ten=8).
 @(private = "file")
@@ -90,8 +90,8 @@ DHCP_WEIGHTS := [4][4]int {
 }
 
 // Build the bitmask index for a hand (13 ops, once).
-summarize :: proc(hand: Hand) -> HandSummary {
-	s: HandSummary
+summarize :: proc(hand: Hand) -> Hand_Summary {
+	s: Hand_Summary
 	for card in hand {
 		s.suits[card_suit(card)] |= u16(1) << u16(card_rank(card))
 	}
@@ -110,23 +110,23 @@ summarize_deal :: proc(board: Deal) -> Deal_Summary {
 // --- Counts and lookups. ---
 
 // Number of cards held in `suit` (0..13).
-suit_length :: proc(s: HandSummary, suit: Suit) -> int {
+suit_length :: proc(s: Hand_Summary, suit: Suit) -> int {
 	return int(intrinsics.count_ones(s.suits[suit]))
 }
 
 // Named per-suit length shortcuts, mirroring deal's `spades $hand` / `hearts $hand` vocabulary.
-spade_length :: proc(s: HandSummary) -> int {return suit_length(s, .Spades)}
-heart_length :: proc(s: HandSummary) -> int {return suit_length(s, .Hearts)}
-diamond_length :: proc(s: HandSummary) -> int {return suit_length(s, .Diamonds)}
-club_length :: proc(s: HandSummary) -> int {return suit_length(s, .Clubs)}
+spade_length :: proc(s: Hand_Summary) -> int {return suit_length(s, .Spades)}
+heart_length :: proc(s: Hand_Summary) -> int {return suit_length(s, .Hearts)}
+diamond_length :: proc(s: Hand_Summary) -> int {return suit_length(s, .Diamonds)}
+club_length :: proc(s: Hand_Summary) -> int {return suit_length(s, .Clubs)}
 
 // Does the hand hold this exact card?
-holds :: proc(s: HandSummary, suit: Suit, rank: Rank) -> bool {
+holds :: proc(s: Hand_Summary, suit: Suit, rank: Rank) -> bool {
 	return s.suits[suit] & (u16(1) << u16(rank)) != 0
 }
 
 // High-card points for the whole hand: Ace=4, King=3, Queen=2, Jack=1.
-hcp :: proc(s: HandSummary) -> int {
+hcp :: proc(s: Hand_Summary) -> int {
 	total := 0
 	for suit in Suit {
 		m := s.suits[suit]
@@ -139,7 +139,7 @@ hcp :: proc(s: HandSummary) -> int {
 }
 
 // Control count for the whole hand: Ace=2, King=1.
-controls :: proc(s: HandSummary) -> int {
+controls :: proc(s: Hand_Summary) -> int {
 	total := 0
 	for suit in Suit {
 		m := s.suits[suit]
@@ -151,13 +151,13 @@ controls :: proc(s: HandSummary) -> int {
 
 // How many of the top `n` ranks the hand holds in `suit` (deal's `TopN` honour vectors). `n` is
 // 0..7 (A K Q J T 9 8).
-top_count :: proc(s: HandSummary, suit: Suit, n: int) -> int {
+top_count :: proc(s: Hand_Summary, suit: Suit, n: int) -> int {
 	return int(intrinsics.count_ones(s.suits[suit] & TOP_MASKS[n]))
 }
 
 // Weighted top-honour count for `suit`: ace, king and queen score 2 each; jack and ten score 1
 // each (deal `defvector Top5Q 2 2 2 1 1`). A solid AKQ is 6; AKQJT is 8.
-top5q :: proc(s: HandSummary, suit: Suit) -> int {
+top5q :: proc(s: Hand_Summary, suit: Suit) -> int {
 	m := s.suits[suit]
 	high := ACE_BIT | KING_BIT | QUEEN_BIT
 	low := JACK_BIT | TEN_BIT
@@ -167,7 +167,7 @@ top5q :: proc(s: HandSummary, suit: Suit) -> int {
 // Sum of `weights` over the top ranks held in `suit`, ace downward: `weights[0]` for the ace,
 // `weights[1]` for the king, … through A K Q J T 9 8. Ranks past the end of `weights` score 0.
 @(private = "file")
-suit_top_weighted :: proc(s: HandSummary, suit: Suit, weights: []int) -> int {
+suit_top_weighted :: proc(s: Hand_Summary, suit: Suit, weights: []int) -> int {
 	ranks := [7]Rank{.Ace, .King, .Queen, .Jack, .Ten, .Nine, .Eight}
 	sum := 0
 	for weight, i in weights {
@@ -181,7 +181,7 @@ suit_top_weighted :: proc(s: HandSummary, suit: Suit, weights: []int) -> int {
 // --- Shape. ---
 
 // The hand's shape: suit lengths in S H D C order (deal's `[hand shape]`).
-shape :: proc(s: HandSummary) -> [SUIT_COUNT]int {
+shape :: proc(s: Hand_Summary) -> [SUIT_COUNT]int {
 	return [SUIT_COUNT]int {
 		suit_length(s, .Spades),
 		suit_length(s, .Hearts),
@@ -192,7 +192,7 @@ shape :: proc(s: HandSummary) -> [SUIT_COUNT]int {
 
 // The hand's pattern: the four suit lengths sorted high-to-low and suit-agnostic (deal's
 // `[hand pattern]`), e.g. {5, 4, 2, 2}.
-pattern :: proc(s: HandSummary) -> [SUIT_COUNT]int {
+pattern :: proc(s: Hand_Summary) -> [SUIT_COUNT]int {
 	lengths := shape(s)
 	// Selection sort, descending — only four elements.
 	for i in 0 ..< SUIT_COUNT {
@@ -209,7 +209,7 @@ pattern :: proc(s: HandSummary) -> [SUIT_COUNT]int {
 
 // Is the hand a "5CM_nt" shape: exactly 4-3-3-3, 4-4-3-2 or 5-3-3-2 (the 5 may be a major)? deal's
 // `5CM_nt` shape test with the hcp range stripped out (callers pair it with their own hcp band).
-is_nt5cM_shape :: proc(s: HandSummary) -> bool {
+is_nt5cM_shape :: proc(s: Hand_Summary) -> bool {
 	has_four := false
 	has_five := false
 	for suit in Suit {
@@ -225,7 +225,7 @@ is_nt5cM_shape :: proc(s: HandSummary) -> bool {
 
 // Is the hand balanced? deal's definition: no 5-card major and the sum of squared suit lengths is at
 // most 47 (admits 4-3-3-3, 4-4-3-2 and minor 5-3-3-2).
-is_balanced :: proc(s: HandSummary) -> bool {
+is_balanced :: proc(s: Hand_Summary) -> bool {
 	sp := suit_length(s, .Spades)
 	h := suit_length(s, .Hearts)
 	d := suit_length(s, .Diamonds)
@@ -238,7 +238,7 @@ is_balanced :: proc(s: HandSummary) -> bool {
 
 // Is the hand semi-balanced? deal's definition: no suit shorter than a doubleton, no major longer
 // than 5, no minor longer than 6.
-is_semibalanced :: proc(s: HandSummary) -> bool {
+is_semibalanced :: proc(s: Hand_Summary) -> bool {
 	sp := suit_length(s, .Spades)
 	h := suit_length(s, .Hearts)
 	d := suit_length(s, .Diamonds)
@@ -248,7 +248,7 @@ is_semibalanced :: proc(s: HandSummary) -> bool {
 
 // Is the hand a notrump opening of `min`..`max` hcp: balanced AND in the hcp range (deal's
 // `nt $hand min max`).
-is_nt :: proc(s: HandSummary, min, max: int) -> bool {
+is_nt :: proc(s: Hand_Summary, min, max: int) -> bool {
 	if !is_balanced(s) {
 		return false
 	}
@@ -262,7 +262,7 @@ is_nt :: proc(s: HandSummary, min, max: int) -> bool {
 // tie-break rationale.
 
 // `is_spade_shape`: spades a 5+ suit, at least as long as hearts and the minors (spades win ties).
-is_spade_shape :: proc(s: HandSummary) -> bool {
+is_spade_shape :: proc(s: Hand_Summary) -> bool {
 	sp := suit_length(s, .Spades)
 	h := suit_length(s, .Hearts)
 	d := suit_length(s, .Diamonds)
@@ -271,7 +271,7 @@ is_spade_shape :: proc(s: HandSummary) -> bool {
 }
 
 // `is_heart_shape`: hearts a 5+ suit, strictly longer than spades and at least as long as the minors.
-is_heart_shape :: proc(s: HandSummary) -> bool {
+is_heart_shape :: proc(s: Hand_Summary) -> bool {
 	sp := suit_length(s, .Spades)
 	h := suit_length(s, .Hearts)
 	d := suit_length(s, .Diamonds)
@@ -281,7 +281,7 @@ is_heart_shape :: proc(s: HandSummary) -> bool {
 
 // `is_diamond_shape`: diamonds the long minor, beating both majors and clubs (a clubs tie counts as
 // diamonds only when both are 5+).
-is_diamond_shape :: proc(s: HandSummary) -> bool {
+is_diamond_shape :: proc(s: Hand_Summary) -> bool {
 	sp := suit_length(s, .Spades)
 	h := suit_length(s, .Hearts)
 	d := suit_length(s, .Diamonds)
@@ -291,7 +291,7 @@ is_diamond_shape :: proc(s: HandSummary) -> bool {
 
 // `is_club_shape`: clubs the long minor, beating both majors and diamonds (a diamonds tie counts as
 // clubs only when both are under 5).
-is_club_shape :: proc(s: HandSummary) -> bool {
+is_club_shape :: proc(s: Hand_Summary) -> bool {
 	sp := suit_length(s, .Spades)
 	h := suit_length(s, .Hearts)
 	d := suit_length(s, .Diamonds)
@@ -304,7 +304,7 @@ is_club_shape :: proc(s: HandSummary) -> bool {
 // Losing Trick Count for the whole hand, matching deal's `losers` builtin EXACTLY — HALF-loser
 // units (every value doubled), plus the queen refinement: a held queen only fully covers its slot
 // when "backed" by another honour (A/K/J/T) in the suit; an unbacked queen covers only half.
-losers :: proc(s: HandSummary) -> int {
+losers :: proc(s: Hand_Summary) -> int {
 	total := 0
 	for suit in Suit {
 		length := suit_length(s, suit)
@@ -333,7 +333,7 @@ losers :: proc(s: HandSummary) -> int {
 // Estimated offensive tricks from `suit` (deal's `offense`, verified to the digit). Start from the
 // suit length and dock losers by which top honours are missing; a solid suit returns its full
 // length, a ragged one several fewer.
-offense :: proc(s: HandSummary, suit: Suit) -> int {
+offense :: proc(s: Hand_Summary, suit: Suit) -> int {
 	length := suit_length(s, suit)
 	a := holds(s, suit, .Ace)
 	k := holds(s, suit, .King)
@@ -371,7 +371,7 @@ offense :: proc(s: HandSummary, suit: Suit) -> int {
 
 // Estimated DEFENSIVE tricks from `suit`, in HALF-units (like `losers`), matching deal's `defense`
 // holdingProc. Honours that win tricks on defence are devalued in short suits.
-defense :: proc(s: HandSummary, suit: Suit) -> int {
+defense :: proc(s: Hand_Summary, suit: Suit) -> int {
 	length := suit_length(s, suit)
 	a := holds(s, suit, .Ace)
 	k := holds(s, suit, .King)
@@ -397,7 +397,7 @@ defense :: proc(s: HandSummary, suit: Suit) -> int {
 // Offensive potential of the whole hand (deal's `OP`): per suit `offense - defense` (since `defense`
 // here is already deal's `2*defense`), summed. High for shapely offensive hands, low/negative for
 // flat defensive ones.
-op :: proc(s: HandSummary) -> int {
+op :: proc(s: Hand_Summary) -> int {
 	total := 0
 	for suit in Suit {
 		total += offense(s, suit) - defense(s, suit)
@@ -407,7 +407,7 @@ op :: proc(s: HandSummary) -> int {
 
 // Distribution-adjusted high-card points for the whole hand (deal's `dhcp`): like `hcp`, but honours
 // in short suits count for less (see `DHCP_WEIGHTS`).
-dhcp :: proc(s: HandSummary) -> int {
+dhcp :: proc(s: Hand_Summary) -> int {
 	total := 0
 	for suit in Suit {
 		bucket := min(suit_length(s, suit), 3)
@@ -419,7 +419,7 @@ dhcp :: proc(s: HandSummary) -> int {
 // "New" Losing Trick Count for the whole hand, in HALF-units (deal's `newLTC`): counts only missing
 // A/K/Q cover cards, no queen-backing refinement — missing ace 3, missing king (len>=2) 2, missing
 // queen (len>=3) 1.
-new_ltc :: proc(s: HandSummary) -> int {
+new_ltc :: proc(s: Hand_Summary) -> int {
 	total := 0
 	for suit in Suit {
 		length := suit_length(s, suit)

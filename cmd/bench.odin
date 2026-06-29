@@ -3,7 +3,7 @@ package main
 /*
 	cmd/bench — hand-evaluation cost of the bitmask index.
 
-	Now that every evaluator runs on a `HandSummary` (see norn/summary.odin), this measures the two
+	Now that every evaluator runs on a `Hand_Summary` (see norn/summary.odin), this measures the two
 	things that remain: how much the per-deal index build costs, and how cheap evaluation is once the
 	index exists — both against the deal/shuffle cost they sit next to. Follows the `core:time`
 	Benchmark_Options style.
@@ -41,7 +41,7 @@ sink: int
 
 // Does this hand open a limited (11-15) 1-major? A trimmed `is_1major_opener` that still exercises
 // the hot mix: hcp, four suit lengths, a shape test, controls, pattern, and honour counts.
-qualifies :: proc(s: norn.HandSummary) -> bool {
+qualifies :: proc(s: norn.Hand_Summary) -> bool {
 	p := norn.hcp(s)
 	if p < 11 || p > 15 {
 		return false
