@@ -37,7 +37,20 @@ Current sims don't need it. If makeable-tricks analysis is added later, the DDS 
 - Entry points: `SolveBoard`, `SolveAllBoards`, `CalcDDtable` (20-cell table), `CalcAllTables`, `Par`/`DealerPar`, `SetMaxThreads`.
 - Structs: `deal`, `ddTableDeal`, `futureTricks`, `ddTableResults`, `parResults` (cards as suit/rank bitfields).
 - Gotchas: call `SetMaxThreads(0)` once at startup (auto-detect cores); reuse the transposition-table cache across boards (don't re-init per deal); Windows ships `dds.dll`, Linux/Mac build `libdds` from source.
-- Reference: Rust's `dds-bridge` / `dds-bridge-sys` crates do the same FFI over `dll.h`. (`rustdds` is unrelated — networking, not double-dummy.)
+- Mirror the structs from `dll.h` exactly (field order + padding). Functions return `RETURN_NO_FAULT` (1) on success, negative error codes otherwise (header lists them).
+- Odin FFI sketch:
+
+  ```odin
+  foreign import dds "dds.dll"   // or libdds.so
+  @(default_calling_convention="c")
+  foreign dds {
+      SolveBoard    :: proc(dl: deal, target, solutions, mode: c.int, fut: ^futureTricks, thrId: c.int) -> c.int ---
+      CalcDDtable   :: proc(tableDeal: ddTableDeal, res: ^ddTableResults) -> c.int ---
+      SetMaxThreads :: proc(userThreads: c.int) ---
+  }
+  ```
+
+- Reference: Rust's `dds-bridge` / `dds-bridge-sys` crates do the same FFI over `dll.h` (most mature route). `bridgitte` is a pure-Rust solver (no C++ dep); `brydz_dd` is pure-Rust but unoptimized — skip. (`rustdds` is unrelated — networking, not double-dummy.)
 
 ## Existing alternatives (considered)
 
@@ -144,8 +157,9 @@ forgotten):
 
 ## Integration with bridge-bidding-system
 
-The bridge repo (`~/docs/bridge/bridge-bidding-system`) drives deals via `deal-simulations/run-deal.py`
-and `regen-html-deals.py`. Those scripts may still be used to scaffold/drive multiple generation
-tasks in future. Keep Norn's text output format compatible so they (and the `just run-scratch` /
-`just regen` recipes) can swap `deal.exe` → `norn` with minimal change. Broader background: that
-repo's `deal-simulations/deal-generator-notes.md`.
+The bridge repo (`~/docs/bridge/bridge-bidding-system`) now consumes Norn as its **default** deal
+engine via the Odin project `deal-simulations/odin-sims/` (driven by `just regen-norn` / `run-norn`).
+The old `deal.exe` + Tcl path (`deal-simulations/tcl-sims/`, plus `run-deal.py` /
+`regen-html-deals.py`) is retained only as the parity cross-check ground truth. Norn keeps its line
+output format compatible with `deal.exe`'s `-l` so the two corpora stay diff-able. Full picture:
+that repo's `deal-simulations/README.md`.
