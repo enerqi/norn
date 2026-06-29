@@ -60,7 +60,7 @@ just diagnose       # verbose build of the CLI
 
 - Pass program args after `--` (e.g. `just run -- --count 48 --seed 1234`).
 - Build artifacts go under `target/{debug,fastdebug,release}/` (like Cargo's `target/`). `mktarget_dirs` auto-runs before builds.
-- Always run `just lint` + `just test` before considering a change done — `lint` is the type-check + vet + strict-style gate across all packages.
+- Always run `just lint`, `just format`, and `just test` before considering a change done — these are the quality gate. `lint` is the type-check + vet + strict-style check across all packages, `format` applies `odinfmt`, and `test` runs the package tests.
 
 **Scenario flags need a registry.** `--scenario`, `--list`, `--html-dir`, and `--frequency` operate on the scenario registry. The bare `cmd/norn` binary ships a nil registry, so those flags have nothing to act on — exercise them from a consumer (`odin-sims`) or a throwaway program that passes its own `[]cli.Scenario` to `cli.main_program`. `--frequency N` measures each scenario's acceptance rate over N deals (no deals emitted) and parallelises across physical cores.
 
