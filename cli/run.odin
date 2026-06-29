@@ -90,10 +90,52 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 	return write_output(opts.output, strings.to_string(builder))
 }
 
+// One scenario's HTML export job, handed to a worker thread: render `count` deals matching
+// `predicate` into `builder`, using an RNG seeded by `seed`. Each task owns a distinct builder, so
+// the workers never write the same memory. `accepted`/`attempts` are filled in for the main thread
+// to warn on under-fills after the pool joins (file I/O is left to the main thread for simple,
+// ordered error handling).
+Export_Task :: struct {
+	count:           int,
+	seed:            u64,
+	predicate:       norn.Predicate,
+	randomize_table: bool,
+	predeal:         Maybe(norn.Predeal),
+	// Shared, read-only across workers (randomness comes from each task's own seeded RNG), so one
+	// pointer is safe to hand to every thread. nil if no --smartstack.
+	smartstack:      ^norn.Smart_Stack,
+	builder:         ^strings.Builder,
+	accepted:        int,
+	attempts:        int,
+}
+
+// Thread-pool body: render one scenario's HTML page. Self-contained — it installs its OWN seeded
+// RNG into the worker's context, so nothing here touches shared mutable state.
+export_worker :: proc(t: thread.Task) {
+	job := cast(^Export_Task)t.data
+	state: rand.Xoshiro256_Random_State
+	context.random_generator = norn.seeded_xoshiro(&state, job.seed)
+	job.accepted, job.attempts = norn.generate_accepted(
+		job.builder,
+		job.count,
+		.Html,
+		job.predicate,
+		HTML_EXPORT_MAX_ATTEMPTS,
+		job.randomize_table,
+		job.predeal,
+		job.smartstack,
+	)
+}
+
 // Batch-export every scenario in `registry` to `<opts.html_dir>/<name>.html`, each an HTML page of
-// `opts.count` deals matching that scenario. The Odin equivalent of regen-html-deals.py. Returns
-// ok = false with a message on a write error; per-scenario hit rates and any shortfalls are reported
-// on stderr.
+// `opts.count` deals matching that scenario. The Odin equivalent of regen-html-deals.py.
+//
+// The scenarios are independent, so the rendering is split across a thread pool — up to one thread
+// per physical core, never more than there are scenarios. Each scenario is seeded independently of
+// the partition (see `scenario_seed`), so the output is identical whether it runs on 1 thread or
+// many, and is reproducible from --seed. File writes and stderr warnings happen on the main thread
+// after the pool joins, in scenario order. Returns ok = false with a message on a write error;
+// per-scenario shortfalls are reported on stderr.
 export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) {
 	if len(registry) == 0 {
 		return false, "no scenarios to export (registry is empty)"
@@ -112,15 +154,22 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 		}
 	}
 
-	// One seed for the whole batch keeps a run reproducible end to end.
+	// One base seed keeps the whole batch reproducible; the per-scenario seeds derive from it.
 	seed := opts.seed
 	if !opts.has_seed {
 		seed = fresh_seed()
 		fmt.eprintfln("norn: seed=%d (pass --seed %d to reproduce)", seed, seed)
 	}
-	state: rand.Xoshiro256_Random_State
-	context.random_generator = norn.seeded_xoshiro(&state, seed)
 
+	// One thread per physical core, capped at the number of scenarios (no point spawning idle
+	// workers). Fall back to a single thread if the core count can't be determined.
+	thread_count := 1
+	if physical, _, cores_ok := si.cpu_core_count(); cores_ok {
+		thread_count = physical
+	}
+	thread_count = clamp(thread_count, 1, len(selected))
+
+	// Shared SmartStack spec (read-only) handed to every worker; lives until the pool finishes.
 	ss: ^norn.Smart_Stack
 	spec: norn.Smart_Stack
 	if got, has := opts.smartstack.?; has {
@@ -128,38 +177,63 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 		ss = &spec
 	}
 
-	// One builder reused across every scenario: `builder_reset` keeps the backing buffer and just
-	// rewinds the length, so we pay the (presized) allocation once instead of churning a fresh buffer
-	// per scenario.
-	builder := strings.builder_make_len_cap(0, output_size_hint(.Html, opts.count))
-	defer strings.builder_destroy(&builder)
+	// One builder per scenario (workers run concurrently, so they can't share one), each presized to
+	// the expected HTML page so it rarely has to grow mid-render.
+	builders := make([]strings.Builder, len(selected))
+	defer {
+		for &b in builders {
+			strings.builder_destroy(&b)
+		}
+		delete(builders)
+	}
+	for &b in builders {
+		b = strings.builder_make_len_cap(0, output_size_hint(.Html, opts.count))
+	}
 
-	for s in selected {
-		strings.builder_reset(&builder)
+	jobs := make([]Export_Task, len(selected))
+	defer delete(jobs)
+	for s, i in selected {
+		jobs[i] = Export_Task {
+			count           = opts.count,
+			seed            = scenario_seed(seed, i),
+			predicate       = s.predicate,
+			randomize_table = opts.randomize_table,
+			predeal         = opts.predeal,
+			smartstack      = ss,
+			builder         = &builders[i],
+		}
+	}
 
-		// Cap attempts so a very rare scenario can't loop indefinitely; warn if it under-fills.
-		accepted, attempts := norn.generate_accepted(
-			&builder,
-			opts.count,
-			.Html,
-			s.predicate,
-			HTML_EXPORT_MAX_ATTEMPTS,
-			opts.randomize_table,
-			opts.predeal,
-			ss,
-		)
-		if accepted < opts.count {
+	if thread_count <= 1 {
+		// Single core (or a lone scenario): skip the pool machinery and run inline.
+		for &job in jobs {
+			export_worker(thread.Task{data = &job})
+		}
+	} else {
+		fmt.eprintfln("norn: exporting %d scenarios on %d threads", len(selected), thread_count)
+		pool: thread.Pool
+		thread.pool_init(&pool, context.allocator, thread_count)
+		defer thread.pool_destroy(&pool)
+		for &job, i in jobs {
+			thread.pool_add_task(&pool, context.allocator, export_worker, &job, i)
+		}
+		thread.pool_start(&pool)
+		thread.pool_finish(&pool) // processes remaining tasks on this thread too, then joins
+	}
+
+	// Write files and report shortfalls on the main thread, in scenario order.
+	for s, i in selected {
+		if jobs[i].accepted < opts.count {
 			fmt.eprintfln(
 				"norn: scenario %q under-filled - %d of %d after %d deals (rare condition)",
 				s.name,
-				accepted,
+				jobs[i].accepted,
 				opts.count,
-				attempts,
+				jobs[i].attempts,
 			)
 		}
-
 		path := fmt.tprintf("%s/%s.html", opts.html_dir, s.name)
-		if write_ok, write_msg := write_output(path, strings.to_string(builder)); !write_ok {
+		if write_ok, write_msg := write_output(path, strings.to_string(builders[i])); !write_ok {
 			return false, write_msg
 		}
 	}
