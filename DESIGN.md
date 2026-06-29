@@ -51,10 +51,11 @@ Chose native Odin: predicates in a real language, no interpreter, max throughput
 
 ## Conditions as code
 
-A condition is Odin code, not an interpreted script. `Predicate :: proc(board: Deal) -> bool` is the
-equivalent of a `deal` Tcl `main { accept/reject }` body; it reads one or more seats (multi-seat
-conditions are common — opener + responder) using the `evaluate.odin` primitives (`hcp`,
-`suit_length`, `pattern`/`shape`, `top_count`, `is_balanced`, losers, …). `generate_accepted` runs
+A condition is Odin code, not an interpreted script. `Predicate :: proc(summary: Deal_Summary) -> bool`
+is the equivalent of a `deal` Tcl `main { accept/reject }` body; it reads one or more seats (multi-seat
+conditions are common — opener + responder) using the `summary.odin` primitives (`hcp`,
+`suit_length`, `pattern`/`shape`, `top_count`, `is_balanced`, losers, …) over the per-seat
+`HandSummary` bitmask index (built once per board, see `summary.odin`). `generate_accepted` runs
 the reject-sampling loop over a predicate. The `deal-utils.tcl` predicates port on top of these
 primitives — that port (and the named-scenario registry built from it) lives in the *consumer*
 bidding-system project, keeping `norn` itself system-agnostic.
@@ -123,8 +124,9 @@ pool, so its own pool can't nest — by probing single-threaded first, then runn
 
 ## Ported from deal (the evaluator surface)
 
-The generic evaluation vocabulary the bidding-system scripts use is ported into `norn/evaluate.odin`
-and `norn/evaluate_losers.odin`: suit lengths, `hcp`, `controls`, `top_count` (deal's `TopN`, now up
+The generic evaluation vocabulary the bidding-system scripts use is ported into `norn/summary.odin`
+(alongside the `HandSummary` index the evaluators run on): suit lengths, `hcp`, `controls`,
+`top_count` (deal's `TopN`, now up
 to Top7), `top5q`, `shape`/`pattern`, `is_balanced`/`is_semibalanced`/`is_nt5cM_shape`, the four
 longest-suit classes `is_spade_shape`/`is_heart_shape`/`is_diamond_shape`/`is_club_shape`, `is_nt`
 (deal's `nt min max`), `losers`, `offense`/`defense`/`op`, `dhcp`, `new_ltc`. The system-specific

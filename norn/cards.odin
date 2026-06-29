@@ -30,7 +30,7 @@ package norn
 		Rank:  Two(0) < Three(1) < ... < Ten(8) < Jack(9) < Queen(10) < King(11) < Ace(12)
 
 	Note that *display* order is not the same as strength order: the line export writes suits
-	spades-first (S H D C) and ranks high-to-low. That presentation concern lives in export.odin,
+	spades-first (S H D C) and ranks high-to-low. That presentation concern lives in render.odin,
 	not here.
 */
 
