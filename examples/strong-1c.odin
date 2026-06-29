@@ -23,8 +23,8 @@ import "../norn"
 
 // A self-contained demo condition (norn primitives only): North holds a very strong, spade-heavy
 // hand — 22+ hcp with a 7+ card spade suit.
-north_opens_gf_strong_spades :: proc(board: norn.Deal) -> bool {
-	north := board[.North]
+north_opens_gf_strong_spades :: proc(summary: norn.Deal_Summary) -> bool {
+	north := summary[.North]
 	return norn.hcp(north) >= 22 && norn.spade_length(north) >= 7
 }
 

@@ -66,7 +66,7 @@ main_program :: proc(registry: []Scenario) -> int {
 
 // Print the usage/help text to the given file (stdout for --help, stderr on a usage error).
 write_usage :: proc(handle: ^os.File) {
-	usage := `norn — a fast bridge deal generator
+	usage := `norn - a fast bridge deal generator
 
 Usage:
   norn [options]
@@ -76,7 +76,7 @@ Options:
   -f, --format   FORMAT       output format: line|pretty|handviewer|html|pbn|numeric (default line)
   -o, --output   PATH         output file, or "-" for stdout (default "-")
   -s, --seed     N            PRNG seed for reproducible deals (default: fresh each run)
-  -S, --scenario NAME[,…]     keep only deals matching the named scenario(s); with --html-dir, a
+  -S, --scenario NAME[,...]   keep only deals matching the named scenario(s); with --html-dir, a
                               comma-separated subset to export
       --predeal    SPEC       fix cards to seats before dealing, e.g. "N:AS,KS S:QH" (rank+suit
                               labels: AS=ace spades, TH=ten hearts, 2C=two clubs)

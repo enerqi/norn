@@ -79,7 +79,7 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 			smartstack = ss,
 		)
 		fmt.eprintfln(
-			"norn: scenario %q — %d accepted from %d deals (%.3f%%)",
+			"norn: scenario %q - %d accepted from %d deals (%.3f%%)",
 			scenario.name,
 			accepted,
 			attempts,
@@ -150,7 +150,7 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 		)
 		if accepted < opts.count {
 			fmt.eprintfln(
-				"norn: scenario %q under-filled — %d of %d after %d deals (rare condition)",
+				"norn: scenario %q under-filled - %d of %d after %d deals (rare condition)",
 				s.name,
 				accepted,
 				opts.count,

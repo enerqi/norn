@@ -13,13 +13,15 @@ package norn
 import "core:math/rand"
 import "core:strings"
 
-// A condition on a generated board: returns true to keep it. A multi-seat condition reads several
-// seats of the `Deal` (e.g. North as opener and South as responder). This is the Odin equivalent of
-// a `deal` Tcl script's `main { ... accept/reject ... }` body.
-Predicate :: proc(board: Deal) -> bool
+// A condition on a generated board: returns true to keep it. It reads a `Deal_Summary` — the
+// per-seat bitmask index every evaluator now runs on (see summary.odin) — built once per board by
+// the generation core, so a predicate firing dozens of evaluator queries pays no per-query rescan.
+// A multi-seat condition reads several seats (e.g. North as opener and South as responder). This is
+// the Odin equivalent of a `deal` Tcl script's `main { ... accept/reject ... }` body.
+Predicate :: proc(summary: Deal_Summary) -> bool
 
 // The trivial predicate that keeps every board (the default when no condition is given).
-accept_all :: proc(board: Deal) -> bool {
+accept_all :: proc(summary: Deal_Summary) -> bool {
 	return true
 }
 
@@ -91,7 +93,8 @@ generate_accepted :: proc(
 		}
 		board := next_board(pd, has_predeal, smartstack)
 		attempts += 1
-		if accept(board) {
+		// Build the index once per board; the predicate (and all its evaluator calls) read it.
+		if accept(summarize_deal(board)) {
 			render_deal(builder, board, format, randomize_table)
 			strings.write_byte(builder, '\n')
 			accepted += 1
@@ -116,7 +119,7 @@ count_accepted :: proc(
 	pd, has_predeal := predeal.?
 	for _ in 0 ..< trials {
 		board := next_board(pd, has_predeal, smartstack)
-		if accept(board) {
+		if accept(summarize_deal(board)) {
 			accepted += 1
 		}
 	}

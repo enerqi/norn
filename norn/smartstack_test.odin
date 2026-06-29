@@ -119,9 +119,10 @@ test_smartstack_hand_satisfies_constraint :: proc(t: ^testing.T) {
 			seen[int(card)] = true
 		}
 
-		points := hcp(hand)
+		hs := summarize(hand)
+		points := hcp(hs)
 		testing.expectf(t, points >= 15 && points <= 17, "hcp %d outside 15-17", points)
-		testing.expect(t, is_balanced(hand), "hand is not balanced")
+		testing.expect(t, is_balanced(hs), "hand is not balanced")
 
 		if points == 15 {saw_15 = true}
 		if points == 17 {saw_17 = true}
@@ -144,8 +145,9 @@ test_smartstack_long_suit :: proc(t: ^testing.T) {
 
 	for _ in 0 ..< 2000 {
 		hand := smartstack_hand(&ss)
-		testing.expect(t, spade_length(hand) >= 6, "fewer than 6 spades")
-		points := hcp(hand)
+		hs := summarize(hand)
+		testing.expect(t, spade_length(hs) >= 6, "fewer than 6 spades")
+		points := hcp(hs)
 		testing.expectf(t, points >= 10 && points <= 13, "hcp %d outside 10-13", points)
 	}
 }
@@ -169,9 +171,10 @@ test_deal_board_smartstack_valid :: proc(t: ^testing.T) {
 				seen[int(card)] = true
 			}
 		}
-		points := hcp(board[.East])
+		east := summarize(board[.East])
+		points := hcp(east)
 		testing.expectf(t, points >= 20 && points <= 21, "East hcp %d outside 20-21", points)
-		testing.expect(t, is_balanced(board[.East]), "East not balanced")
+		testing.expect(t, is_balanced(east), "East not balanced")
 	}
 }
 

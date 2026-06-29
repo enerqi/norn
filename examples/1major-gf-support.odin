@@ -23,9 +23,9 @@ import "../norn"
 
 // The condition (norn primitives only): North opens a 1-major — a 5+ card major with 11-21 hcp —
 // and South has a game-forcing 13+ hand with 3+ card support for that major.
-north_opens_south_raises :: proc(board: norn.Deal) -> bool {
-	north := board[.North]
-	south := board[.South]
+north_opens_south_raises :: proc(summary: norn.Deal_Summary) -> bool {
+	north := summary[.North]
+	south := summary[.South]
 	n_hcp := norn.hcp(north)
 	if n_hcp < 11 || n_hcp > 21 || norn.hcp(south) < 13 {
 		return false

@@ -102,12 +102,12 @@ north_hcp_in_line :: proc(line: string) -> int {
 	return total
 }
 
-never_accept :: proc(board: Deal) -> bool {
+never_accept :: proc(summary: Deal_Summary) -> bool {
 	return false
 }
 
-north_18plus :: proc(board: Deal) -> bool {
-	return hcp(board[.North]) >= 18
+north_18plus :: proc(summary: Deal_Summary) -> bool {
+	return hcp(summary[.North]) >= 18
 }
 
 // With accept-all, every attempt is accepted: attempts equals accepted equals count.
