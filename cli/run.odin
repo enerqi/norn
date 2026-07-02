@@ -65,6 +65,8 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 			randomize_table = opts.randomize_table,
 			predeal = opts.predeal,
 			smartstack = ss,
+			// No scenario selected -> no scenario name to key an annotator on, so plain generation is
+			// never annotated (annotation is a per-scenario hook). Use -S with --dd to annotate.
 		)
 	} else {
 		// Reject sampling: deal until `count` deals satisfy the scenario. Report the hit rate on
@@ -77,6 +79,8 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 			randomize_table = opts.randomize_table,
 			predeal = opts.predeal,
 			smartstack = ss,
+			deal_filter = opts.dd_filters[scenario.name],
+			annotate = opts.dd_annotators[scenario.name],
 		)
 		fmt.eprintfln(
 			"norn: scenario %q - %d accepted from %d deals (%.3f%%)",
@@ -104,6 +108,11 @@ Export_Task :: struct {
 	// Shared, read-only across workers (randomness comes from each task's own seeded RNG), so one
 	// pointer is safe to hand to every thread. nil if no --smartstack.
 	smartstack:      ^norn.Smart_Stack,
+	// Optional DD hooks (nil unless --dd). Shared, read-only across workers like the predicate: they
+	// are pure function values, so one copy is safe to hand every thread. See the single-thread guard
+	// in export_all_html for the solver-reentrancy caveat.
+	deal_filter:     norn.Deal_Filter,
+	annotate:        norn.Deal_Annotator,
 	builder:         ^strings.Builder,
 	accepted:        int,
 	attempts:        int,
@@ -124,7 +133,15 @@ export_worker :: proc(t: thread.Task) {
 		job.randomize_table,
 		job.predeal,
 		job.smartstack,
+		job.deal_filter,
+		job.annotate,
 	)
+}
+
+// True if this export job invokes the DDS solver — via a per-scenario filter or the annotator — and
+// so must run serially rather than on the shared thread pool (DDS's global state is not reentrant).
+export_uses_dd :: proc(job: ^Export_Task) -> bool {
+	return job.deal_filter != nil || job.annotate != nil
 }
 
 // Batch-export every scenario in `registry` to `<opts.html_dir>/<name>.html`, each an HTML page of
@@ -200,25 +217,54 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 			randomize_table = opts.randomize_table,
 			predeal         = opts.predeal,
 			smartstack      = ss,
+			deal_filter     = opts.dd_filters[s.name],
+			annotate        = opts.dd_annotators[s.name],
 			builder         = &builders[i],
 		}
 	}
 
+	// Partition: solver-free scenarios (no DD filter AND no annotator) are independent, so they run on
+	// the pool; scenarios that call DDS (via a filter or an annotator) share its process-global
+	// transposition tables and can't overlap, so they run serially AFTER the pool drains. Each DDS
+	// scenario still uses DDS's own internal threads, so "serial" is per-scenario, not per-core.
+	//
+	// Both hooks are per-scenario (keyed by name in opts.dd_filters / opts.dd_annotators), so a
+	// scenario with neither stays on the pool. Annotate every scenario and the pool empties — they all
+	// serialize — which is fine: each is still DDS-parallel internally.
 	if thread_count <= 1 {
-		// Single core (or a lone scenario): skip the pool machinery and run inline.
+		// Single core (or a lone scenario): skip the pool machinery and run everything inline.
 		for &job in jobs {
 			export_worker(thread.Task{data = &job})
 		}
 	} else {
-		fmt.eprintfln("norn: exporting %d scenarios on %d threads", len(selected), thread_count)
-		pool: thread.Pool
-		thread.pool_init(&pool, context.allocator, thread_count)
-		defer thread.pool_destroy(&pool)
-		for &job, i in jobs {
-			thread.pool_add_task(&pool, context.allocator, export_worker, &job, i)
+		pooled := 0
+		for &job in jobs {
+			if !export_uses_dd(&job) {pooled += 1}
 		}
-		thread.pool_start(&pool)
-		thread.pool_finish(&pool) // processes remaining tasks on this thread too, then joins
+		fmt.eprintfln(
+			"norn: exporting %d scenarios (%d pooled on %d threads, %d DD serially)",
+			len(selected),
+			pooled,
+			thread_count,
+			len(selected) - pooled,
+		)
+		if pooled > 0 {
+			pool: thread.Pool
+			thread.pool_init(&pool, context.allocator, thread_count)
+			defer thread.pool_destroy(&pool)
+			for &job, i in jobs {
+				if !export_uses_dd(&job) {
+					thread.pool_add_task(&pool, context.allocator, export_worker, &job, i)
+				}
+			}
+			thread.pool_start(&pool)
+			thread.pool_finish(&pool) // processes remaining tasks on this thread too, then joins
+		}
+		for &job in jobs {
+			if export_uses_dd(&job) {
+				export_worker(thread.Task{data = &job})
+			}
+		}
 	}
 
 	// Write files and report shortfalls on the main thread, in scenario order.
@@ -284,21 +330,32 @@ select_scenarios :: proc(
 // `predicate` keeps, using an RNG seeded by `seed`, and store the answer in `result`. Each task owns
 // a distinct `result` slot, so the workers never write the same memory.
 Freq_Task :: struct {
-	trials:     int,
-	seed:       u64,
-	predicate:  norn.Predicate,
-	predeal:    Maybe(norn.Predeal),
+	trials:      int,
+	seed:        u64,
+	predicate:   norn.Predicate,
+	predeal:     Maybe(norn.Predeal),
 	// Shared, read-only across workers: the sampler only reads the spec (randomness comes from each
 	// task's own seeded RNG), so one pointer is safe to hand to every thread. nil if no --smartstack.
-	smartstack: ^norn.Smart_Stack,
-	result:     ^int,
+	smartstack:  ^norn.Smart_Stack,
+	// Optional second-stage filter (nil unless --dd resolved one for this scenario). When set the
+	// measured count reflects predicate AND filter, matching what generation would keep. A pure
+	// function value, safe to share across workers.
+	deal_filter: norn.Deal_Filter,
+	result:      ^int,
 }
 
 // Thread-pool body: run one scenario's measurement. Self-contained — `count_accepted_seeded`
 // installs its own RNG, so nothing here touches shared mutable state.
 freq_worker :: proc(t: thread.Task) {
 	job := cast(^Freq_Task)t.data
-	job.result^ = norn.count_accepted_seeded(job.trials, job.predicate, job.seed, job.predeal, job.smartstack)
+	job.result^ = norn.count_accepted_seeded(
+		job.trials,
+		job.predicate,
+		job.seed,
+		job.predeal,
+		job.smartstack,
+		job.deal_filter,
+	)
 }
 
 // Derive a per-scenario seed from the run's base seed and the scenario's index, so each scenario
@@ -317,6 +374,10 @@ scenario_seed :: proc(base: u64, index: int) -> u64 {
 // partition (see `scenario_seed`), so the output is identical whether it runs on 1 thread or many,
 // and is reproducible from --seed. Returns ok = false with a message on a bad scenario name or empty
 // registry.
+//
+// Under --dd each scenario's optional double-dummy filter is applied to the count too, so the rate
+// reflects predicate AND filter — what generation would actually keep. Filtered scenarios call DDS
+// (not concurrency-safe) so they run serially after the solver-free scenarios finish on the pool.
 measure_frequencies :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) {
 	if len(registry) == 0 {
 		return false, "no scenarios to measure (registry is empty)"
@@ -356,24 +417,56 @@ measure_frequencies :: proc(registry: []Scenario, opts: Options) -> (ok: bool, m
 	jobs := make([]Freq_Task, len(selected))
 	defer delete(jobs)
 	for s, i in selected {
-		jobs[i] = Freq_Task{opts.trials, scenario_seed(seed, i), s.predicate, opts.predeal, ss, &results[i]}
+		jobs[i] = Freq_Task {
+			opts.trials,
+			scenario_seed(seed, i),
+			s.predicate,
+			opts.predeal,
+			ss,
+			opts.dd_filters[s.name], // nil unless --dd resolved a filter for this scenario
+			&results[i],
+		}
 	}
 
+	// Solver-free scenarios (no DD filter) are independent and go on the pool; DD-filtered scenarios
+	// call DDS, whose process-global transposition tables are not safe to touch concurrently, so they
+	// run one at a time AFTER the pool drains. Each still uses DDS's own internal threads, so serial
+	// here is per-scenario, not per-core. (export_all_html partitions the same way.)
 	if thread_count <= 1 {
-		// Single core (or a lone scenario): skip the pool machinery and run inline.
+		// Single core (or a lone scenario): skip the pool machinery and run everything inline.
 		for &job in jobs {
 			freq_worker(thread.Task{data = &job})
 		}
 	} else {
-		fmt.eprintfln("norn: measuring %d scenarios on %d threads", len(selected), thread_count)
-		pool: thread.Pool
-		thread.pool_init(&pool, context.allocator, thread_count)
-		defer thread.pool_destroy(&pool)
-		for &job, i in jobs {
-			thread.pool_add_task(&pool, context.allocator, freq_worker, &job, i)
+		pooled := 0
+		serial := 0
+		for &job in jobs {
+			if job.deal_filter == nil {pooled += 1} else {serial += 1}
 		}
-		thread.pool_start(&pool)
-		thread.pool_finish(&pool) // processes remaining tasks on this thread too, then joins
+		fmt.eprintfln(
+			"norn: measuring %d scenarios (%d pooled on %d threads, %d DD-filtered serially)",
+			len(selected),
+			pooled,
+			thread_count,
+			serial,
+		)
+		if pooled > 0 {
+			pool: thread.Pool
+			thread.pool_init(&pool, context.allocator, thread_count)
+			defer thread.pool_destroy(&pool)
+			for &job, i in jobs {
+				if job.deal_filter == nil {
+					thread.pool_add_task(&pool, context.allocator, freq_worker, &job, i)
+				}
+			}
+			thread.pool_start(&pool)
+			thread.pool_finish(&pool) // processes remaining tasks on this thread too, then joins
+		}
+		for &job in jobs {
+			if job.deal_filter != nil {
+				freq_worker(thread.Task{data = &job})
+			}
+		}
 	}
 
 	// Align the name column for readable output.

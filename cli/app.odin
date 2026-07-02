@@ -13,21 +13,46 @@ package cli
 
 import "core:fmt"
 import "core:os"
+import "core:strings"
+
+import "../norn"
 
 // Exit codes. 0 = success; 2 for a usage/CLI error and 1 for a runtime failure.
 EXIT_OK :: 0
 EXIT_RUNTIME_ERROR :: 1
 EXIT_USAGE_ERROR :: 2
 
+// Consumer-supplied generation hooks, injected via main_program. Engine-agnostic (see the
+// `norn.Deal_Filter` / `norn.Deal_Annotator` docs) and optional; only wired into the run when the
+// user passes --dd. A consumer that wants double-dummy filtering/annotation builds these over its
+// solver of choice and hands them here, keeping this package solver-free.
+//
+// Both maps are keyed by scenario name, so a batch run gives each scenario its own double-dummy
+// filter and/or annotator (or none). Per-scenario annotators (rather than one global one) let the
+// export pool scenarios that touch no solver; annotate every scenario and they all naturally
+// serialize (the solver isn't reentrant), each still parallel inside DDS.
+Gen_Hooks :: struct {
+	dd_filters:    map[string]norn.Deal_Filter,
+	dd_annotators: map[string]norn.Deal_Annotator,
+}
+
 // Parse arguments and run against `registry`. Kept thin: parse -> (usage / list) -> generate -> map
-// outcomes to an exit code.
-main_program :: proc(registry: []Scenario) -> int {
+// outcomes to an exit code. `hooks` carries the consumer's optional DD filter/annotator, applied
+// only when --dd is passed.
+main_program :: proc(registry: []Scenario, hooks := Gen_Hooks{}) -> int {
 	opts, ok, message := parse_args(os.args[1:])
 
 	if !ok {
 		fmt.eprintfln("norn: %s", message)
 		write_usage(os.stderr)
 		return EXIT_USAGE_ERROR
+	}
+
+	// Wire the consumer's DD hooks into the options when --dd was requested. Behind the flag so the
+	// default generator path never touches a solver.
+	if opts.dd {
+		opts.dd_filters = hooks.dd_filters
+		opts.dd_annotators = hooks.dd_annotators
 	}
 
 	if opts.help {
@@ -38,6 +63,13 @@ main_program :: proc(registry: []Scenario) -> int {
 	if opts.list {
 		write_scenario_list(os.stdout, registry)
 		return EXIT_OK
+	}
+
+	// Before doing any work, fail fast on a mistyped hook key — an unknown name would silently never
+	// fire. (After --help/--list so those stay usable, but before every real action.)
+	if hooks_ok, hooks_msg := validate_gen_hooks(registry, hooks); !hooks_ok {
+		fmt.eprintfln("norn: %s", hooks_msg)
+		return EXIT_USAGE_ERROR
 	}
 
 	if opts.frequency {
@@ -64,6 +96,33 @@ main_program :: proc(registry: []Scenario) -> int {
 	return EXIT_OK
 }
 
+// Fail fast on a mistyped hook key: every name in the DD hook maps must be a real scenario, else that
+// hook silently never fires (a lookup by scenario name would just never match). Returns ok=false with
+// a message listing the offenders. Runs regardless of --dd — a bad key is a program bug whether or
+// not this invocation happens to use the hooks.
+@(private)
+validate_gen_hooks :: proc(registry: []Scenario, hooks: Gen_Hooks) -> (ok: bool, message: string) {
+	unknown: [dynamic]string
+	defer delete(unknown)
+	for name in hooks.dd_filters {
+		if _, found := lookup(registry, name); !found {
+			append(&unknown, fmt.tprintf("dd_filter %q", name))
+		}
+	}
+	for name in hooks.dd_annotators {
+		if _, found := lookup(registry, name); !found {
+			append(&unknown, fmt.tprintf("dd_annotator %q", name))
+		}
+	}
+	if len(unknown) == 0 {
+		return true, ""
+	}
+	return false, fmt.tprintf(
+		"double-dummy hook(s) reference unknown scenario(s): %s (run --list for valid names)",
+		strings.join(unknown[:], ", ", context.temp_allocator),
+	)
+}
+
 // Print the usage/help text to the given file (stdout for --help, stderr on a usage error).
 write_usage :: proc(handle: ^os.File) {
 	usage := `norn - a fast bridge deal generator
@@ -88,8 +147,15 @@ Options:
       --list                  list the available scenarios and exit
       --html-dir DIR          export scenarios to DIR/<name>.html and exit (all, or the --scenario subset)
       --frequency N           measure each scenario's acceptance rate over N deals and exit (no deals
-                              emitted); all scenarios, or the --scenario subset
+                              emitted); all scenarios, or the --scenario subset. With --dd the rate
+                              also counts each scenario's double-dummy filter, matching what
+                              generation keeps
       --fixed-table           handviewer/html: fix vulnerability & dealer (default: randomise them)
+      --dd                    enable the consumer's double-dummy hooks (per-scenario filter +
+                              annotator); no effect unless the program supplies them. Applies to
+                              generation, --html-dir export, AND --frequency (the filter is counted).
+                              DD scenarios run serially (solver isn't reentrant); solver-free
+                              scenarios still pool
   -h, --help                  show this help
 
 Examples:

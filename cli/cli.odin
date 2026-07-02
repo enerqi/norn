@@ -63,6 +63,19 @@ Options :: struct {
 	// Mutually exclusive with --predeal (it already lays out a whole seat). Applies to every
 	// generation path. Big by value, but Options is not copied on a hot path.
 	smartstack:      Maybe(norn.Smart_Stack),
+	// When true (--dd), the consumer's double-dummy hooks are enabled. parse_args only sets the flag;
+	// the hooks themselves come from code (main_program wires them from its Gen_Hooks argument), so
+	// this package stays solver-agnostic. Off by default: the base generator never calls a solver.
+	dd:              bool,
+	// Consumer-supplied generation hooks, wired in by main_program when `dd` is set (never by
+	// parse_args — they are function values, not command-line data). Empty/nil unless --dd was passed.
+	//
+	// Both maps are keyed by scenario name, so each scenario carries its OWN double-dummy hooks (a
+	// preempt defence and a slam scenario want different tests / captions); a scenario absent from a
+	// map gets that hook as nil. Keeping annotators per-scenario (rather than one global annotator) is
+	// what lets the batch export pool the scenarios that touch no solver — see `export_uses_dd`.
+	dd_filters:      map[string]norn.Deal_Filter,
+	dd_annotators:   map[string]norn.Deal_Annotator,
 }
 
 // The defaults applied before any flags are read.
@@ -82,6 +95,7 @@ default_options :: proc() -> Options {
 		trials = 0,
 		predeal = nil,
 		smartstack = nil,
+		dd = false,
 	}
 }
 
@@ -117,6 +131,9 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 
 		case "--fixed-table":
 			opts.randomize_table = false
+
+		case "--dd":
+			opts.dd = true
 
 		case "-S", "--scenario":
 			value, got, why := take_value(has_inline, inline_value, args, &i, flag)

@@ -20,6 +20,25 @@ import "core:strings"
 // the Odin equivalent of a `deal` Tcl script's `main { ... accept/reject ... }` body.
 Predicate :: proc(summary: Deal_Summary) -> bool
 
+// A second-stage condition over the RAW dealt cards, run only on boards the cheap `Predicate`
+// already kept (see `generate_accepted`). It reads the full `Deal` — the actual 52 cards, not the
+// bitmask summary — so it can decide things a summary cannot express (double-dummy tricks, par
+// score). It is I/O-free and knows nothing about any solver: a consumer supplies one that adapts
+// the `Deal` to whatever engine it wants. nil means "no second stage". Because it runs after the
+// summary predicate, an expensive analysis only touches the (already selective) survivors.
+Deal_Filter :: proc(board: Deal) -> bool
+
+// A hook to append extra text to each RENDERED board, right after its normal rendering (see
+// `generate_accepted`). Like `Deal_Filter` it reads the raw `Deal` and is engine-agnostic; a
+// consumer uses it to annotate a deal with, e.g., its double-dummy result. nil means "render
+// nothing extra".
+//
+// It receives the active `Output_Format` because annotation is inherently format-specific: an HTML
+// caption would corrupt a PBN tag or a machine-parsed `Line`. The annotator must emit only what is
+// valid for `format` (and emit nothing for formats it can't safely extend), so it fires for every
+// format but stays the annotator's responsibility to keep each one well-formed.
+Deal_Annotator :: proc(builder: ^strings.Builder, board: Deal, format: Output_Format)
+
 // The trivial predicate that keeps every board (the default when no condition is given).
 accept_all :: proc(summary: Deal_Summary) -> bool {
 	return true
@@ -35,6 +54,7 @@ render_deals :: proc(
 	randomize_table := false,
 	predeal: Maybe(Predeal) = nil,
 	smartstack: ^Smart_Stack = nil,
+	annotate: Deal_Annotator = nil,
 ) {
 	generate_accepted(
 		builder,
@@ -44,6 +64,7 @@ render_deals :: proc(
 		randomize_table = randomize_table,
 		predeal = predeal,
 		smartstack = smartstack,
+		annotate = annotate,
 	)
 }
 
@@ -79,6 +100,8 @@ generate_accepted :: proc(
 	randomize_table := false,
 	predeal: Maybe(Predeal) = nil,
 	smartstack: ^Smart_Stack = nil,
+	deal_filter: Deal_Filter = nil,
+	annotate: Deal_Annotator = nil,
 ) -> (
 	accepted: int,
 	attempts: int,
@@ -93,9 +116,14 @@ generate_accepted :: proc(
 		}
 		board := next_board(pd, has_predeal, smartstack)
 		attempts += 1
-		// Build the index once per board; the predicate (and all its evaluator calls) read it.
-		if accept(summarize_deal(board)) {
+		// Build the index once per board; the predicate (and all its evaluator calls) read it. Only
+		// when the cheap summary predicate passes do we pay for the optional raw-deal filter (e.g. a
+		// double-dummy solve), so the expensive stage runs on the survivors, not every board.
+		if accept(summarize_deal(board)) && (deal_filter == nil || deal_filter(board)) {
 			render_deal(builder, board, format, randomize_table)
+			if annotate != nil {
+				annotate(builder, board, format)
+			}
 			strings.write_byte(builder, '\n')
 			accepted += 1
 		}
@@ -108,18 +136,24 @@ generate_accepted :: proc(
 // return how many were accepted. This is the frequency-estimation counterpart to
 // `generate_accepted` — same dealing, no I/O and no builder, so a caller can profile a condition's
 // rarity over a large sample cheaply. The acceptance rate is `accepted / trials`.
+//
+// `deal_filter` is the same optional second stage `generate_accepted` applies: when non-nil a board
+// counts only if it passes BOTH the cheap summary predicate and the raw-deal filter, so the measured
+// rate matches what generation would actually keep (e.g. after a double-dummy filter). nil measures
+// the predicate alone. As in generation, the filter is evaluated only on boards the predicate keeps.
 count_accepted :: proc(
 	trials: int,
 	accept: Predicate,
 	predeal: Maybe(Predeal) = nil,
 	smartstack: ^Smart_Stack = nil,
+	deal_filter: Deal_Filter = nil,
 ) -> (
 	accepted: int,
 ) {
 	pd, has_predeal := predeal.?
 	for _ in 0 ..< trials {
 		board := next_board(pd, has_predeal, smartstack)
-		if accept(summarize_deal(board)) {
+		if accept(summarize_deal(board)) && (deal_filter == nil || deal_filter(board)) {
 			accepted += 1
 		}
 	}
@@ -137,10 +171,11 @@ count_accepted_seeded :: proc(
 	seed: u64,
 	predeal: Maybe(Predeal) = nil,
 	smartstack: ^Smart_Stack = nil,
+	deal_filter: Deal_Filter = nil,
 ) -> (
 	accepted: int,
 ) {
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = seeded_xoshiro(&state, seed)
-	return count_accepted(trials, accept, predeal, smartstack)
+	return count_accepted(trials, accept, predeal, smartstack, deal_filter)
 }

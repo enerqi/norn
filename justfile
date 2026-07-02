@@ -15,6 +15,8 @@ format:
 
 # lint checks for style and potential bugs across every package. Accepts extra args like
 # `--show-timings` as needed. Library packages need -no-entry-point; the program packages do not.
+# ---
+# type check + vet + strict style across all packages
 lint *args:
 	odin check norn -vet -vet-cast -strict-style -no-entry-point {{args}}
 	odin check cli -vet -vet-cast -strict-style -no-entry-point {{args}}
@@ -43,6 +45,8 @@ lint *args:
 # run the CLI with a debug build. `--` separates the program's args from odin's own flags.
 # `-keep-executable` leaves the built binary in place (odin run deletes it by default) so `rerun_debug`
 # can execute it again without recompiling.
+# ---
+# run the CLI (debug build)
 run_debug *args: mktarget_dirs
 	odin run {{cli_pkg}} -debug -microarch:native -show-timings -keep-executable -out:target/debug/{{main_name}} -- {{args}}
 
