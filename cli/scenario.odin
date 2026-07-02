@@ -19,6 +19,12 @@ Scenario :: struct {
 	predicate:   norn.Predicate,
 }
 
+// Human-facing page heading for a scenario: its one-line description when it has one, else the
+// terse name. Used to title the exported HTML page (both `<title>` and the on-page `<h1>`).
+scenario_title :: proc(s: Scenario) -> string {
+	return s.description if s.description != "" else s.name
+}
+
 // Find a scenario by exact name in `registry`. Returns ok = false if none matches.
 lookup :: proc(registry: []Scenario, name: string) -> (scenario: Scenario, ok: bool) {
 	for s in registry {

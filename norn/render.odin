@@ -63,7 +63,7 @@ Output_Format :: enum {
 	// diagram (four hands, suit glyph + ranks) inside a client-side carousel — no BBO iframe, no remote
 	// load. The page header (emitted once) carries the carousel shell, CSS, and a static `<script>`
 	// that groups each rendered board (+ its optional par caption) into a slide and wires the nav
-	// (prev/next, ←/→ keys, jump box, deal counter), a seat toggle (show all / just one seat across
+	// (prev/next, ←/→ keys, scroll wheel, deal counter), a seat toggle (show all / just one seat across
 	// every board), and a par toggle. Per deal this renderer emits only the compass `<div>`; the par
 	// caption is appended by the consumer's annotator as a following `.par` sibling (the script pairs
 	// them). Unlike `Html` it never contacts the network, so nav is instant and it works offline.
@@ -385,13 +385,19 @@ write_compass_seat :: proc(
 		strings.write_string(builder, `</span>`)
 	}
 
-	// This hand's own high-card points, above the shape line.
+	// This hand's own high-card points, above the shape line, with how likely that HCP total is:
+	// the exact chance of it, then the cumulative chance of that many HCP or fewer (from 0).
+	h := hcp(ds[seat])
+	hp_exact, hp_cum := hcp_probability(h)
 	strings.write_string(builder, `<div class="hcp">`)
-	fmt.sbprintf(builder, "%d HCP", hcp(ds[seat]))
+	fmt.sbprintf(builder, "%d HCP", h)
+	fmt.sbprintf(builder, ` <span class="prob">%.2f%% &middot; %.1f%% &le;</span>`, hp_exact, hp_cum)
 	strings.write_string(builder, `</div>`)
 
-	// Placeholder for the optimal point count (honour-combination valuation) — not computed yet.
-	strings.write_string(builder, `<div class="opc">OPC: &mdash;</div>`)
+	// Optimal point count (honour-combination valuation): the hand's opening starting points for a
+	// suit contract and, after it, the notrump variant.
+	opc := opc_points(ds[seat])
+	fmt.sbprintf(builder, `<div class="opc">OPC: %.1f / %.1f NT</div>`, opc.opening_suit, opc.opening_nt)
 
 	// Shape line: the suit-agnostic pattern (lengths sorted high-to-low) and how common it is.
 	p := pattern(ds[seat])
@@ -561,6 +567,33 @@ shape_probability :: proc(p: [SUIT_COUNT]int) -> string {
 	return ""
 }
 
+// A-priori probability that a random 13-card hand holds exactly N high-card points, N = 0..37 by
+// index. Exact dealing figures from durangobill.com/BrPtCntStats.html; they sum to 1. Used by
+// `hcp_probability` for the per-hand HCP annotation.
+@(private)
+HCP_PROBABILITY := [38]f64 {
+	0.00363896, 0.00788442, 0.0135612, 0.0246236, 0.0384544,
+	0.0518619, 0.065541, 0.0802809, 0.0889219, 0.0935623,
+	0.0940511, 0.0894468, 0.0802687, 0.0691433, 0.0569332,
+	0.0442368, 0.0331092, 0.0236169, 0.0160508, 0.0103617,
+	0.00643536, 0.00377867, 0.00210043, 0.00111904, 0.000559034,
+	0.000264278, 0.000116683, 4.90666e-05, 1.85677e-05, 6.67165e-06,
+	2.19849e-06, 6.11319e-07, 1.71896e-07, 3.52118e-08, 7.06127e-09,
+	9.82656e-10, 9.44862e-11, 6.29908e-12,
+}
+
+// How likely this hand's HCP total is, as two percentages: `exact` = chance of exactly that many
+// HCP, `cumulative` = chance of that many OR FEWER (summed from 0). N outside 0..37 clamps in.
+@(private)
+hcp_probability :: proc(n: int) -> (exact: f64, cumulative: f64) {
+	m := clamp(n, 0, 37)
+	cum: f64 = 0
+	for i in 0 ..= m {
+		cum += HCP_PROBABILITY[i]
+	}
+	return HCP_PROBABILITY[m] * 100, cum * 100
+}
+
 // The Unicode card-suit glyph, used by the card diagram (hearts/diamonds are coloured red via CSS).
 @(private = "file")
 suit_glyph :: proc "contextless" (suit: Suit) -> string {
@@ -581,16 +614,18 @@ suit_glyph :: proc "contextless" (suit: Suit) -> string {
 @(private = "file")
 HTML_PAGE_HEADER :: `<!DOCTYPE html>
 <head>
-    <title>Practice Deals</title>
+    <title>{{TITLE}}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://fonts.googleapis.com/css?family=Open Sans" rel="stylesheet">
     <style>
         body { font-family: 'Open Sans'; }
         .content { margin: auto; max-width: 900px; }
+        h1.page-title { text-align: center; }
         iframe { margin-top: 4rem; margin-bottom: 4rem; }
     </style>
 </head>
 <body class="content">
+    <h1 class="page-title">{{TITLE}}</h1>
 `
 
 // The footer emitted once after the deals of an `Html`-format run.
@@ -606,7 +641,7 @@ HTML_PAGE_FOOTER :: `</body>
 @(private = "file")
 HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
 <head>
-    <title>Practice Deals</title>
+    <title>{{TITLE}}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://fonts.googleapis.com/css?family=Open Sans" rel="stylesheet">
     <style>
@@ -630,6 +665,9 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         .toolbar .counter { font-variant-numeric: tabular-nums; font-size: 0.9rem; }
         .toolbar input { font: inherit; font-size: 0.9rem; width: 3rem; padding: 0.15rem 0.25rem; }
         .toolbar .lbl-txt { color: #666; font-size: 0.78rem; }
+        /* Scenario name, centred above the carousel. Sits below the pinned toolbar pill (top-left),
+           so it never overlaps it. */
+        .page-title { text-align: center; margin: 0.4rem 0.5rem 0; font-size: clamp(1rem, 2.6vw, 1.6rem); font-weight: 600; color: var(--ink); }
         .viewport { overflow: hidden; width: 100%; padding: 0.75rem 0; }
         .track { display: flex; align-items: center; gap: 40px; transition: transform 0.35s ease; will-change: transform; }
         /* Hug the (grouped) board content and cap at the viewport width, so the slide scales with the
@@ -666,7 +704,8 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
             margin-top: 0.1rem; font-family: 'Open Sans', sans-serif; font-size: 0.4em;
             font-weight: 300; color: #9a9a9a; opacity: 0.75;
         }
-        .shape .prob { color: #b5b5b5; }
+        .prob { color: #b5b5b5; }
+        .hcp .prob { font-weight: 400; }
         /* West / table / East grouped and centred, with a gap that grows on wide monitors and shrinks
            at lower resolutions so the hands compress toward one another instead of flinging to the edges. */
         .compass .mid { display: flex; justify-content: center; align-items: center; gap: clamp(0.5rem, 7vw, 6rem); }
@@ -761,7 +800,6 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
             <span class="counter"><b id="nc-idx">1</b>/<span id="nc-total">0</span></span>
             <button id="nc-next" title="Next (Right arrow / scroll)">&#9654;</button>
         </div>
-        <div class="group"><span class="lbl-txt">jump</span><input id="nc-jump" type="number" min="1" value="1"></div>
         <div class="group">
             <span class="lbl-txt">seats</span>
             <button data-seat="" class="sel">All</button>
@@ -772,6 +810,7 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         </div>
         <button id="nc-par-toggle">Par</button>
     </div>
+    <h1 class="page-title">{{TITLE}}</h1>
     <div class="viewport">
         <div class="track" id="nc-track">
 `
@@ -800,8 +839,6 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         var idx = 0;
         var total = slides.length;
         document.getElementById('nc-total').textContent = total;
-        var jump = document.getElementById('nc-jump');
-        jump.max = Math.max(total, 1);
 
         function show(i) {
             idx = Math.max(0, Math.min(total - 1, i));
@@ -814,13 +851,11 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 track.style.transform = 'translateX(' + (-off) + 'px)';
             }
             document.getElementById('nc-idx').textContent = idx + 1;
-            jump.value = idx + 1;
         }
 
         document.getElementById('nc-prev').onclick = function () { show(idx - 1); };
         document.getElementById('nc-next').onclick = function () { show(idx + 1); };
         document.addEventListener('keydown', function (e) {
-            if (e.target === jump) return; // don't hijack keys while typing in the jump box
             if (e.key === 'ArrowLeft') { show(idx - 1); return; }
             if (e.key === 'ArrowRight') { show(idx + 1); return; }
             // a = all seats, n/e/s/w = just that seat — press the matching toolbar button so the
@@ -831,10 +866,6 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             var btn = document.querySelector('[data-seat="' + seat + '"]');
             if (btn) btn.click();
         });
-        jump.oninput = function () {
-            var v = parseInt(jump.value, 10);
-            if (v >= 1 && v <= total) show(v - 1);
-        };
 
         // Scroll wheel: down/right = next, up/left = prev (like the arrow keys). preventDefault so the
         // page doesn't also scroll while navigating deals.
@@ -871,15 +902,23 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
 </body>
 `
 
-// Write the once-per-run prologue for `format`. Only `Html` has one (the page header); every other
-// format opens with nothing.
-render_page_prologue :: proc(builder: ^strings.Builder, format: Output_Format) {
+// Write the once-per-run prologue for `format`. Only the HTML formats have one (the page header);
+// every other format opens with nothing. `page_title` (empty -> "Practice Deals") fills both the
+// document `<title>` and the on-page `<h1>` via the `{{TITLE}}` token baked into the header literals.
+render_page_prologue :: proc(builder: ^strings.Builder, format: Output_Format, page_title := "") {
+	header: string
 	#partial switch format {
 	case .Html_Handviewer:
-		strings.write_string(builder, HTML_PAGE_HEADER)
+		header = HTML_PAGE_HEADER
 	case .Html_Cards:
-		strings.write_string(builder, HTML_CARDS_PAGE_HEADER)
+		header = HTML_CARDS_PAGE_HEADER
+	case:
+		return
 	}
+	title := page_title if page_title != "" else "Practice Deals"
+	// replace_all into the temp allocator: no manual free, and the whole header is written this frame.
+	page, _ := strings.replace_all(header, "{{TITLE}}", title, context.temp_allocator)
+	strings.write_string(builder, page)
 }
 
 // Write the once-per-run epilogue for `format`. Mirror of `render_page_prologue`.

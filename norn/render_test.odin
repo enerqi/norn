@@ -17,6 +17,28 @@ hand_line_string :: proc(hand: Hand) -> string {
 	return strings.to_string(builder)
 }
 
+// hcp_probability: exact chance is the raw table value; cumulative runs from 0 up; the whole
+// distribution sums to ~100%, and out-of-range N clamps into 0..37.
+@(test)
+test_hcp_probability :: proc(t: ^testing.T) {
+	// 10 HCP is the modal holding (~9.4%); its cumulative includes 0..10.
+	exact, cum := hcp_probability(10)
+	testing.expect(t, abs(exact - 9.40511) < 0.001, "exact 10-HCP probability")
+	testing.expect(t, cum > exact, "cumulative includes lower HCP totals")
+
+	// Cumulative at the top of the range is the whole distribution: ~100%.
+	_, cum_all := hcp_probability(37)
+	testing.expect(t, abs(cum_all - 100.0) < 0.01, "distribution sums to 100%")
+
+	// Clamp: N past 37 behaves as 37 (full cumulative), negative N as 0.
+	_, cum_over := hcp_probability(99)
+	testing.expect(t, abs(cum_over - cum_all) < 1e-9, "over-range N clamps to 37")
+
+	lo_exact, lo_cum := hcp_probability(-5)
+	testing.expect(t, abs(lo_exact - 0.363896) < 0.001, "negative N clamps to 0 (exact)")
+	testing.expect(t, abs(lo_cum - lo_exact) < 1e-9, "at 0 HCP cumulative equals exact")
+}
+
 // One hand should render suits S H D C, ranks high-to-low, with a void shown as an empty field
 // (here diamonds), giving the tell-tale double space.
 @(test)
@@ -161,12 +183,14 @@ test_html_page_wraps_deals :: proc(t: ^testing.T) {
 
 	builder := strings.builder_make()
 	defer strings.builder_destroy(&builder)
-	render_page_prologue(&builder, .Html_Handviewer)
+	render_page_prologue(&builder, .Html_Handviewer, "North opens 1C")
 	render_deal(&builder, board, .Html_Handviewer)
 	render_page_epilogue(&builder, .Html_Handviewer)
 	text := strings.to_string(builder)
 
 	testing.expect(t, strings.has_prefix(text, "<!DOCTYPE html>"), "page should open with the doctype")
+	testing.expect(t, strings.contains(text, "<title>North opens 1C</title>"), "page title should be substituted")
+	testing.expect(t, !strings.contains(text, "{{TITLE}}"), "no title token should survive")
 	testing.expect(
 		t,
 		strings.contains(text, "handviewer.html?n=shdcAKQJT98765432&s="),

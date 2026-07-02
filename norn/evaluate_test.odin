@@ -327,3 +327,88 @@ test_new_ltc :: proc(t: ^testing.T) {
 	// The refined `losers` differs (queen-backing, no king slot in singleton): 0+0+2+6 = 8.
 	testing.expect_value(t, losers(s), 8)
 }
+
+// --- Optimal Point Count (OPC). ---
+
+// honour_points values honours by their company and applies whole-hand corrections.
+@(test)
+test_opc_honour_points :: proc(t: ^testing.T) {
+	// balanced_4333: spades A(4.5) K(3) Q-accompanied(2) J-accompanied(1) = 10.5, no whole-hand
+	// corrections (has ace/king/queen, not 3+ kings), so opening == non-opening.
+	h := honour_points(summarize(balanced_4333()))
+	testing.expect_value(t, h.non_opening, f32(10.5))
+	testing.expect_value(t, h.opening, f32(10.5))
+
+	// eval_sampler: spades AKQJT9 8-bag = 4.5+3+2+1 (JT: +1) + 2 (3+ pics in 6+) = 13.5; hearts AK
+	// bare doubleton = 4.5+3-1 = 6.5; diamond singleton queen = 1.5-1 = 0.5; clubs 0. Total 20.5. Has
+	// the ace, so opening == non-opening.
+	h2 := honour_points(summarize(eval_sampler()))
+	testing.expect_value(t, h2.non_opening, f32(20.5))
+	testing.expect_value(t, h2.opening, f32(20.5))
+}
+
+// length_points: good long suits score, short/ragged ones don't.
+@(test)
+test_opc_length_points :: proc(t: ^testing.T) {
+	// balanced_4333: longest is a four-card suit -> 0.
+	testing.expect_value(t, length_points(summarize(balanced_4333())), f32(0))
+	// two_suiter_5422: a good five-card spade suit -> 1 (the four-card hearts don't score).
+	testing.expect_value(t, length_points(summarize(two_suiter_5422())), f32(1))
+	// unbalanced_7222: a good seven-bagger -> 2 (6+ good) + 2 (7th card) = 4.
+	testing.expect_value(t, length_points(summarize(unbalanced_7222())), f32(4))
+}
+
+// distribution_points: shortages help a suit contract, hurt at NT; the flat 4-3-3-3 is docked.
+@(test)
+test_opc_distribution_points :: proc(t: ^testing.T) {
+	// balanced_4333: flat -> -1 both.
+	d := distribution_points(summarize(balanced_4333()))
+	testing.expect_value(t, d.suit, f32(-1))
+	testing.expect_value(t, d.nt, f32(-1))
+
+	// two_suiter_5422: two doubletons -> +1, no shortage, so NT unchanged.
+	d2 := distribution_points(summarize(two_suiter_5422()))
+	testing.expect_value(t, d2.suit, f32(1))
+	testing.expect_value(t, d2.nt, f32(1))
+
+	// eval_sampler: one singleton (diamond) -> +2 suit; NT removes it (-1) and docks -1 for declaring
+	// NT with a singleton -> 0.
+	d3 := distribution_points(summarize(eval_sampler()))
+	testing.expect_value(t, d3.suit, f32(2))
+	testing.expect_value(t, d3.nt, f32(0))
+}
+
+// opc_points combines H + L + D into the four starting-point totals.
+@(test)
+test_opc_points :: proc(t: ^testing.T) {
+	// eval_sampler: L=4, H=20.5, D.suit=2, D.nt=0. Has the ace, so opening == non-opening.
+	p := opc_points(summarize(eval_sampler()))
+	testing.expect_value(t, p.opening_suit, f32(26.5)) // 4 + 20.5 + 2
+	testing.expect_value(t, p.opening_nt, f32(24.5)) // 4 + 20.5 + 0
+	testing.expect_value(t, p.non_opening_suit, f32(26.5))
+	testing.expect_value(t, p.non_opening_nt, f32(24.5))
+}
+
+// The aceless opening penalty separates opening from non-opening totals.
+@(test)
+test_opc_aceless_opening_penalty :: proc(t: ^testing.T) {
+	// A kings-and-queens hand with no ace: spades KQJ, hearts KQJ, diamonds KQJ, clubs KQxx.
+	aceless := Hand {
+		make_card(.Spades, .King),
+		make_card(.Spades, .Queen),
+		make_card(.Spades, .Jack),
+		make_card(.Hearts, .King),
+		make_card(.Hearts, .Queen),
+		make_card(.Hearts, .Jack),
+		make_card(.Diamonds, .King),
+		make_card(.Diamonds, .Queen),
+		make_card(.Diamonds, .Jack),
+		make_card(.Clubs, .King),
+		make_card(.Clubs, .Queen),
+		make_card(.Clubs, .Two),
+		make_card(.Clubs, .Three),
+	}
+	h := honour_points(summarize(aceless))
+	// Has kings and queens, just no ace -> opening docked exactly 1 below non-opening.
+	testing.expect_value(t, h.opening, h.non_opening - 1)
+}

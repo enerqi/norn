@@ -81,6 +81,7 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 			smartstack = ss,
 			deal_filter = opts.dd_filters[scenario.name],
 			annotate = opts.dd_annotators[scenario.name],
+			page_title = scenario_title(scenario),
 		)
 		fmt.eprintfln(
 			"norn: scenario %q - %d accepted from %d deals (%.3f%%)",
@@ -116,6 +117,8 @@ Export_Task :: struct {
 	// in export_all_html for the solver-reentrancy caveat.
 	deal_filter:     norn.Deal_Filter,
 	annotate:        norn.Deal_Annotator,
+	// Page heading / <title> for this scenario's HTML page (its description, else its name).
+	page_title:      string,
 	builder:         ^strings.Builder,
 	accepted:        int,
 	attempts:        int,
@@ -138,6 +141,7 @@ export_worker :: proc(t: thread.Task) {
 		job.smartstack,
 		job.deal_filter,
 		job.annotate,
+		job.page_title,
 	)
 }
 
@@ -231,6 +235,7 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 			smartstack      = ss,
 			deal_filter     = opts.dd_filters[s.name],
 			annotate        = opts.dd_annotators[s.name],
+			page_title      = scenario_title(s),
 			builder         = &builders[i],
 		}
 	}

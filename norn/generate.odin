@@ -55,6 +55,7 @@ render_deals :: proc(
 	predeal: Maybe(Predeal) = nil,
 	smartstack: ^Smart_Stack = nil,
 	annotate: Deal_Annotator = nil,
+	page_title := "",
 ) {
 	generate_accepted(
 		builder,
@@ -65,6 +66,7 @@ render_deals :: proc(
 		predeal = predeal,
 		smartstack = smartstack,
 		annotate = annotate,
+		page_title = page_title,
 	)
 }
 
@@ -102,6 +104,7 @@ generate_accepted :: proc(
 	smartstack: ^Smart_Stack = nil,
 	deal_filter: Deal_Filter = nil,
 	annotate: Deal_Annotator = nil,
+	page_title := "",
 ) -> (
 	accepted: int,
 	attempts: int,
@@ -109,7 +112,7 @@ generate_accepted :: proc(
 	pd, has_predeal := predeal.?
 	// Page-oriented formats (Html) wrap the run in a header/footer; per-deal formats emit nothing
 	// here. The prologue/epilogue bracket the whole accepted set, not each deal.
-	render_page_prologue(builder, format)
+	render_page_prologue(builder, format, page_title)
 	for accepted < count {
 		if max_attempts > 0 && attempts >= max_attempts {
 			break

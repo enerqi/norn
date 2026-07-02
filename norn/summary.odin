@@ -432,3 +432,251 @@ new_ltc :: proc(s: Hand_Summary) -> int {
 	}
 	return total
 }
+
+// --- Optimal Point Count (OPC). ---
+//
+// A finer-grained hand valuation than plain `hcp`, ported from the reference `optimal_point_count.py`
+// (docs/bridge). Where Milton hcp gives every ace 4 and every queen 2, OPC values each honour by its
+// company (a queen next to a picture is worth more than an isolated one), rewards concentrated and
+// long suits, and applies whole-hand corrections (no queens, four kings, distribution). All values
+// are exact multiples of 0.5, so `f32` holds them without rounding drift; callers that display them
+// should format to one decimal place.
+//
+// The single-hand valuation splits into three independent components — Honour (H), Length (L) and
+// Distribution (D) points — combined by `opc_points` into the four "starting point" totals a hand
+// can present, over the two axes that change the count:
+//   * opening vs non-opening: an aceless hand is docked a point only when valued as an opener.
+//   * suit vs notrump:        shortage (singleton/void) points that help in a suit contract are a
+//                             liability at notrump, so the D component carries a separate NT total.
+// The partner-dependent adjustments the Python tool also reports (fit points, wastage opposite
+// shortage, weak-honour upgrades) are NOT computed here — they need the partnership context a single
+// `Hand_Summary` doesn't have.
+
+@(private = "file")
+PICTURE_BITS :: ACE_BIT | KING_BIT | QUEEN_BIT | JACK_BIT
+
+// Milton hcp of a single suit mask (Ace 4, King 3, Queen 2, Jack 1; Ten 0). Used by the OPC length
+// component to tell a "good" (K+ / QJ) long suit from a ragged one.
+@(private = "file")
+milton_hcp :: proc(m: u16) -> int {
+	total := 0
+	if m & ACE_BIT != 0 {total += 4}
+	if m & KING_BIT != 0 {total += 3}
+	if m & QUEEN_BIT != 0 {total += 2}
+	if m & JACK_BIT != 0 {total += 1}
+	return total
+}
+
+// OPC Honour points. Two totals that differ only by the aceless opening penalty (see the section
+// header); every other adjustment is common to both.
+Honour_Points :: struct {
+	opening:     f32, // includes the -1 aceless dock when it applies
+	non_opening: f32,
+}
+
+// OPC Distribution points. `suit` counts shortages as assets; `nt` re-books them as liabilities.
+Distribution_Points :: struct {
+	suit: f32,
+	nt:   f32,
+}
+
+// The four OPC starting-point totals of a hand, plus the H/L/D components they are built from.
+Opc_Points :: struct {
+	opening_suit:     f32,
+	opening_nt:       f32,
+	non_opening_suit: f32,
+	non_opening_nt:   f32,
+	honour:           Honour_Points,
+	length:           f32,
+	distribution:     Distribution_Points,
+}
+
+// OPC Honour points for the whole hand: honours valued by their company within each suit, then
+// whole-hand corrections for missing/plentiful queens and kings and (opening only) a missing ace.
+honour_points :: proc(s: Hand_Summary) -> Honour_Points {
+	total: f32 = 0
+
+	for suit in Suit {
+		m := s.suits[suit]
+		length := int(intrinsics.count_ones(m))
+		if length == 0 {
+			continue
+		}
+
+		a := m & ACE_BIT != 0
+		k := m & KING_BIT != 0
+		q := m & QUEEN_BIT != 0
+		j := m & JACK_BIT != 0
+		ten := m & TEN_BIT != 0
+		// Picture honours (A/K/Q/J — the Ten is not a picture) and "small" cards (Nine down to Two).
+		pics := int(intrinsics.count_ones(m & PICTURE_BITS))
+		xs := length - int(intrinsics.count_ones(m & (PICTURE_BITS | TEN_BIT)))
+
+		if a {total += 4.5}
+		if k {total += 3.0}
+		if q {
+			// A queen "accompanied" by another picture (A/K/J) pulls its full weight; isolated it is
+			// downvalued.
+			if m & (ACE_BIT | KING_BIT | JACK_BIT) != 0 {
+				total += 2.0
+			} else {
+				total += 1.5
+			}
+		}
+		if j {
+			if m & (ACE_BIT | KING_BIT | QUEEN_BIT) != 0 {
+				total += 1.0
+			} else {
+				total += 0.5
+			}
+		}
+		if ten {
+			// The Ten is valued once, by the nearest honour that makes it pull weight.
+			switch {
+			case j && pics == 1 && xs > 0:
+				total += 1.5 // JT with small cards: upvalues the whole T+J combination
+			case j && pics == 1 && xs == 0:
+				total += 1.0 // JT bare doubleton
+			case j:
+				total += 1.0 // T+J alongside other honour(s)
+			case q:
+				if pics == 1 && xs == 0 {
+					total += 0.5 // QT bare doubleton
+				} else {
+					total += 1.0 // T+Q combo
+				}
+			case k:
+				total += 0.5 // T+K, no Q or J
+			}
+		}
+
+		// Bare picture honours are fragile: a singleton A/K/Q (not a jack) is docked.
+		if length == 1 && (a || k || q) {
+			total -= 1.0
+		}
+		// Qx / Jx doubletons (the honour plus a single small card, nothing else) are docked.
+		if q && pics == 1 && !ten && xs == 1 {
+			total -= 0.5
+		}
+		if j && pics == 1 && !ten && xs == 1 {
+			total -= 0.5
+		}
+		// Two touching/near-touching honours with no length behind them (AQ/AK/KQ/QJ doubleton) are
+		// docked — their combined power needs a third card to cash.
+		if length == 2 && xs == 0 {
+			if (a && q) || (a && k) || (k && q) || (q && j) {
+				total -= 1.0
+			}
+		}
+		// Concentrated strength in a long suit is worth extra.
+		if pics >= 3 {
+			if length == 5 {
+				total += 1.0
+			} else if length >= 6 {
+				total += 2.0
+			}
+		}
+	}
+
+	// Whole-hand honour corrections.
+	kings := 0
+	queens := 0
+	has_ace := false
+	for suit in Suit {
+		m := s.suits[suit]
+		if m & KING_BIT != 0 {kings += 1}
+		if m & QUEEN_BIT != 0 {queens += 1}
+		if m & ACE_BIT != 0 {has_ace = true}
+	}
+	no_kings := kings == 0
+	no_queens := queens == 0
+
+	if no_queens {total -= 1.0}
+	if no_kings {total -= 1.0}
+	if kings == 3 {total += 1.0}
+	if kings == 4 {total += 2.0}
+	if queens == 4 {total += 1.0}
+
+	non_opening := total
+	opening := total
+	// An aceless hand is a poor opener — but not docked twice: if it is already stripped of kings AND
+	// queens the missing-king/queen penalties have covered it.
+	if !has_ace && !(no_kings && no_queens) {
+		opening -= 1.0
+	}
+
+	return Honour_Points{opening = opening, non_opening = non_opening}
+}
+
+// OPC Length points for the whole hand: a good (K+ / QJ) five-card suit is worth 1, a good six-card
+// suit 2, a poor six-card suit 1, and every card beyond the sixth another 2.
+length_points :: proc(s: Hand_Summary) -> f32 {
+	total: f32 = 0
+	for suit in Suit {
+		m := s.suits[suit]
+		length := int(intrinsics.count_ones(m))
+		good := milton_hcp(m) >= 3
+		if length == 5 && good {total += 1.0}
+		if length >= 6 && good {total += 2.0}
+		if length >= 6 && !good {total += 1.0}
+		if length >= 7 {total += f32(2 * (length - 6))}
+	}
+	return total
+}
+
+// OPC Distribution points for the whole hand. The `suit` total rewards shortage (a singleton is 2, a
+// void 4, two doubletons a bonus 1) and docks the flat 4-3-3-3; the `nt` total then subtracts those
+// shortage assets back off, since they do not help at notrump.
+distribution_points :: proc(s: Hand_Summary) -> Distribution_Points {
+	tripletons := 0
+	doubletons := 0
+	singletons := 0
+	voids := 0
+	for suit in Suit {
+		switch suit_length(s, suit) {
+		case 0:
+			voids += 1
+		case 1:
+			singletons += 1
+		case 2:
+			doubletons += 1
+		case 3:
+			tripletons += 1
+		}
+	}
+
+	total: f32 = 0
+	nt_adjust: f32 = 0
+
+	if tripletons == 3 {total -= 1.0} // 4-3-3-3 flat
+	if doubletons == 2 {total += 1.0}
+	if singletons > 0 {
+		total += f32(singletons) * 2.0
+		nt_adjust += -f32(singletons) // shortage value removed at NT
+		nt_adjust += -1.0 // and a flat penalty for declaring NT with a singleton
+	}
+	if voids > 0 {
+		total += f32(voids) * 4.0
+		nt_adjust += -2.0 // shortage value removed at NT
+		nt_adjust += -1.0 // and a flat penalty for declaring NT with a void
+	}
+
+	return Distribution_Points{suit = total, nt = total + nt_adjust}
+}
+
+// The full OPC valuation of a hand: the H/L/D components and the four starting-point totals they
+// combine into (opening/non-opening x suit/notrump). See the section header for the axes.
+opc_points :: proc(s: Hand_Summary) -> Opc_Points {
+	h := honour_points(s)
+	l := length_points(s)
+	d := distribution_points(s)
+	return Opc_Points {
+		honour = h,
+		length = l,
+		distribution = d,
+		opening_suit = l + h.opening + d.suit,
+		opening_nt = l + h.opening + d.nt,
+		non_opening_suit = l + h.non_opening + d.suit,
+		non_opening_nt = l + h.non_opening + d.nt,
+	}
+}
