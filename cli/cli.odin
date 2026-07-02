@@ -11,7 +11,7 @@ package cli
 	Supported flags (GNU-ish; both `--flag value` and `--flag=value` work):
 
 		-n, --count    N           number of deals to generate (default 1)
-		-f, --format   FORMAT      output format: line|pretty|handviewer|html|pbn|numeric (default line)
+		-f, --format   FORMAT      output format: line|pretty|handviewer|html-handviewer|html-cards|pbn|numeric (default line)
 		-o, --output   PATH        output file, or "-" for stdout (default "-")
 		-s, --seed     N           PRNG seed for reproducible deals (default: a fresh seed each run)
 		-S, --scenario NAME        keep only deals matching a named scenario
@@ -208,7 +208,7 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 			format, recognised := parse_format(value)
 			if !recognised {
 				return opts, false, fmt.tprintf(
-					"invalid value for %s: %q (expected line, pretty, handviewer, html, pbn or numeric)",
+					"invalid value for %s: %q (expected line, pretty, handviewer, html-handviewer, html-cards, pbn or numeric)",
 					flag,
 					value,
 				)
@@ -279,8 +279,13 @@ parse_format :: proc(name: string) -> (format: norn.Output_Format, ok: bool) {
 		return .Pretty, true
 	case strings.equal_fold(name, "handviewer"), strings.equal_fold(name, "hv"):
 		return .Handviewer, true
-	case strings.equal_fold(name, "html"):
-		return .Html, true
+	case strings.equal_fold(name, "html-handviewer"),
+	     strings.equal_fold(name, "html-bbo"),
+	     strings.equal_fold(name, "bbo"),
+	     strings.equal_fold(name, "html"):
+		return .Html_Handviewer, true
+	case strings.equal_fold(name, "html-cards"), strings.equal_fold(name, "cards"):
+		return .Html_Cards, true
 	case strings.equal_fold(name, "pbn"):
 		return .Pbn, true
 	case strings.equal_fold(name, "numeric"), strings.equal_fold(name, "num"):

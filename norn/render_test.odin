@@ -161,9 +161,9 @@ test_html_page_wraps_deals :: proc(t: ^testing.T) {
 
 	builder := strings.builder_make()
 	defer strings.builder_destroy(&builder)
-	render_page_prologue(&builder, .Html)
-	render_deal(&builder, board, .Html)
-	render_page_epilogue(&builder, .Html)
+	render_page_prologue(&builder, .Html_Handviewer)
+	render_deal(&builder, board, .Html_Handviewer)
+	render_page_epilogue(&builder, .Html_Handviewer)
 	text := strings.to_string(builder)
 
 	testing.expect(t, strings.has_prefix(text, "<!DOCTYPE html>"), "page should open with the doctype")

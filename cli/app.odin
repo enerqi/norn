@@ -132,7 +132,9 @@ Usage:
 
 Options:
   -n, --count    N            number of deals to generate (default 1)
-  -f, --format   FORMAT       output format: line|pretty|handviewer|html|pbn|numeric (default line)
+  -f, --format   FORMAT       output format: line|pretty|handviewer|html-handviewer|html-cards|pbn|numeric
+                              (default line). html-handviewer = BBO iframe page; html-cards =
+                              self-rendered, offline card carousel
   -o, --output   PATH         output file, or "-" for stdout (default "-")
   -s, --seed     N            PRNG seed for reproducible deals (default: fresh each run)
   -S, --scenario NAME[,...]   keep only deals matching the named scenario(s); with --html-dir, a
@@ -145,12 +147,14 @@ Options:
                               (N | N+ | N- | x). Builds the rare seat directly; can't combine with
                               --predeal
       --list                  list the available scenarios and exit
-      --html-dir DIR          export scenarios to DIR/<name>.html and exit (all, or the --scenario subset)
+      --html-dir DIR          export scenarios to DIR/<name>.html and exit (all, or the --scenario
+                              subset); BBO-iframe pages by default, or --format html-cards for the
+                              offline card carousel
       --frequency N           measure each scenario's acceptance rate over N deals and exit (no deals
                               emitted); all scenarios, or the --scenario subset. With --dd the rate
                               also counts each scenario's double-dummy filter, matching what
                               generation keeps
-      --fixed-table           handviewer/html: fix vulnerability & dealer (default: randomise them)
+      --fixed-table           handviewer/html formats: fix vulnerability & dealer (default: randomise)
       --dd                    enable the consumer's double-dummy hooks (per-scenario filter +
                               annotator); no effect unless the program supplies them. Applies to
                               generation, --html-dir export, AND --frequency (the filter is counted).
@@ -168,8 +172,10 @@ Examples:
   norn -n 12 --smartstack "S 10-13 6+,x,x,x" # South: 6+ spades, 10-13 hcp
   norn --scenario 1c-any -n 12 -f pretty   # 12 deals where North opens 1C
   norn -S 2c-opener -f handviewer          # BBO handviewer query strings
-  norn -S 2c-opener -n 24 -f html -o x.html# one scenario as an HTML page
-  norn --html-dir ./deals -n 48            # every scenario -> ./deals/<name>.html
+  norn -S 2c-opener -n 24 -f html-handviewer -o x.html # one scenario as a BBO-iframe page
+  norn -S 2c-opener -n 24 -f html-cards -o x.html      # ... as an offline card carousel
+  norn --html-dir ./deals -n 48            # every scenario -> ./deals/<name>.html (BBO iframes)
+  norn --html-dir ./deals -f html-cards -n 48 # ... as offline card carousels
   norn --html-dir ./deals -S 1c-any,2c-opener # just those two -> ./deals/<name>.html
   norn --frequency 1000000                 # acceptance rate of every scenario over 1M deals
   norn --frequency 1000000 -S 2c-opener    # just one scenario's rate over 1M deals

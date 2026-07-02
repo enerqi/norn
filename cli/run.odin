@@ -102,6 +102,9 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 Export_Task :: struct {
 	count:           int,
 	seed:            u64,
+	// The HTML page format for this export — the BBO-iframe `Html_Handviewer` or the self-rendered
+	// `Html_Cards` (chosen by --format; see export_all_html). Both wrap deals in a full HTML page.
+	format:          norn.Output_Format,
 	predicate:       norn.Predicate,
 	randomize_table: bool,
 	predeal:         Maybe(norn.Predeal),
@@ -127,7 +130,7 @@ export_worker :: proc(t: thread.Task) {
 	job.accepted, job.attempts = norn.generate_accepted(
 		job.builder,
 		job.count,
-		.Html,
+		job.format,
 		job.predicate,
 		HTML_EXPORT_MAX_ATTEMPTS,
 		job.randomize_table,
@@ -194,6 +197,14 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 		ss = &spec
 	}
 
+	// Which HTML page format to export. --html-dir defaults to the BBO-iframe page; pass
+	// `--format html-cards` to export the self-rendered card carousel instead. Any non-HTML --format
+	// is ignored here (batch export is always a full HTML page), so it falls back to the iframe page.
+	export_format := norn.Output_Format.Html_Handviewer
+	if opts.format == .Html_Cards {
+		export_format = .Html_Cards
+	}
+
 	// One builder per scenario (workers run concurrently, so they can't share one), each presized to
 	// the expected HTML page so it rarely has to grow mid-render.
 	builders := make([]strings.Builder, len(selected))
@@ -204,7 +215,7 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 		delete(builders)
 	}
 	for &b in builders {
-		b = strings.builder_make_len_cap(0, output_size_hint(.Html, opts.count))
+		b = strings.builder_make_len_cap(0, output_size_hint(export_format, opts.count))
 	}
 
 	jobs := make([]Export_Task, len(selected))
@@ -213,6 +224,7 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 		jobs[i] = Export_Task {
 			count           = opts.count,
 			seed            = scenario_seed(seed, i),
+			format          = export_format,
 			predicate       = s.predicate,
 			randomize_table = opts.randomize_table,
 			predeal         = opts.predeal,
@@ -511,9 +523,12 @@ output_size_hint :: proc(format: norn.Output_Format, count: int) -> int {
 		per_deal = 160
 	case .Handviewer:
 		per_deal = 140
-	case .Html:
+	case .Html_Handviewer:
 		per_deal = 600 // iframe wrapper + handviewer URL
 		overhead = 512 // page header + footer, emitted once around the run
+	case .Html_Cards:
+		per_deal = 900 // compass diagram (four hands, glyphs + ranks) + par caption
+		overhead = 8 * 1024 // page header carries the carousel CSS + script, emitted once
 	}
 	return per_deal * max(count, 0) + overhead + 64
 }

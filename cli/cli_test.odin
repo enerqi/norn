@@ -75,9 +75,22 @@ test_parse_format :: proc(t: ^testing.T) {
 	testing.expect(t, ok_hv2, "hv alias should parse")
 	testing.expect_value(t, opts_hv2.format, norn.Output_Format.Handviewer)
 
-	opts_html, ok_html, _ := parse_args({"--format", "html"})
-	testing.expect(t, ok_html, "html should parse")
-	testing.expect_value(t, opts_html.format, norn.Output_Format.Html)
+	opts_html, ok_html, _ := parse_args({"--format", "html-handviewer"})
+	testing.expect(t, ok_html, "html-handviewer should parse")
+	testing.expect_value(t, opts_html.format, norn.Output_Format.Html_Handviewer)
+
+	// Back-compat / convenience aliases for the handviewer HTML page.
+	opts_html2, ok_html2, _ := parse_args({"-f", "html"})
+	testing.expect(t, ok_html2, "html alias should parse")
+	testing.expect_value(t, opts_html2.format, norn.Output_Format.Html_Handviewer)
+
+	opts_bbo, ok_bbo, _ := parse_args({"-f", "bbo"})
+	testing.expect(t, ok_bbo, "bbo alias should parse")
+	testing.expect_value(t, opts_bbo.format, norn.Output_Format.Html_Handviewer)
+
+	opts_cards, ok_cards, _ := parse_args({"--format", "html-cards"})
+	testing.expect(t, ok_cards, "html-cards should parse")
+	testing.expect_value(t, opts_cards.format, norn.Output_Format.Html_Cards)
 
 	_, ok_bad, _ := parse_args({"--format", "fancy"})
 	testing.expect(t, !ok_bad, "unknown format should fail")
