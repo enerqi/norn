@@ -680,3 +680,249 @@ opc_points :: proc(s: Hand_Summary) -> Opc_Points {
 		non_opening_nt = l + h.non_opening + d.nt,
 	}
 }
+
+// --- Partnership combined OPC: per-suit adjustment primitives ---
+//
+// `opc_points` values ONE hand; a partnership is not the sum of two such counts — honours face
+// shortness, shortness faces length, an eight-card fit adds tricks, weak honours firm up in a fit. The
+// small pure functions below are the independently-testable combining building blocks the reference
+// optimal_point_count.py describes as its partner-dependent adjustments (`with_partners_long_suit`,
+// `with_partners_shortage`, `fitting_weak_honours`, the "Fit points" note). A later `combined_opc`
+// composes them over two hands. Each takes raw per-suit rank masks, so it can be unit-tested alone.
+
+// Fit points for a suit's COMBINED partnership length: an eight-card fit is worth 1, a nine 2, a
+// ten-or-longer 3 — at suit and notrump alike. Shorter than eight scores nothing. This is per SUIT:
+// the composition sums it over all four, so a double fit (two 8+ suits) rightly counts both.
+@(private)
+opc_fit_points :: proc(combined_length: int) -> f32 {
+	switch {
+	case combined_length >= 10:
+		return 3.0
+	case combined_length == 9:
+		return 2.0
+	case combined_length == 8:
+		return 1.0
+	}
+	return 0.0
+}
+
+// This hand's holding `m` (length `l`) OPPOSITE partner's five-plus card suit: a shortage is a misfit
+// (void -3, singleton -2, two small cards -1) while a working doubleton — Kx/Qx/Jx or JT — half-fits
+// for +1. Three-plus cards, or a doubleton that is neither (Ax, QJ, KQ, …), is neutral. Caller applies
+// this only when PARTNER is long (>=5) in the suit. (opc `with_partners_long_suit`.)
+@(private)
+opc_opposite_long_suit :: proc(m: u16, l: int) -> f32 {
+	switch l {
+	case 0:
+		return -3.0
+	case 1:
+		return -2.0
+	case 2:
+		if m & (PICTURE_BITS | TEN_BIT) == 0 {
+			return -1.0 // xx: two small cards
+		}
+		// Exactly one of K/Q/J plus a small card (no ace, no ten) is Kx/Qx/Jx; a bare JT also half-fits.
+		honours := int(intrinsics.count_ones(m & (KING_BIT | QUEEN_BIT | JACK_BIT)))
+		if honours == 1 && m & (ACE_BIT | TEN_BIT) == 0 {
+			return 1.0 // Kx / Qx / Jx
+		}
+		if m & JACK_BIT != 0 && m & TEN_BIT != 0 {
+			return 1.0 // JT
+		}
+	}
+	return 0.0
+}
+
+// This hand's honours in `m` OPPOSITE partner's shortage in the SAME suit (`partner_length` 0 = void,
+// 1 = singleton): a King/Queen/Jack is largely wasted (void -3, singleton -2); holding none, the hand
+// has nothing to waste — a plus (void +3, singleton +2) — and an isolated Ace a small plus opposite a
+// singleton only (+1). Caller applies this only when PARTNER is short (<=1) in the suit. (opc
+// `with_partners_shortage`.)
+@(private)
+opc_honour_opposite_shortage :: proc(m: u16, partner_length: int) -> f32 {
+	void := partner_length == 0
+	if m & (KING_BIT | QUEEN_BIT | JACK_BIT) != 0 {
+		return -3.0 if void else -2.0
+	}
+	if m & ACE_BIT == 0 {
+		return 3.0 if void else 2.0
+	}
+	return 0.0 if void else 1.0 // isolated ace
+}
+
+// A weak but real honour holding `m` firms up inside an eight-plus fit: under four Milton points, not
+// the full QJT (which already pulls its weight), yet holding at least one picture honour → +1. Caller
+// applies this per hand only in a suit that is an eight-plus combined fit. (opc `fitting_weak_honours`.)
+@(private)
+opc_weak_honour_fit_upgrade :: proc(m: u16) -> f32 {
+	if milton_hcp(m) >= 4 {
+		return 0.0
+	}
+	if m & (QUEEN_BIT | JACK_BIT | TEN_BIT) == (QUEEN_BIT | JACK_BIT | TEN_BIT) {
+		return 0.0 // QJT: excluded — essentially four points already
+	}
+	if m & PICTURE_BITS != 0 {
+		return 1.0
+	}
+	return 0.0
+}
+
+// Is the hand a flat 4-3-3-3 (exactly three tripletons)?
+@(private = "file")
+is_4333 :: proc(s: Hand_Summary) -> bool {
+	threes := 0
+	for suit in Suit {
+		if suit_length(s, suit) == 3 {
+			threes += 1
+		}
+	}
+	return threes == 3
+}
+
+// The base OPC a RESPONDER/advancer brings to the partnership total — always the non-opening honour
+// count (a responder never gets the opener's aceless dock), but for a SUIT contract its Length points
+// are capped at 2 and its Distribution points shrink to only the -1 flat 4-3-3-3 penalty: a responder's
+// shortage is worth nothing until a trump fit turns it into ruffing value (that arrives later as
+// distribution-fit points), and its extra length is only worth counting once a fit is known. Declaring
+// NOTRUMP lifts both limits — length runs and the NT distribution (shortage already a liability) apply
+// in full — so the NT base is just the ordinary non-opening NT total. (opc render_summary: "Responder/
+// Advancer only includes max 2 Length points and the -1 4333 Distribution points, UNLESS ... NT".)
+@(private)
+opc_responder_base :: proc(s: Hand_Summary, is_nt: bool) -> f32 {
+	o := opc_points(s)
+	if is_nt {
+		return o.non_opening_nt
+	}
+	length := o.length
+	if length > 2.0 {
+		length = 2.0
+	}
+	flat: f32 = -1.0 if is_4333(s) else 0.0
+	return o.honour.non_opening + length + flat
+}
+
+// Does the hand hold a five-plus card suit?
+@(private = "file")
+has_five_plus :: proc(s: Hand_Summary) -> bool {
+	for suit in Suit {
+		if suit_length(s, suit) >= 5 {
+			return true
+		}
+	}
+	return false
+}
+
+// Mirror penalty: two hands of identical shape (a "mirror") duplicate each other's shortness and offer
+// no ruffing value, so the partnership is worth less than the raw points — but only where there is a
+// long suit whose length that mirrored shortness fails to exploit. Identical distributions with a 5+
+// suit somewhere -> -2; otherwise 0. (opc `with_partners_long_suit`: "mirror hand when partner has a
+// long suit".) Per-suit mirror penalties are deliberately not applied here — the reference lists them
+// only as an unconditional reminder, without a precise rule.
+@(private)
+opc_mirror_penalty :: proc(a, b: Hand_Summary) -> f32 {
+	if !has_five_plus(a) && !has_five_plus(b) {
+		return 0.0
+	}
+	if pattern(a) == pattern(b) {
+		return -2.0
+	}
+	return 0.0
+}
+
+// Distribution-fit ("ruffing") value a hand brings as trump support once an 8+ fit exists — the
+// deferred shortage the responder base held back (see opc_responder_base). With 2-4 trumps the hand is
+// the SUPPORT/dummy: its single shortest side suit ruffs, worth its trump length minus that suit's
+// length (a singleton opposite four trumps = 3), zero without a side shortage. With 5+ trumps it is
+// itself long in trumps, so its shortages count in full as an opener's would (its whole suit
+// distribution total). Fewer than two trumps is no support: nothing. (opc render_summary
+// "Distribution-Fit points".) The composition applies this only for a real (8+) trump fit and only to
+// the RESPONDER — the opener already carries its own shortage in its opening base.
+@(private)
+opc_support_ruffing :: proc(s: Hand_Summary, trump: Suit) -> f32 {
+	rt := suit_length(s, trump)
+	if rt >= 5 {
+		return distribution_points(s).suit // long trump: full opening-style shortage value
+	}
+	if rt < 2 {
+		return 0.0 // not trump support
+	}
+	// 2-4 card support: the single shortest side suit ruffs.
+	shortest := 13
+	for suit in Suit {
+		if suit == trump {
+			continue
+		}
+		l := suit_length(s, suit)
+		if l < shortest {
+			shortest = l
+		}
+	}
+	ruff := rt - shortest
+	return f32(ruff) if ruff > 0 else 0.0
+}
+
+// The partnership's combined OPC for a contract of the given strain (`is_nt`), composing the primitives
+// above. The stronger hand (higher non-opening total) is treated as the OPENER — keeping its full
+// opening total, including any aceless dock — while the weaker RESPONDS with its capped responder base
+// (see opc_responder_base). To that base it adds, per suit: fit points for every 8+ combined length (so
+// a DOUBLE fit counts twice), a misfit/semi-fit where one hand is long opposite the other's shortage or
+// working doubleton, and wasted/freed honour value where one hand holds honours opposite the other's
+// shortage; weak honours in a fit firm up; and a whole-hand mirror penalty. The long-vs-short case can
+// draw BOTH a shape misfit (on the short hand) and a wasted-honour penalty (on the long hand's honours)
+// — they are different hands' contributions and intentionally stack.
+//
+// The `trump` parameter (nil = notrump) selects the strain: it picks the suit-vs-NT base totals and, for
+// a suit contract with a real (8+) trump fit, adds the responder's distribution-fit ruffing value — the
+// deferred shortage the responder base held back. No double count: the opener carries its own shortage
+// in its opening base, the responder's returns here.
+combined_opc :: proc(a, b: Hand_Summary, trump: Maybe(Suit)) -> f32 {
+	is_nt := trump == nil
+	oa := opc_points(a)
+	ob := opc_points(b)
+	a_non := oa.non_opening_nt if is_nt else oa.non_opening_suit
+	b_non := ob.non_opening_nt if is_nt else ob.non_opening_suit
+	a_open := oa.opening_nt if is_nt else oa.opening_suit
+	b_open := ob.opening_nt if is_nt else ob.opening_suit
+
+	// Stronger hand (by non-opening total) opens; the weaker responds with its capped base.
+	opener, responder: Hand_Summary
+	opener_full: f32
+	if a_non >= b_non {
+		opener, responder, opener_full = a, b, a_open
+	} else {
+		opener, responder, opener_full = b, a, b_open
+	}
+	base := opener_full + opc_responder_base(responder, is_nt)
+
+	adj: f32 = 0
+	for suit in Suit {
+		ma := a.suits[suit]
+		mb := b.suits[suit]
+		la := suit_length(a, suit)
+		lb := suit_length(b, suit)
+		combined := la + lb
+
+		adj += opc_fit_points(combined)
+
+		if la >= 5 {adj += opc_opposite_long_suit(mb, lb)}
+		if lb >= 5 {adj += opc_opposite_long_suit(ma, la)}
+
+		if lb <= 1 {adj += opc_honour_opposite_shortage(ma, lb)}
+		if la <= 1 {adj += opc_honour_opposite_shortage(mb, la)}
+
+		if combined >= 8 {
+			adj += opc_weak_honour_fit_upgrade(ma)
+			adj += opc_weak_honour_fit_upgrade(mb)
+		}
+	}
+
+	// Responder's ruffing value, once a genuine trump fit backs the strain.
+	if t, is_suit := trump.?; is_suit {
+		if suit_length(opener, t) + suit_length(responder, t) >= 8 {
+			adj += opc_support_ruffing(responder, t)
+		}
+	}
+
+	adj += opc_mirror_penalty(a, b)
+	return base + adj
+}
