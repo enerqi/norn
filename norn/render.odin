@@ -335,9 +335,10 @@ render_deal_html_cards :: proc(builder: ^strings.Builder, board: Deal, randomize
 	write_compass_seat(builder, board, ds, .North, "N", "n", ns_vulnerable, dealer == "N")
 	strings.write_string(builder, `<div class="mid">`)
 	write_compass_seat(builder, board, ds, .West, "W", "w", ew_vulnerable, dealer == "W")
-	strings.write_string(builder, `<div class="table">Vul `)
-	strings.write_string(builder, HTML_CARDS_VULNERABILITIES[vul_index])
-	strings.write_string(builder, `</div>`)
+	// Centre marker: the script fills it per slide — the board number in the 4-hand view, a
+	// "Reveal all" button when a single hand is focused. Vulnerability is shown by the seat-pill
+	// colours, so it is no longer spelled out here.
+	strings.write_string(builder, `<div class="table"></div>`)
 	write_compass_seat(builder, board, ds, .East, "E", "e", ew_vulnerable, dealer == "E")
 	strings.write_string(builder, `</div>`) // .mid
 	write_compass_seat(builder, board, ds, .South, "S", "s", ns_vulnerable, dealer == "S")
@@ -708,20 +709,31 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         .hcp .prob { font-weight: 400; }
         /* West / table / East grouped and centred, with a gap that grows on wide monitors and shrinks
            at lower resolutions so the hands compress toward one another instead of flinging to the edges. */
-        .compass .mid { display: flex; justify-content: center; align-items: center; gap: clamp(0.5rem, 7vw, 6rem); }
+        /* A 1fr | auto | 1fr grid: the centre table lands at the exact board centre (aligned with the
+           N/S cards above/below) no matter how wide the W/E hands are, while W/E hug the centre gap.
+           Top-align (align-items) so the West and East pills line up regardless of card height — the
+           dealer's "Dealer" tag makes one card taller, and centring would offset its top-anchored pill. */
+        .compass .mid {
+            display: grid; grid-template-columns: 1fr auto 1fr; align-items: flex-start;
+            column-gap: clamp(0.5rem, 7vw, 6rem);
+        }
+        .compass .mid > .seat-w { justify-self: end; }
+        .compass .mid > .seat-e { justify-self: start; }
+        .compass .mid > .table { justify-self: center; align-self: center; }
         /* Card text sizes off the SMALLER of viewport height/width, so it fits both axes — key for
            phones where width is the tight one (landscape) or height is (portrait). */
         .seat {
             font-family: 'Consolas', 'Courier New', monospace;
             font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem);
             line-height: 1.28; min-width: clamp(5rem, 20vw, 11rem);
-            background: #fff; border-radius: 10px; padding: 0.5rem 1rem 0.45rem; box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+            background: #fff; border-radius: 10px; padding: 0.85rem 1rem 0.45rem; box-shadow: 0 2px 6px rgba(0,0,0,0.25);
         }
         /* North/South: centre the hand as a block but keep its suit lines left-aligned to the suit
            symbol, so the symbols form a column exactly like East/West (which are already left-aligned). */
         .compass > .seat { width: fit-content; margin: 0 auto; }
-        /* The dealer's pill carries a ring, so give that seat extra top room to clear the card border. */
-        .seat.is-dealer { padding-top: 0.85rem; }
+        /* The dealer's pill carries a ring that needs clearance from the card's top edge; give EVERY
+           seat that clearance (in the base padding above) so the dealer card is not taller than the
+           rest — otherwise the E/W pills, centred in the mid row, misalign when exactly one is dealer. */
         /* Seat label: a big pill coloured by vulnerability (red = vulnerable, green = not). */
         .seat .lbl {
             display: inline-block; font-weight: 700; font-size: 1.7em; line-height: 1;
@@ -747,36 +759,61 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
             font-size: 1.3rem; color: #fff; background: rgba(255,255,255,0.12); white-space: nowrap;
         }
         .par { margin-top: clamp(0.4rem, 1.1vh, 1rem); text-align: center; color: #555; font-size: clamp(1rem, 1.8vh, 1.3rem); }
+        /* A .combo trick-chance table (consumer annotator): a compact monospace grid under the board. */
+        .combo { margin-top: clamp(0.3rem, 0.9vh, 0.8rem); text-align: center; }
+        .combo pre {
+            display: inline-block; margin: 0; text-align: left; color: #555;
+            font-size: clamp(0.5rem, 1.25vh, 0.85rem); line-height: 1.25; white-space: pre;
+        }
         /* Seat toggle: keep just one seat visible across every board (layout preserved via visibility). */
         /* Single-seat view: the other three seats collapse to just their position pill (and Dealer tag),
            so the compass orientation, vulnerability, and dealer stay visible — only their cards hide. */
-        .track.only-n .seat:not(.seat-n), .track.only-e .seat:not(.seat-e),
-        .track.only-s .seat:not(.seat-s), .track.only-w .seat:not(.seat-w) {
+        /* Seat focus is now PER BOARD (a .slide class), not global on the track: each board can show
+           all four hands or one, independently. */
+        .slide.only-n .seat:not(.seat-n), .slide.only-e .seat:not(.seat-e),
+        .slide.only-s .seat:not(.seat-s), .slide.only-w .seat:not(.seat-w) {
             background: transparent; box-shadow: none; min-width: 0; padding: 0.2rem;
         }
-        .track.only-n .seat:not(.seat-n) :is(.suit, .hcp, .opc, .shape),
-        .track.only-e .seat:not(.seat-e) :is(.suit, .hcp, .opc, .shape),
-        .track.only-s .seat:not(.seat-s) :is(.suit, .hcp, .opc, .shape),
-        .track.only-w .seat:not(.seat-w) :is(.suit, .hcp, .opc, .shape) { display: none; }
+        .slide.only-n .seat:not(.seat-n) :is(.suit, .hcp, .opc, .shape),
+        .slide.only-e .seat:not(.seat-e) :is(.suit, .hcp, .opc, .shape),
+        .slide.only-s .seat:not(.seat-s) :is(.suit, .hcp, .opc, .shape),
+        .slide.only-w .seat:not(.seat-w) :is(.suit, .hcp, .opc, .shape) { display: none; }
         /* The Dealer tag sits on the green felt for these markers (transparent card), so make it white. */
-        .track.only-n .seat:not(.seat-n) .dtag, .track.only-e .seat:not(.seat-e) .dtag,
-        .track.only-s .seat:not(.seat-s) .dtag, .track.only-w .seat:not(.seat-w) .dtag { color: #fff; }
+        .slide.only-n .seat:not(.seat-n) .dtag, .slide.only-e .seat:not(.seat-e) .dtag,
+        .slide.only-s .seat:not(.seat-s) .dtag, .slide.only-w .seat:not(.seat-w) .dtag { color: #fff; }
         /* The chosen seat grows by REAL layout (font-size, everything inside is em-relative), so the
            green felt reflows to contain it — a transform would leave the card spilling off a small felt. */
         .seat { transition: font-size 0.25s ease; }
-        .track.only-n .seat-n, .track.only-e .seat-e,
-        .track.only-s .seat-s, .track.only-w .seat-w { font-size: clamp(1.6rem, min(4vh, 6.5vw), 3.4rem); }
+        .slide.only-n .seat-n, .slide.only-e .seat-e,
+        .slide.only-s .seat-s, .slide.only-w .seat-w { font-size: clamp(1.6rem, min(4vh, 6.5vw), 3.4rem); }
         /* The partnership HCP summary is meaningless with only one hand shown, so hide it then. */
-        .track.only-n .stats, .track.only-e .stats,
-        .track.only-s .stats, .track.only-w .stats { display: none; }
-        .track.hide-par .par { display: none; }
+        .slide.only-n .stats, .slide.only-e .stats,
+        .slide.only-s .stats, .slide.only-w .stats { display: none; }
+        /* The seat pill is the board's "compass icon": in the 4-hand view it is clickable to focus
+           that hand. Once a hand is focused you must Reveal all before switching, so no pointer then. */
+        .slide:not([class*="only-"]) .seat .lbl { cursor: pointer; }
+        .slide:not([class*="only-"]) .seat .lbl:hover { filter: brightness(1.12); }
+        /* Centre marker: a plain board-number label in the 4-hand view; a "Reveal all" button (the
+           script adds .reveal + the text) when a single hand is focused. */
+        .table.reveal { cursor: pointer; background: rgba(255,255,255,0.22); }
+        .table.reveal:hover { background: rgba(255,255,255,0.35); }
+        /* Single East/West focus: replace the 1fr|auto|1fr grid with a content-hugging flex row so the
+           felt wraps the big card (the grid's equal 1fr columns would mirror its width as empty green on
+           the far side), and centre the items vertically so the opposite pill + Reveal-all button sit
+           level with the enlarged hand. North/South focus keeps the grid (the big card is outside .mid). */
+        .slide.only-e .mid, .slide.only-w .mid {
+            display: flex; justify-content: center; align-items: center; gap: clamp(0.5rem, 7vw, 6rem);
+        }
+        /* Par/combo captions describe the whole board, so hide them while a single hand is focused —
+           they only make sense (and only show) in that board's 4-hand view. */
+        .slide[class*="only-"] .par, .slide[class*="only-"] .combo { display: none; }
+        .track.hide-par .par, .track.hide-par .combo { display: none; }
 
         /* Phones: strip the secondary lines (OPC/shape), pull the hands tight together, and shrink the
            HCP badge + centre table so a whole board fits a small screen in either orientation. */
         @media (max-width: 640px) {
             .opc, .shape { display: none; }
-            .seat { min-width: 0; padding: 0.4rem 0.6rem 0.35rem; }
-            .seat.is-dealer { padding-top: 0.7rem; }
+            .seat { min-width: 0; padding: 0.7rem 0.6rem 0.35rem; }
             .compass { gap: clamp(0.25rem, 0.8vh, 0.7rem); padding: clamp(0.4rem, 1vh, 0.9rem) clamp(0.4rem, 2vw, 1rem); }
             .compass .mid { gap: clamp(0.3rem, 3vw, 1.2rem); }
             .hcp { font-size: 0.95rem; margin-top: 0.15rem; }
@@ -808,6 +845,7 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
             <button data-seat="s">S</button>
             <button data-seat="w">W</button>
         </div>
+        <button id="nc-reset" title="Reset every board to the current seat default">Reset</button>
         <button id="nc-par-toggle">Par</button>
     </div>
     <h1 class="page-title">{{TITLE}}</h1>
@@ -823,22 +861,50 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
     <script>
     (function () {
         var track = document.getElementById('nc-track');
-        // Each accepted deal wrote a .compass and (with --dd) a following .par sibling. Group each
-        // compass with its par into one .slide, so the carousel moves them together.
+        // Each accepted deal wrote a .compass and (with --dd) one or more following caption siblings
+        // (a .par par-summary, a .combo trick table, ...). Group each compass with every sibling up to
+        // the next board into one .slide, so the carousel moves them together.
         var comps = Array.prototype.slice.call(track.querySelectorAll(':scope > .compass'));
         var slides = comps.map(function (c) {
-            var par = c.nextElementSibling;
             var slide = document.createElement('div');
             slide.className = 'slide';
             track.insertBefore(slide, c);
             slide.appendChild(c);
-            if (par && par.classList.contains('par')) slide.appendChild(par);
+            // Pull in trailing siblings (captions, and the whitespace text nodes between them) until the
+            // next .compass — those all belong to this board.
+            while (slide.nextSibling) {
+                var sib = slide.nextSibling;
+                if (sib.nodeType === 1 && sib.classList && sib.classList.contains('compass')) break;
+                slide.appendChild(sib);
+            }
             return slide;
         });
 
         var idx = 0;
         var total = slides.length;
         document.getElementById('nc-total').textContent = total;
+
+        // Seat focus is per board. globalSeat is the toolbar default ('' = all four hands, else one
+        // of n/e/s/w). override[i] is an explicit per-board choice that WINS over the default — set
+        // by clicking a hand's pill (focus it) or "Reveal all" (show all four). A board with no
+        // override follows the global default; Reset drops every override.
+        var globalSeat = '';
+        var override = new Array(total); // undefined = follow globalSeat
+        function seatFor(i) { return override[i] !== undefined ? override[i] : globalSeat; }
+        function applySeat(i) {
+            var s = slides[i];
+            s.classList.remove('only-n', 'only-e', 'only-s', 'only-w');
+            var seat = seatFor(i);
+            if (seat) s.classList.add('only-' + seat);
+            var table = s.querySelector('.table');
+            if (table) {
+                if (seat) { table.textContent = 'Reveal all'; table.classList.add('reveal'); }
+                else { table.textContent = 'Board ' + (i + 1); table.classList.remove('reveal'); }
+            }
+        }
+        function applyAll() { for (var i = 0; i < total; i++) applySeat(i); }
+        // A focus/reveal reflows the felt (font-size transition): re-centre now and after it settles.
+        function recentre() { show(idx); setTimeout(function () { show(idx); }, 280); }
 
         function show(i) {
             idx = Math.max(0, Math.min(total - 1, i));
@@ -875,19 +941,47 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             show(idx + ((e.deltaY + e.deltaX) > 0 ? 1 : -1));
         }, { passive: false });
 
-        // Seat toggle: an empty data-seat means "all"; otherwise show only that seat everywhere.
+        // Toolbar seat buttons set the GLOBAL default (empty data-seat = all four hands). Per-board
+        // overrides are kept — the default only moves boards you haven't focused individually.
         var seatBtns = document.querySelectorAll('[data-seat]');
         for (var k = 0; k < seatBtns.length; k++) {
             seatBtns[k].onclick = function () {
-                track.classList.remove('only-n', 'only-e', 'only-s', 'only-w');
-                var seat = this.getAttribute('data-seat');
-                if (seat) track.classList.add('only-' + seat);
+                globalSeat = this.getAttribute('data-seat');
                 for (var m = 0; m < seatBtns.length; m++) seatBtns[m].classList.toggle('sel', seatBtns[m] === this);
-                // The card resize changes the slide width — re-centre now and again once it settles.
-                show(idx);
-                setTimeout(function () { show(idx); }, 280);
+                applyAll();
+                recentre();
             };
         }
+
+        // Reset: drop every per-board override so all boards follow the global default again.
+        document.getElementById('nc-reset').onclick = function () {
+            for (var i = 0; i < total; i++) override[i] = undefined;
+            applyAll();
+            recentre();
+        };
+
+        // Delegated board clicks. A hand's pill is its "compass icon": click it — only from the
+        // 4-hand view — to focus that hand. When a hand is focused the centre marker is a "Reveal
+        // all" button back to four hands. You cannot jump hand->hand; reveal all first.
+        track.addEventListener('click', function (e) {
+            var slideEl = e.target.closest('.slide');
+            if (!slideEl) return;
+            var i = slides.indexOf(slideEl);
+            if (i < 0) return;
+            if (e.target.closest('.table')) {
+                if (seatFor(i)) { override[i] = ''; applySeat(i); recentre(); } // Reveal all
+                return;
+            }
+            var lbl = e.target.closest('.lbl');
+            if (!lbl) return;
+            if (seatFor(i)) return; // single-hand view: Reveal all before switching
+            var seatEl = lbl.closest('.seat');
+            var m = seatEl && seatEl.className.match(/seat-([nesw])/);
+            if (!m) return;
+            override[i] = m[1];
+            applySeat(i);
+            recentre();
+        });
 
         var parToggle = document.getElementById('nc-par-toggle');
         parToggle.onclick = function () {
@@ -896,6 +990,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         };
 
         window.addEventListener('resize', function () { show(idx); });
+        applyAll();
         show(0);
     })();
     </script>
