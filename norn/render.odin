@@ -616,6 +616,7 @@ suit_glyph :: proc "contextless" (suit: Suit) -> string {
 HTML_PAGE_HEADER :: `<!DOCTYPE html>
 <head>
     <title>{{TITLE}}</title>
+    <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://fonts.googleapis.com/css?family=Open Sans" rel="stylesheet">
     <style>
@@ -643,6 +644,7 @@ HTML_PAGE_FOOTER :: `</body>
 HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
 <head>
     <title>{{TITLE}}</title>
+    <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link href="https://fonts.googleapis.com/css?family=Open Sans" rel="stylesheet">
     <style>
@@ -759,12 +761,56 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
             font-size: 1.3rem; color: #fff; background: rgba(255,255,255,0.12); white-space: nowrap;
         }
         .par { margin-top: clamp(0.4rem, 1.1vh, 1rem); text-align: center; color: #555; font-size: clamp(1rem, 1.8vh, 1.3rem); }
-        /* A .combo trick-chance table (consumer annotator): a compact monospace grid under the board. */
-        .combo { margin-top: clamp(0.3rem, 0.9vh, 0.8rem); text-align: center; }
-        .combo pre {
-            display: inline-block; margin: 0; text-align: left; color: #555;
-            font-size: clamp(0.5rem, 1.25vh, 0.85rem); line-height: 1.25; white-space: pre;
+        /* The board's .combo div carries only the raw per-suit distributions (data-suits JSON). To keep
+           the board short (no page scroll), inline it is just a ONE-LINE summary — the full interactive
+           trick table lives in the CCA overlay panel, which is fixed/out-of-flow so it never adds page
+           height. Both are built client-side and react to the toolbar's "tricks >=" slider. */
+        .combo {
+            margin-top: clamp(0.3rem, 0.8vh, 0.7rem); text-align: center; color: #555;
+            font-family: 'Consolas', 'Courier New', monospace; font-size: clamp(0.55rem, 1.35vh, 0.9rem);
         }
+        .combo .cmini { font-weight: 700; color: var(--sel); letter-spacing: 0.05em; margin-right: 0.45rem; }
+        /* The CCA overlay: a fixed, floating panel with the full trick-chance table for the current
+           board. position:fixed keeps it OUT of document flow (the board never grows), and it caps its
+           own height and scrolls internally, so the page itself never gains a scrollbar. */
+        .cca-panel {
+            position: fixed; left: 0.6rem; bottom: 0.6rem; z-index: 20;
+            max-width: min(96vw, 44rem); max-height: 78vh; overflow: auto;
+            background: #fff; border: 1px solid var(--line); border-radius: 10px;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.28); padding: 0.55rem 0.8rem 0.7rem;
+        }
+        .cca-panel[hidden] { display: none; }
+        .cca-head { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.45rem; }
+        .cca-head b { color: var(--ink); }
+        .cca-sub { color: #888; font-size: 0.85rem; }
+        .cca-head .x { margin-left: auto; align-self: flex-start; line-height: 1; padding: 0.05rem 0.4rem; }
+        .cca-empty { color: #888; padding: 0.5rem 0.2rem; }
+        /* Popup footer: the live P(>= target) headline on the left, and the PER-BOARD "tricks >="
+           slider beside it (long, defaults to that board's NS par trick count). */
+        .cca-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 1rem; margin-top: 0.5rem; }
+        .cca-slider { display: flex; align-items: center; gap: 0.45rem; margin-left: auto; }
+        .cca-slider .lbl-txt { color: #666; font-size: 0.82rem; }
+        .cca-slider b { font-variant-numeric: tabular-nums; min-width: 1.2em; text-align: right; }
+        .cca-slider input[type="range"] { width: 11rem; accent-color: var(--sel); cursor: pointer; }
+        .cca-slider input[type="range"]:focus { outline: 2px solid var(--sel); outline-offset: 2px; }
+        .ct {
+            display: inline-table; border-collapse: collapse;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: clamp(0.6rem, 1.5vw, 0.9rem); line-height: 1.35; color: #555;
+        }
+        /* Uniform min-widths so every board's table is the SAME width (the panel then never resizes as
+           you flip slides). content-box makes min-width the CONTENT width, so a "100" cell and a "·"
+           cell floor to the exact same size regardless of how many digits they hold. */
+        .ct th, .ct td { box-sizing: content-box; padding: 0.06rem 0.34rem; text-align: right; font-weight: 400; font-variant-numeric: tabular-nums; min-width: 3ch; }
+        .ct thead th { color: #999; font-weight: 600; }
+        .ct .sl { text-align: left; font-weight: 700; padding-right: 0.5rem; min-width: 3ch; }
+        .ct .suit-s .sl { color: Black; } .ct .suit-h .sl { color: Red; }
+        .ct .suit-d .sl { color: Orange; } .ct .suit-c .sl { color: MediumSeaGreen; }
+        .ct .tot td, .ct .cum td, .ct .tot th, .ct .cum th { border-top: 1px solid #ddd; }
+        .ct .etr { color: #a0a0a0; padding-left: 0.5rem; min-width: 5ch; }
+        /* The target column, driven by the "tricks >=" slider — header cell + cumulative cell. */
+        .ct .hl { background: var(--sel); color: #fff; border-radius: 3px; }
+        .ct-head { margin-top: 0.45rem; font-weight: 600; color: #333; font-size: clamp(0.8rem, 1.6vw, 1rem); }
         /* Seat toggle: keep just one seat visible across every board (layout preserved via visibility). */
         /* Single-seat view: the other three seats collapse to just their position pill (and Dealer tag),
            so the compass orientation, vulnerability, and dealer stay visible — only their cards hide. */
@@ -847,6 +893,7 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         </div>
         <button id="nc-reset" title="Reset every board to the current seat default">Reset</button>
         <button id="nc-par-toggle">Par</button>
+        <button id="nc-cca-toggle" title="Card Combination Analyser: open the full trick-chance table for the current board">CCA</button>
     </div>
     <h1 class="page-title">{{TITLE}}</h1>
     <div class="viewport">
@@ -857,6 +904,22 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
 // flat sequence of compass (and par) elements into slides and drives the carousel.
 @(private = "file")
 HTML_CARDS_PAGE_FOOTER :: `        </div>
+    </div>
+    <div class="cca-panel" id="nc-cca" hidden>
+        <div class="cca-head">
+            <b>Card Combination Analyser</b>
+            <span class="cca-sub" id="nc-cca-sub"></span>
+            <button class="x" id="nc-cca-close" title="Close">&#10005;</button>
+        </div>
+        <div id="nc-cca-body"></div>
+        <div class="cca-foot">
+            <span class="ct-head" id="nc-cca-headline"></span>
+            <span class="cca-slider">
+                <span class="lbl-txt">tricks &ge;</span>
+                <input id="nc-cca-target" type="range" min="1" max="13">
+                <b id="nc-cca-target-val"></b>
+            </span>
+        </div>
     </div>
     <script>
     (function () {
@@ -917,11 +980,21 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 track.style.transform = 'translateX(' + (-off) + 'px)';
             }
             document.getElementById('nc-idx').textContent = idx + 1;
+            // Rebuild the overlay for the new board now, but place it only AFTER the slide's
+            // scale(0.9->1) transition finishes — the par-caption geometry is still animating here, so
+            // positioning now would mis-place (drift) the panel. One reposition on the settled layout.
+            renderCca(false);
+            clearTimeout(ccaPosT);
+            ccaPosT = setTimeout(positionCca, 380);
         }
 
         document.getElementById('nc-prev').onclick = function () { show(idx - 1); };
         document.getElementById('nc-next').onclick = function () { show(idx + 1); };
         document.addEventListener('keydown', function (e) {
+            // When a form control is focused (the target slider), let it handle keys natively — arrows
+            // then nudge the slider one trick, and the carousel shortcuts below are suppressed.
+            var t = e.target;
+            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
             if (e.key === 'ArrowLeft') { show(idx - 1); return; }
             if (e.key === 'ArrowRight') { show(idx + 1); return; }
             // a = all seats, n/e/s/w = just that seat — press the matching toolbar button so the
@@ -989,8 +1062,162 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             parToggle.classList.toggle('off');
         };
 
+        // --- Combo trick-chance analysis (client-side) ---------------------------------------
+        // Each board's .combo div carries ONLY raw per-suit p[k] arrays (data-suits JSON, from the
+        // combo annotator). We convolve the four suits here. The target is PER BOARD: it defaults to
+        // that board's NS par trick count (data-target on the board's .par caption, from the dd
+        // annotator) and is adjustable via the slider at the bottom of the CCA overlay. INLINE the
+        // .combo is a one-line summary; the full trick table lives in the CCA overlay (a fixed panel,
+        // out of page flow) for the ACTIVE board only. A run with no combo data has no .combo divs.
+        function convolve(a, b) {
+            var out = []; for (var i = 0; i < 14; i++) out[i] = 0;
+            for (var i = 0; i < 14; i++) { if (!a[i]) continue; for (var j = 0; i + j < 14; j++) out[i + j] += a[i] * b[j]; }
+            return out;
+        }
+        function comboTotal(suits) {
+            var t = []; for (var i = 0; i < 14; i++) t[i] = 0; t[0] = 1;
+            ['s', 'h', 'd', 'c'].forEach(function (k) { t = convolve(t, suits[k] || []); });
+            return t;
+        }
+        function tail(total, t) { var p = 0; for (var k = t; k < 14; k++) p += total[k]; return p; }
+        function pctCell(p) { return p < 0.005 ? '·' : Math.round(p * 100); }
+        function etr(arr) { var s = 0; for (var k = 0; k < 14; k++) s += k * (arr[k] || 0); return s; }
+
+        var combos = Array.prototype.slice.call(document.querySelectorAll('.combo'));
+        combos.forEach(function (el) {
+            var data; try { data = JSON.parse(el.getAttribute('data-suits')); } catch (e) { return; }
+            el._data = data; el._total = comboTotal(data);
+            // Per-board default target = this board's NS par trick count (dd's .par data-target), else 9.
+            var slide = el.closest('.slide');
+            var par = slide ? slide.querySelector('.par') : null;
+            var d = par && par.getAttribute('data-target');
+            el._target = d ? Math.max(1, Math.min(13, +d)) : 9;
+        });
+        // The inline one-liner for a board: CCA badge + P(>= its target) + expected total tricks.
+        function comboLine(el) {
+            if (!el._total) return;
+            el.innerHTML = '<span class="cmini">CCA</span> P(&ge;' + el._target + ') = ' +
+                (tail(el._total, el._target) * 100).toFixed(0) + '% &middot; E[tot] = ' + etr(el._total).toFixed(1);
+        }
+        // The full per-suit table (built into the CCA overlay for the active board).
+        function ctTableHTML(data, total) {
+            var rows = [['s', '♠'], ['h', '♥'], ['d', '♦'], ['c', '♣']];
+            var h = '<table class="ct"><thead><tr><th></th>';
+            for (var k = 0; k < 14; k++) h += '<th data-k="' + k + '">' + k + '</th>';
+            h += '<th class="etr">E</th></tr></thead><tbody>';
+            rows.forEach(function (o) {
+                var arr = data[o[0]] || [];
+                h += '<tr class="suit-' + o[0] + '"><td class="sl">' + o[1] + '</td>';
+                for (var k = 0; k < 14; k++) h += '<td>' + pctCell(arr[k] || 0) + '</td>';
+                h += '<td class="etr">' + etr(arr).toFixed(2) + '</td></tr>';
+            });
+            h += '<tr class="tot"><td class="sl">tot</td>';
+            for (var k = 0; k < 14; k++) h += '<td>' + pctCell(total[k]) + '</td>';
+            h += '<td class="etr">' + etr(total).toFixed(2) + '</td></tr>';
+            h += '<tr class="cum"><td class="sl">≥k</td>';
+            for (var k = 0; k < 14; k++) h += '<td data-k="' + k + '">' + pctCell(tail(total, k)) + '</td>';
+            h += '<td class="etr"></td></tr></tbody></table>';
+            return h;
+        }
+
+        // CCA overlay: full table for the ACTIVE board, with the per-board target slider in its footer.
+        var ccaPanel = document.getElementById('nc-cca');
+        var ccaBody = document.getElementById('nc-cca-body');
+        var ccaSub = document.getElementById('nc-cca-sub');
+        var ccaBtn = document.getElementById('nc-cca-toggle');
+        var ccaHead = document.getElementById('nc-cca-headline');
+        var ccaSlider = document.getElementById('nc-cca-target');
+        var ccaSliderVal = document.getElementById('nc-cca-target-val');
+        var ccaFoot = document.querySelector('.cca-foot');
+        var ccaOpen = false;
+        var ccaPosT; // pending "reposition after the slide transition settles" timer
+        function activeCombo() { var s = slides[idx]; return s ? s.querySelector('.combo') : null; }
+        // Rebuild the overlay for the active board. pos=true places it now (for the no-transition
+        // callers: opening the panel, resize); during a slide NAV the caller instead waits for the
+        // scale(0.9->1) transition to finish before positioning (measuring par mid-transition mis-placed
+        // the panel).
+        function renderCca(pos) {
+            if (!ccaOpen) return;
+            var el = activeCombo();
+            if (!el || !el._total) {
+                ccaBody.innerHTML = '<div class="cca-empty">No combination data for this board.</div>';
+                ccaSub.textContent = '';
+                if (ccaFoot) ccaFoot.style.visibility = 'hidden';
+                return;
+            }
+            if (ccaFoot) ccaFoot.style.visibility = 'visible';
+            ccaBody.innerHTML = ctTableHTML(el._data, el._total);
+            ccaSub.textContent = 'Board ' + (idx + 1);
+            ccaSlider.value = el._target;
+            hlCca();
+            if (pos) positionCca();
+        }
+        // Place the (fixed) panel at its NATURAL content size (the table width is constant across
+        // slides, so the panel never resizes as you navigate), anchored BOTTOM-LEFT. On wide screens
+        // the board is centred with a left gutter, so bottom-left already sits clear of the centred
+        // par/combo captions. As the screen narrows the board slides left under the panel; once the
+        // panel would COVER those captions, LIFT it so its bottom sits just ABOVE them (over the felt)
+        // rather than hiding the par score. No width/height overrides -> no per-slide resize, no forced
+        // internal scrollbar.
+        function positionCca() {
+            if (!ccaOpen) return;
+            var slide = slides[idx];
+            if (!slide) return;
+            var vh = window.innerHeight, M = 10;
+            var s = ccaPanel.style;
+            s.top = s.right = s.maxWidth = s.maxHeight = ''; // natural size; CSS caps width/height
+            s.left = M + 'px';
+            s.bottom = M + 'px';
+            var pr = ccaPanel.getBoundingClientRect();
+            // Top-most caption (par, then the combo one-liner) that overlaps the panel horizontally.
+            var capTop = Infinity;
+            ['.par', '.combo'].forEach(function (sel) {
+                var c = slide.querySelector(sel);
+                if (!c) return;
+                var cr = c.getBoundingClientRect();
+                if (cr.height > 0 && cr.right > pr.left && cr.left < pr.right) capTop = Math.min(capTop, cr.top);
+            });
+            if (capTop !== Infinity && pr.bottom > capTop) {
+                // Would cover a caption: raise the panel to sit M above it (clamped to the top of screen).
+                var lift = vh - capTop + M;          // css bottom putting the panel's bottom M above capTop
+                var maxLift = vh - pr.height - M;     // highest possible (panel top at M)
+                s.bottom = Math.max(M, Math.min(lift, maxLift)) + 'px';
+            }
+        }
+        // Highlight the target column + set the headline/slider value for the ACTIVE board's target.
+        function hlCca() {
+            if (!ccaOpen) return;
+            var el = activeCombo();
+            if (!el || !el._total) return;
+            var t = el._target;
+            if (ccaSliderVal) ccaSliderVal.textContent = t;
+            var cells = ccaBody.querySelectorAll('[data-k]');
+            for (var i = 0; i < cells.length; i++)
+                cells[i].classList.toggle('hl', +cells[i].getAttribute('data-k') === t);
+            if (ccaHead)
+                ccaHead.textContent = 'P(≥ ' + t + ' tricks) = ' + (tail(el._total, t) * 100).toFixed(1) + '%';
+        }
+        function setCca(open) {
+            ccaOpen = open; ccaPanel.hidden = !open;
+            if (ccaBtn) ccaBtn.classList.toggle('sel', open);
+            renderCca(true); // opening: no slide transition in flight, place immediately
+        }
+        if (ccaBtn) ccaBtn.onclick = function () { setCca(!ccaOpen); };
+        document.getElementById('nc-cca-close').onclick = function () { setCca(false); };
+        // Slider adjusts the ACTIVE board's target only; the inline summary + overlay update together.
+        if (ccaSlider) ccaSlider.oninput = function () {
+            var el = activeCombo();
+            if (!el) return;
+            el._target = +this.value;
+            comboLine(el);
+            hlCca();
+        };
+
+        if (combos.length === 0 && ccaBtn) ccaBtn.style.display = 'none';
+
         window.addEventListener('resize', function () { show(idx); });
         applyAll();
+        combos.forEach(comboLine);
         show(0);
     })();
     </script>
