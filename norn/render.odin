@@ -783,8 +783,27 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         .cca-head { display: flex; align-items: baseline; gap: 0.6rem; margin-bottom: 0.45rem; }
         .cca-head b { color: var(--ink); }
         .cca-sub { color: #888; font-size: 0.85rem; }
-        .cca-head .x { margin-left: auto; align-self: flex-start; line-height: 1; padding: 0.05rem 0.4rem; }
+        /* Small pill buttons shared by the head (help / close), the N/S<->E/W side toggle, and the
+           IMPs<->MPs objective toggle. */
+        .cca-head .x, .cca-head .help, .cca-side .sidebtn, .cca-obj .sidebtn {
+            font: inherit; font-size: 0.8rem; border: 1px solid var(--line); background: #f4f4f4;
+            color: #555; border-radius: 5px; padding: 0.05rem 0.45rem; cursor: pointer; line-height: 1;
+        }
+        .cca-side { margin-left: auto; }
+        .cca-side, .cca-obj { display: flex; align-items: center; gap: 0.15rem; }
+        .cca-side .sidebtn.sel, .cca-obj .sidebtn.sel { background: var(--sel); color: #fff; border-color: var(--sel); }
+        .cca-side .sidesep, .cca-obj .sidesep { color: #bbb; }
+        .cca-head .help, .cca-head .x { align-self: flex-start; }
         .cca-empty { color: #888; padding: 0.5rem 0.2rem; }
+        /* Help modal: a large centred card over a dimmed backdrop, laymen's explanation of the CCA. */
+        .cca-help { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; padding: 1rem; }
+        .cca-help[hidden] { display: none; }
+        .cca-help-card { position: relative; background: #fff; border-radius: 12px; max-width: min(94vw, 40rem); max-height: 88vh; overflow: auto; padding: 1.2rem 1.4rem 1.4rem; box-shadow: 0 10px 40px rgba(0,0,0,0.35); line-height: 1.5; color: #333; }
+        .cca-help-card h2 { margin: 0 0 0.5rem; font-size: 1.2rem; }
+        .cca-help-card h3 { margin: 0.95rem 0 0.2rem; font-size: 0.97rem; color: var(--sel); }
+        .cca-help-card p { margin: 0.3rem 0; font-size: 0.9rem; }
+        .cca-help-card .x { position: absolute; top: 0.6rem; right: 0.7rem; }
+        .cca-help-card .sw { display: inline-block; width: 0.75em; height: 0.75em; border-radius: 2px; margin-right: 0.15em; position: relative; top: 0.05em; }
         /* Popup footer: the live P(>= target) headline on the left, and the PER-BOARD "tricks >="
            slider beside it (long, defaults to that board's NS par trick count). */
         .cca-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 1rem; margin-top: 0.5rem; }
@@ -807,9 +826,16 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         .ct .suit-s .sl { color: Black; } .ct .suit-h .sl { color: Red; }
         .ct .suit-d .sl { color: Orange; } .ct .suit-c .sl { color: MediumSeaGreen; }
         .ct .tot td, .ct .cum td, .ct .tot th, .ct .cum th { border-top: 1px solid #ddd; }
+        /* Phase-2 achievable (single-dummy) total + cumulative rows, in a distinct colour so the gap
+           to the double-dummy ceiling (the .tot/.cum rows above) reads at a glance. */
+        .ct .totsd td, .ct .cumsd td, .ct .totsd .sl, .ct .cumsd .sl { color: #2f6fd8; }
         .ct .etr { color: #a0a0a0; padding-left: 0.5rem; min-width: 5ch; }
-        /* The target column, driven by the "tricks >=" slider — header cell + cumulative cell. */
-        .ct .hl { background: var(--sel); color: #fff; border-radius: 3px; }
+        .ct .etr .eb { color: #2f6fd8; }  /* the blind (single-dummy) expected tricks */
+        .ct .ln { text-align: left; color: #777; padding-left: 0.55rem; min-width: 5ch; font-size: 0.92em; }
+        /* The target column, driven by the "tricks >=" slider — header cell + cumulative cell. Target
+           the CELL (td/th.hl) so this out-specifies the coloured .totsd/.cumsd row rules above —
+           otherwise the blue SD text stayed blue on the blue highlight and was unreadable. */
+        .ct td.hl, .ct th.hl { background: var(--sel); color: #fff !important; border-radius: 3px; }
         .ct-head { margin-top: 0.45rem; font-weight: 600; color: #333; font-size: clamp(0.8rem, 1.6vw, 1rem); }
         /* Seat toggle: keep just one seat visible across every board (layout preserved via visibility). */
         /* Single-seat view: the other three seats collapse to just their position pill (and Dealer tag),
@@ -909,6 +935,13 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         <div class="cca-head">
             <b>Card Combination Analyser</b>
             <span class="cca-sub" id="nc-cca-sub"></span>
+            <span class="cca-side" title="Which partnership's tricks to analyse">
+                <button class="sidebtn sel" id="nc-cca-ns">N/S</button><span class="sidesep">|</span><button class="sidebtn" id="nc-cca-ew">E/W</button>
+            </span>
+            <span class="cca-obj" title="Scoring: IMPs = make the contract; MPs = chase overtricks while better than even">
+                <button class="sidebtn sel" id="nc-cca-imps">IMPs</button><span class="sidesep">|</span><button class="sidebtn" id="nc-cca-mps">MPs</button>
+            </span>
+            <button class="help" id="nc-cca-help" title="What is this?">?</button>
             <button class="x" id="nc-cca-close" title="Close">&#10005;</button>
         </div>
         <div id="nc-cca-body"></div>
@@ -919,6 +952,52 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 <input id="nc-cca-target" type="range" min="1" max="13">
                 <b id="nc-cca-target-val"></b>
             </span>
+        </div>
+    </div>
+    <div class="cca-help" id="nc-cca-help-modal" hidden>
+        <div class="cca-help-card">
+            <button class="x" id="nc-cca-help-close" title="Close">&#10005;</button>
+            <h2>Card Combination Analyser &mdash; what am I looking at?</h2>
+            <p>It estimates, for one partnership on <b>this</b> deal, how many <b>tricks</b> they can win &mdash;
+               suit by suit and in total &mdash; given the cards they hold and all the ways the opponents' cards
+               might be split. It is a quick guide to "how high can we go?", not the last word.</p>
+            <h3>The table</h3>
+            <p>Each row <b>&spades; &hearts; &diams; &clubs;</b> is one suit. The columns <code>0&hellip;13</code>
+               are the chance of taking <i>exactly</i> that many tricks in the suit. The <b>E</b> column is the
+               average number of tricks &mdash; <b>double-dummy / <span style="color:#2f6fd8">blind</span></b>
+               (the blue figure is what you'd take playing blind, always the smaller). The <b>line</b> column
+               is the suggested way to play that suit blind: <i>cash</i> (bang out top cards), <i>finesse</i>,
+               or <i>duck</i> (give up an early round). It is a simplified pick from a few standard plays &mdash;
+               a real best line can <i>combine</i> them (e.g. duck a round <i>then</i> finesse), which the one
+               word can't show, so read it as the general idea, not an exact recipe.</p>
+            <h3>Two answers: ceiling vs. realistic</h3>
+            <p><span class="sw" style="background:#222"></span><b>tot</b> and <b>&ge;k</b> (black) &mdash; the
+               <b>double-dummy</b> ceiling: how it would go if you could <i>see all four hands</i>. Best case /
+               hindsight &mdash; usually better than real life.</p>
+            <p><span class="sw" style="background:#2f6fd8"></span><b>sd</b> and <b>&ge;sd</b> (blue) &mdash; the
+               <b>single-dummy</b>, realistic figure: playing <i>blind</i> to the opponents' cards, so you must
+               guess (finesses, which way to play). This is closer to what you'll actually take.</p>
+            <p>The gap between black and blue is the price of not seeing the cards. <b>&ge;sd</b> is the best you
+               can do by choosing the smartest line in each suit for the target you set below.</p>
+            <h3>The "tricks &ge;" slider</h3>
+            <p>Sets the target: the chance of taking <b>at least</b> that many tricks. E.g. set it to 9 for a
+               game in no-trumps, 10 for a major-suit game. The headline shows the ceiling (DD) and realistic
+               (SD) chance of reaching it.</p>
+            <h3>N/S vs E/W</h3>
+            <p>The two buttons at the top switch <i>whose</i> tricks are analysed &mdash; your side or the
+               opponents'.</p>
+            <h3>IMPs vs Matchpoints</h3>
+            <p><b>IMPs</b> (teams): just <i>make the contract</i>. The recommended play is the safest one for
+               the target you set &mdash; overtricks barely matter, going down is costly.</p>
+            <p><b>MPs</b> (pairs / matchpoints): you're ranked against everyone else in your contract, so
+               <i>overtricks win boards</i>. The tool then chases the extra trick while it stays better than
+               even &mdash; it aims for the <b>highest</b> number of tricks whose chance is still at least
+               50%. The headline shows that "aim" (and still tells you the plain make chance).</p>
+            <h3>The small print</h3>
+            <p>It treats the four suits independently and assumes you can always get to the right hand ("free
+               entries"). Real play has entry problems and suits interact, so treat the numbers as a
+               <b>guide</b>, not a guarantee. The double-dummy <b>par</b> caption on the board is the exact
+               best-play result.</p>
         </div>
     </div>
     <script>
@@ -1083,40 +1162,94 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         function pctCell(p) { return p < 0.005 ? '·' : Math.round(p * 100); }
         function etr(arr) { var s = 0; for (var k = 0; k < 14; k++) s += k * (arr[k] || 0); return s; }
 
+        // Each board's .combo carries SIX blobs: per-suit census + achievable-single-dummy + the
+        // adaptive P(>=t) make curve, for BOTH partnerships (data-ns.., data-ew..). We keep both sides so
+        // the N/S to E/W toggle just switches which one renders. ccaSide is the global choice.
+        var ccaSide = 'ns';
+        var ccaObj = 'imps'; // scoring objective: 'imps' (make the target) or 'mps' (chase overtricks)
+        function parseAttr(el, a) { try { return JSON.parse(el.getAttribute(a)); } catch (e) { return null; } }
+        // What to play for, given the analysed side S and the contract target. IMPs just makes the
+        // target (safety). MPs chases overtricks: aim as high as the odds stay better than even —
+        // the highest k (>= target) whose achievable chance P(>=k) is still >= 50%. aim is the
+        // recommended trick count, atl[aim] its chance; both fall back to the target when no overtrick
+        // is worth it or when the adaptive curve is absent.
+        function recommend(S, target) {
+            var aim = target;
+            if (ccaObj === 'mps' && S.atl) {
+                for (var k = target + 1; k <= 13; k++) { if (S.atl[k] >= 0.5) aim = k; else break; }
+            }
+            return { aim: aim, makePct: S.atl ? S.atl[target] : tail(S.total, target),
+                     aimPct: S.atl ? S.atl[aim] : tail(S.total, aim) };
+        }
         var combos = Array.prototype.slice.call(document.querySelectorAll('.combo'));
         combos.forEach(function (el) {
-            var data; try { data = JSON.parse(el.getAttribute('data-suits')); } catch (e) { return; }
-            el._data = data; el._total = comboTotal(data);
+            var ns = parseAttr(el, 'data-ns'); if (!ns) return;
+            function side(pfx) {
+                var data = parseAttr(el, 'data-' + pfx);
+                var sd = parseAttr(el, 'data-' + pfx + '-sd');
+                return { data: data, sd: sd, atl: parseAttr(el, 'data-' + pfx + '-atl'),
+                         lines: parseAttr(el, 'data-' + pfx + '-lines'),
+                         total: comboTotal(data), totalSd: sd ? comboTotal(sd) : null };
+            }
+            el._sides = { ns: side('ns'), ew: side('ew') };
             // Per-board default target = this board's NS par trick count (dd's .par data-target), else 9.
             var slide = el.closest('.slide');
             var par = slide ? slide.querySelector('.par') : null;
             var d = par && par.getAttribute('data-target');
             el._target = d ? Math.max(1, Math.min(13, +d)) : 9;
         });
-        // The inline one-liner for a board: CCA badge + P(>= its target) + expected total tricks.
+        function sideData(el) { return el._sides ? el._sides[ccaSide] : null; }
+        // The inline one-liner for a board: CCA badge (with the analysed side) + P(>= target), both the
+        // double-dummy ceiling (DD) and the achievable single-dummy optimum (SD, from the adaptive curve).
         function comboLine(el) {
-            if (!el._total) return;
-            el.innerHTML = '<span class="cmini">CCA</span> P(&ge;' + el._target + ') = ' +
-                (tail(el._total, el._target) * 100).toFixed(0) + '% &middot; E[tot] = ' + etr(el._total).toFixed(1);
+            var S = sideData(el); if (!S || !S.total) return;
+            var t = el._target, dd = (tail(S.total, t) * 100).toFixed(0), r = recommend(S, t);
+            var s = '<span class="cmini">CCA ' + ccaSide.toUpperCase() + ' ' + ccaObj.toUpperCase() + '</span> ';
+            if (ccaObj === 'mps' && r.aim > t) {
+                s += 'aim ' + r.aim + ': SD ' + (r.aimPct * 100).toFixed(0) + '% &middot; make ' + t + ': SD ' + (r.makePct * 100).toFixed(0) + '%';
+            } else {
+                s += 'P(&ge;' + t + ') = DD ' + dd + '% &middot; SD ' + (r.makePct * 100).toFixed(0) + '%';
+            }
+            s += ' &middot; E[tot] = ' + etr(S.total).toFixed(1) + (S.totalSd ? ' / ' + etr(S.totalSd).toFixed(1) : '');
+            el.innerHTML = s;
         }
-        // The full per-suit table (built into the CCA overlay for the active board).
-        function ctTableHTML(data, total) {
+        // The full per-suit table for the active board & side. Per-suit rows + the "tot"/"≥k" pair are
+        // the double-dummy CENSUS (ceiling). The "sd" row is a realistic single-dummy line's shape; the
+        // "≥sd" row is the ADAPTIVE optimum P(>=k) (best line per suit for that target) — the gap from
+        // the black rows is the double-dummy tax.
+        // Friendly labels for the recommended blind line per suit.
+        function lineLabel(n) { return n === 'top-down' ? 'cash' : n === 'duck-one' ? 'duck' : n === 'finesse' ? 'finesse' : (n || ''); }
+        function ctTableHTML(S) {
+            var data = S.data, total = S.total, totalSd = S.totalSd, atl = S.atl, sd = S.sd, lines = S.lines;
             var rows = [['s', '♠'], ['h', '♥'], ['d', '♦'], ['c', '♣']];
             var h = '<table class="ct"><thead><tr><th></th>';
             for (var k = 0; k < 14; k++) h += '<th data-k="' + k + '">' + k + '</th>';
-            h += '<th class="etr">E</th></tr></thead><tbody>';
-            rows.forEach(function (o) {
-                var arr = data[o[0]] || [];
+            // Per-suit E is shown as double-dummy / blind (dd / sd); "line" is the recommended blind play.
+            h += '<th class="etr" title="expected tricks: double-dummy / blind">E</th><th class="ln" title="recommended blind line">line</th></tr></thead><tbody>';
+            rows.forEach(function (o, i) {
+                var arr = data[o[0]] || [], sdArr = sd && sd[o[0]];
                 h += '<tr class="suit-' + o[0] + '"><td class="sl">' + o[1] + '</td>';
                 for (var k = 0; k < 14; k++) h += '<td>' + pctCell(arr[k] || 0) + '</td>';
-                h += '<td class="etr">' + etr(arr).toFixed(2) + '</td></tr>';
+                h += '<td class="etr">' + etr(arr).toFixed(1) + (sdArr ? ' <span class="eb">/ ' + etr(sdArr).toFixed(1) + '</span>' : '') + '</td>';
+                h += '<td class="ln">' + (lines ? lineLabel(lines[i]) : '') + '</td></tr>';
             });
             h += '<tr class="tot"><td class="sl">tot</td>';
             for (var k = 0; k < 14; k++) h += '<td>' + pctCell(total[k]) + '</td>';
-            h += '<td class="etr">' + etr(total).toFixed(2) + '</td></tr>';
+            h += '<td class="etr">' + etr(total).toFixed(1) + '</td><td class="ln"></td></tr>';
             h += '<tr class="cum"><td class="sl">≥k</td>';
             for (var k = 0; k < 14; k++) h += '<td data-k="' + k + '">' + pctCell(tail(total, k)) + '</td>';
-            h += '<td class="etr"></td></tr></tbody></table>';
+            h += '<td class="etr"></td><td class="ln"></td></tr>';
+            if (totalSd) {
+                h += '<tr class="tot totsd"><td class="sl">sd</td>';
+                for (var k = 0; k < 14; k++) h += '<td>' + pctCell(totalSd[k]) + '</td>';
+                h += '<td class="etr">' + etr(totalSd).toFixed(1) + '</td><td class="ln"></td></tr>';
+            }
+            if (atl) {
+                h += '<tr class="cum cumsd"><td class="sl">≥sd</td>';
+                for (var k = 0; k < 14; k++) h += '<td data-k="' + k + '">' + pctCell(atl[k]) + '</td>';
+                h += '<td class="etr"></td><td class="ln"></td></tr>';
+            }
+            h += '</tbody></table>';
             return h;
         }
 
@@ -1138,15 +1271,15 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // the panel).
         function renderCca(pos) {
             if (!ccaOpen) return;
-            var el = activeCombo();
-            if (!el || !el._total) {
+            var el = activeCombo(), S = el && sideData(el);
+            if (!S || !S.total) {
                 ccaBody.innerHTML = '<div class="cca-empty">No combination data for this board.</div>';
                 ccaSub.textContent = '';
                 if (ccaFoot) ccaFoot.style.visibility = 'hidden';
                 return;
             }
             if (ccaFoot) ccaFoot.style.visibility = 'visible';
-            ccaBody.innerHTML = ctTableHTML(el._data, el._total);
+            ccaBody.innerHTML = ctTableHTML(S);
             ccaSub.textContent = 'Board ' + (idx + 1);
             ccaSlider.value = el._target;
             hlCca();
@@ -1187,15 +1320,27 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // Highlight the target column + set the headline/slider value for the ACTIVE board's target.
         function hlCca() {
             if (!ccaOpen) return;
-            var el = activeCombo();
-            if (!el || !el._total) return;
-            var t = el._target;
+            var el = activeCombo(), S = el && sideData(el);
+            if (!S || !S.total) return;
+            var t = el._target, r = recommend(S, t);
             if (ccaSliderVal) ccaSliderVal.textContent = t;
+            // Highlight the column we're actually playing for (= target under IMPs, the overtrick aim
+            // under MPs).
             var cells = ccaBody.querySelectorAll('[data-k]');
             for (var i = 0; i < cells.length; i++)
-                cells[i].classList.toggle('hl', +cells[i].getAttribute('data-k') === t);
-            if (ccaHead)
-                ccaHead.textContent = 'P(≥ ' + t + ' tricks) = ' + (tail(el._total, t) * 100).toFixed(1) + '%';
+                cells[i].classList.toggle('hl', +cells[i].getAttribute('data-k') === r.aim);
+            if (ccaHead) {
+                var dd = (tail(S.total, t) * 100).toFixed(1);
+                if (ccaObj === 'mps' && r.aim > t) {
+                    ccaHead.textContent = 'MPs — aim ' + r.aim + ': SD ' + (r.aimPct * 100).toFixed(1) +
+                        '%   (make ' + t + ': SD ' + (r.makePct * 100).toFixed(1) + '%)';
+                } else if (S.atl) {
+                    ccaHead.textContent = (ccaObj === 'mps' ? 'MPs' : 'IMPs') + ' — make ' + t +
+                        ':  DD ' + dd + '%  ·  SD ' + (r.makePct * 100).toFixed(1) + '%';
+                } else {
+                    ccaHead.textContent = 'P(≥ ' + t + ' tricks) = ' + dd + '%';
+                }
+            }
         }
         function setCca(open) {
             ccaOpen = open; ccaPanel.hidden = !open;
@@ -1212,6 +1357,34 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             comboLine(el);
             hlCca();
         };
+        // N/S <-> E/W toggle: global choice, re-render the overlay + every inline one-liner.
+        var nsBtn = document.getElementById('nc-cca-ns'), ewBtn = document.getElementById('nc-cca-ew');
+        function setSide(s) {
+            ccaSide = s;
+            if (nsBtn) nsBtn.classList.toggle('sel', s === 'ns');
+            if (ewBtn) ewBtn.classList.toggle('sel', s === 'ew');
+            combos.forEach(comboLine);
+            renderCca(true);
+        }
+        if (nsBtn) nsBtn.onclick = function () { setSide('ns'); };
+        if (ewBtn) ewBtn.onclick = function () { setSide('ew'); };
+        // IMPs <-> MPs objective toggle: global, re-render overlay + inline lines.
+        var impsBtn = document.getElementById('nc-cca-imps'), mpsBtn = document.getElementById('nc-cca-mps');
+        function setObj(o) {
+            ccaObj = o;
+            if (impsBtn) impsBtn.classList.toggle('sel', o === 'imps');
+            if (mpsBtn) mpsBtn.classList.toggle('sel', o === 'mps');
+            combos.forEach(comboLine);
+            renderCca(true);
+        }
+        if (impsBtn) impsBtn.onclick = function () { setObj('imps'); };
+        if (mpsBtn) mpsBtn.onclick = function () { setObj('mps'); };
+        // Help modal.
+        var helpModal = document.getElementById('nc-cca-help-modal');
+        var helpBtn = document.getElementById('nc-cca-help'), helpClose = document.getElementById('nc-cca-help-close');
+        if (helpBtn) helpBtn.onclick = function () { if (helpModal) helpModal.hidden = false; };
+        if (helpClose) helpClose.onclick = function () { if (helpModal) helpModal.hidden = true; };
+        if (helpModal) helpModal.onclick = function (e) { if (e.target === helpModal) helpModal.hidden = true; };
 
         if (combos.length === 0 && ccaBtn) ccaBtn.style.display = 'none';
 
