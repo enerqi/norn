@@ -832,6 +832,10 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         .ct .etr { color: #a0a0a0; padding-left: 0.5rem; min-width: 5ch; }
         .ct .etr .eb { color: #2f6fd8; }  /* the blind (single-dummy) expected tricks */
         .ct .ln { text-align: left; color: #777; padding-left: 0.55rem; min-width: 5ch; font-size: 0.92em; }
+        .ct .ln[data-tip] { cursor: help; text-decoration: underline dotted #aaa; text-underline-offset: 2px; }
+        /* Hover tooltip: the detailed play narration for a suit's recommended line. */
+        .cca-tip { position: fixed; z-index: 50; max-width: 22rem; background: #222; color: #fff; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.82rem; line-height: 1.35; box-shadow: 0 4px 16px rgba(0,0,0,0.35); pointer-events: none; }
+        .cca-tip[hidden] { display: none; }
         /* The target column, driven by the "tricks >=" slider — header cell + cumulative cell. Target
            the CELL (td/th.hl) so this out-specifies the coloured .totsd/.cumsd row rules above —
            otherwise the blue SD text stayed blue on the blue highlight and was unreadable. */
@@ -969,7 +973,8 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                is the suggested way to play that suit blind: <i>cash</i> (bang out top cards), <i>finesse</i>,
                or <i>duck</i> (give up an early round). It is a simplified pick from a few standard plays &mdash;
                a real best line can <i>combine</i> them (e.g. duck a round <i>then</i> finesse), which the one
-               word can't show, so read it as the general idea, not an exact recipe.</p>
+               word can't show, so read it as the general idea, not an exact recipe. <b>Hover the line word</b>
+               for a fuller, cards-specific plan.</p>
             <h3>Two answers: ceiling vs. realistic</h3>
             <p><span class="sw" style="background:#222"></span><b>tot</b> and <b>&ge;k</b> (black) &mdash; the
                <b>double-dummy</b> ceiling: how it would go if you could <i>see all four hands</i>. Best case /
@@ -1000,6 +1005,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                best-play result.</p>
         </div>
     </div>
+    <div class="cca-tip" id="nc-cca-tip" hidden></div>
     <script>
     (function () {
         var track = document.getElementById('nc-track');
@@ -1188,7 +1194,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 var data = parseAttr(el, 'data-' + pfx);
                 var sd = parseAttr(el, 'data-' + pfx + '-sd');
                 return { data: data, sd: sd, atl: parseAttr(el, 'data-' + pfx + '-atl'),
-                         lines: parseAttr(el, 'data-' + pfx + '-lines'),
+                         lines: parseAttr(el, 'data-' + pfx + '-lines'), tips: parseAttr(el, 'data-' + pfx + '-tips'),
                          total: comboTotal(data), totalSd: sd ? comboTotal(sd) : null };
             }
             el._sides = { ns: side('ns'), ew: side('ew') };
@@ -1219,8 +1225,9 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // the black rows is the double-dummy tax.
         // Friendly labels for the recommended blind line per suit.
         function lineLabel(n) { return n === 'top-down' ? 'cash' : n === 'duck-one' ? 'duck' : n === 'finesse' ? 'finesse' : (n || ''); }
+        function escAttr(s) { return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
         function ctTableHTML(S) {
-            var data = S.data, total = S.total, totalSd = S.totalSd, atl = S.atl, sd = S.sd, lines = S.lines;
+            var data = S.data, total = S.total, totalSd = S.totalSd, atl = S.atl, sd = S.sd, lines = S.lines, tips = S.tips;
             var rows = [['s', '♠'], ['h', '♥'], ['d', '♦'], ['c', '♣']];
             var h = '<table class="ct"><thead><tr><th></th>';
             for (var k = 0; k < 14; k++) h += '<th data-k="' + k + '">' + k + '</th>';
@@ -1231,7 +1238,8 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 h += '<tr class="suit-' + o[0] + '"><td class="sl">' + o[1] + '</td>';
                 for (var k = 0; k < 14; k++) h += '<td>' + pctCell(arr[k] || 0) + '</td>';
                 h += '<td class="etr">' + etr(arr).toFixed(1) + (sdArr ? ' <span class="eb">/ ' + etr(sdArr).toFixed(1) + '</span>' : '') + '</td>';
-                h += '<td class="ln">' + (lines ? lineLabel(lines[i]) : '') + '</td></tr>';
+                var tip = tips && tips[i];
+                h += '<td class="ln"' + (tip ? ' data-tip="' + escAttr(tip) + '"' : '') + '>' + (lines ? lineLabel(lines[i]) : '') + '</td></tr>';
             });
             h += '<tr class="tot"><td class="sl">tot</td>';
             for (var k = 0; k < 14; k++) h += '<td>' + pctCell(total[k]) + '</td>';
@@ -1385,6 +1393,22 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         if (helpBtn) helpBtn.onclick = function () { if (helpModal) helpModal.hidden = false; };
         if (helpClose) helpClose.onclick = function () { if (helpModal) helpModal.hidden = true; };
         if (helpModal) helpModal.onclick = function (e) { if (e.target === helpModal) helpModal.hidden = true; };
+        // Hover tooltip: the detailed play narration for a suit's recommended line (delegation, since the
+        // table is rebuilt on every nav / toggle).
+        var tipEl = document.getElementById('nc-cca-tip');
+        function posTip(e) {
+            if (!tipEl) return;
+            var m = 14;
+            tipEl.style.left = Math.min(e.clientX + m, window.innerWidth - tipEl.offsetWidth - 8) + 'px';
+            tipEl.style.top = Math.min(e.clientY + m, window.innerHeight - tipEl.offsetHeight - 8) + 'px';
+        }
+        function tipTarget(e) { return e.target && e.target.closest ? e.target.closest('[data-tip]') : null; }
+        document.addEventListener('mouseover', function (e) {
+            var t = tipTarget(e);
+            if (t && tipEl) { tipEl.textContent = t.getAttribute('data-tip'); tipEl.hidden = false; posTip(e); }
+        });
+        document.addEventListener('mousemove', function (e) { if (tipEl && !tipEl.hidden) posTip(e); });
+        document.addEventListener('mouseout', function (e) { if (tipTarget(e) && tipEl) tipEl.hidden = true; });
 
         if (combos.length === 0 && ccaBtn) ccaBtn.style.display = 'none';
 
