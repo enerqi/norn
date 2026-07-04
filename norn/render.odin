@@ -1001,8 +1001,18 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             <h3>The small print</h3>
             <p>It treats the four suits independently and assumes you can always get to the right hand ("free
                entries"). Real play has entry problems and suits interact, so treat the numbers as a
-               <b>guide</b>, not a guarantee. The double-dummy <b>par</b> caption on the board is the exact
-               best-play result.</p>
+               <b>guide</b>, not a guarantee.</p>
+            <p><b>Why the total can read too high &mdash; tempo.</b> The tool lets you take all your tricks
+               <i>without ever handing the lead to the opponents</i>. Real bridge isn't like that: to set up
+               extra tricks you often have to <b>lose the lead first</b> (a finesse that fails, conceding an
+               early round). The moment the defenders are in, they <b>cash their own winners</b> &mdash; and
+               they may beat you before you ever run yours. Adding up each suit's best case ignores this race
+               for the lead, so a hand that looks like "13 tricks" can really be fewer once the opponents grab
+               the lead and cash an ace (or a whole suit) of their own. The suit-by-suit figure is an
+               <i>upper bound</i>; it does not know who gets in first.</p>
+            <p>The double-dummy <b>par</b> caption on the board is the honest whole-deal number &mdash; it
+               plays all four suits together <i>with</i> entries and tempo, so when combo and par disagree,
+               trust par. Combo's job is the per-suit "what's available", not the race.</p>
         </div>
     </div>
     <div class="cca-tip" id="nc-cca-tip" hidden></div>
@@ -1154,9 +1164,15 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // annotator) and is adjustable via the slider at the bottom of the CCA overlay. INLINE the
         // .combo is a one-line summary; the full trick table lives in the CCA overlay (a fixed panel,
         // out of page flow) for the ACTIVE board only. A run with no combo data has no .combo divs.
+        // FALLBACK ONLY: totals are now BAKED server-side by the constrained joint convolution (the
+        // data-*-tot/-totsd blobs, read in side() below) which fixes the length-independence bias. This
+        // independent client convolution is kept only for older pages missing those blobs. It clamps any
+        // total > 13 onto index 13 (the four suits folded as independent can credit a strong side more
+        // than 13 tricks); the clamp keeps a valid distribution but leaves the mean bias the baked joint
+        // total removes (see COMBO_ANALYSER.md joint-model notes).
         function convolve(a, b) {
             var out = []; for (var i = 0; i < 14; i++) out[i] = 0;
-            for (var i = 0; i < 14; i++) { if (!a[i]) continue; for (var j = 0; i + j < 14; j++) out[i + j] += a[i] * b[j]; }
+            for (var i = 0; i < 14; i++) { if (!a[i]) continue; for (var j = 0; j < 14; j++) { if (!b[j]) continue; var t = i + j; if (t > 13) t = 13; out[t] += a[i] * b[j]; } }
             return out;
         }
         function comboTotal(suits) {
@@ -1193,9 +1209,14 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             function side(pfx) {
                 var data = parseAttr(el, 'data-' + pfx);
                 var sd = parseAttr(el, 'data-' + pfx + '-sd');
+                // Prefer the BAKED joint totals (data-*-tot/-totsd), computed server-side by the
+                // constrained joint convolution (East holds 13 cards, tricks capped at 13). They fix the
+                // length-independence bias the client-side comboTotal (kept as a fallback) carried.
+                var tot = parseAttr(el, 'data-' + pfx + '-tot');
+                var totsd = parseAttr(el, 'data-' + pfx + '-totsd');
                 return { data: data, sd: sd, atl: parseAttr(el, 'data-' + pfx + '-atl'),
                          lines: parseAttr(el, 'data-' + pfx + '-lines'), tips: parseAttr(el, 'data-' + pfx + '-tips'),
-                         total: comboTotal(data), totalSd: sd ? comboTotal(sd) : null };
+                         total: tot || comboTotal(data), totalSd: totsd || (sd ? comboTotal(sd) : null) };
             }
             el._sides = { ns: side('ns'), ew: side('ew') };
             // Per-board default target = this board's NS par trick count (dd's .par data-target), else 9.
