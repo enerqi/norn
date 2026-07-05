@@ -390,9 +390,28 @@ write_compass_seat :: proc(
 	// the exact chance of it, then the cumulative chance of that many HCP or fewer (from 0).
 	h := hcp(ds[seat])
 	hp_exact, hp_cum := hcp_probability(h)
-	strings.write_string(builder, `<div class="hcp">`)
+	// Percentile band. Above the median we quote "top N%" = the complement of the cumulative
+	// (100 - P(<= this HCP)) — the share of hands at least this strong. Below the median that reads
+	// backwards ("top 95%"), so flip to "bottom M%" = the cumulative itself. Whichever we show, whole
+	// percent when >= 10, else one decimal (so a very weak/strong hand reads "bottom 0.4%", not "0%").
+	top := 100 - hp_cum
+	is_top := top <= 50
+	band_label := "top" if is_top else "bottom"
+	band_val := top if is_top else hp_cum
+	band_str := fmt.tprintf("%.0f", band_val) if band_val >= 9.5 else fmt.tprintf("%.1f", band_val)
+	strings.write_string(builder, `<div class="hcp"`)
+	fmt.sbprintf(
+		builder,
+		` title="%.2f%% of hands hold exactly %d HCP; %.1f%% hold %d or fewer, so this hand sits in about the %s %s%% by strength.">`,
+		hp_exact,
+		h,
+		hp_cum,
+		h,
+		band_label,
+		band_str,
+	)
 	fmt.sbprintf(builder, "%d HCP", h)
-	fmt.sbprintf(builder, ` <span class="prob">%.2f%% &middot; %.1f%% &le;</span>`, hp_exact, hp_cum)
+	fmt.sbprintf(builder, ` <span class="prob">%.2f%% &middot; %s %s%%</span>`, hp_exact, band_label, band_str)
 	strings.write_string(builder, `</div>`)
 
 	// Optimal point count (honour-combination valuation): the hand's opening starting points for a
@@ -709,6 +728,8 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         }
         .prob { color: #b5b5b5; }
         .hcp .prob { font-weight: 400; }
+        .hcp[title] { cursor: help; }
+        .hcp[title] .prob { text-decoration: underline dotted #cfcfcf; text-underline-offset: 2px; }
         /* West / table / East grouped and centred, with a gap that grows on wide monitors and shrinks
            at lower resolutions so the hands compress toward one another instead of flinging to the edges. */
         /* A 1fr | auto | 1fr grid: the centre table lands at the exact board centre (aligned with the
@@ -829,6 +850,10 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         /* Phase-2 achievable (single-dummy) total + cumulative rows, in a distinct colour so the gap
            to the double-dummy ceiling (the .tot/.cum rows above) reads at a glance. */
         .ct .totsd td, .ct .cumsd td, .ct .totsd .sl, .ct .cumsd .sl { color: #2f6fd8; }
+        /* Per-suit single-dummy sub-row: the blind line's spread for that suit, blue like the SD totals,
+           dimmed + no border so it reads as subordinate to the black ceiling row directly above it. */
+        .ct .suit-sd td { color: #6b93e0; border: 0; font-size: 0.9em; padding-top: 0; }
+        .ct .suit-sd .sl { color: #6b93e0; font-weight: 400; font-size: 0.9em; padding-left: 0.5rem; }
         .ct .etr { color: #a0a0a0; padding-left: 0.5rem; min-width: 5ch; }
         .ct .etr .eb { color: #2f6fd8; }  /* the blind (single-dummy) expected tricks */
         .ct .ln { text-align: left; color: #777; padding-left: 0.55rem; min-width: 5ch; font-size: 0.92em; }
@@ -966,9 +991,14 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                suit by suit and in total &mdash; given the cards they hold and all the ways the opponents' cards
                might be split. It is a quick guide to "how high can we go?", not the last word.</p>
             <h3>The table</h3>
-            <p>Each row <b>&spades; &hearts; &diams; &clubs;</b> is one suit. The columns <code>0&hellip;13</code>
-               are the chance of taking <i>exactly</i> that many tricks in the suit. The <b>E</b> column is the
-               average number of tricks &mdash; <b>double-dummy / <span style="color:#2f6fd8">blind</span></b>
+            <p>Each row <b>&spades; &hearts; &diams; &clubs;</b> is one suit, with a small
+               <span style="color:#2f6fd8"><b>sd</b></span> sub-row under it. The black row is the
+               double-dummy ceiling; the blue <span style="color:#2f6fd8"><b>sd</b></span> row is the same
+               spread when you play the recommended line <i>blind</i> &mdash; it sits left of (worse than)
+               the black row, the shift being the price of not seeing the cards. The columns
+               <code>0&hellip;13</code> are the chance of taking <i>exactly</i> that many tricks in the suit.
+               The <b>E</b> column is the average number of tricks &mdash;
+               <b>double-dummy / <span style="color:#2f6fd8">blind</span></b>
                (the blue figure is what you'd take playing blind, always the smaller). The <b>line</b> column
                is the suggested way to play that suit blind: <i>cash</i> (bang out top cards), <i>finesse</i>,
                or <i>duck</i> (give up an early round). It is a simplified pick from a few standard plays &mdash;
@@ -978,10 +1008,17 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             <h3>Two answers: ceiling vs. realistic</h3>
             <p><span class="sw" style="background:#222"></span><b>tot</b> and <b>&ge;k</b> (black) &mdash; the
                <b>double-dummy</b> ceiling: how it would go if you could <i>see all four hands</i>. Best case /
-               hindsight &mdash; usually better than real life.</p>
+               hindsight &mdash; usually better than real life. These percentages are <b>not about the one split
+               you see on this deal</b>: they average double-dummy play (all four hands seen) over <i>every</i>
+               way the opponents' cards could be divided, weighted by how likely each split is. So it answers
+               "across all possible layouts of their cards, how often does the suit yield this many tricks?",
+               not "on this exact layout".</p>
             <p><span class="sw" style="background:#2f6fd8"></span><b>sd</b> and <b>&ge;sd</b> (blue) &mdash; the
                <b>single-dummy</b>, realistic figure: playing <i>blind</i> to the opponents' cards, so you must
-               guess (finesses, which way to play). This is closer to what you'll actually take.</p>
+               guess (finesses, which way to play). This is closer to what you'll actually take. Like the black
+               figure it also averages over <i>every</i> possible opponent split (weighted by likelihood), not
+               the one on this deal &mdash; the only difference is that here you <b>play blind</b>, picking one
+               line in advance without seeing their cards, so it counts the times a guess goes wrong.</p>
             <p>The gap between black and blue is the price of not seeing the cards. <b>&ge;sd</b> is the best you
                can do by choosing the smartest line in each suit for the target you set below.</p>
             <h3>The "tricks &ge;" slider</h3>
@@ -1261,6 +1298,15 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 h += '<td class="etr">' + etr(arr).toFixed(1) + (sdArr ? ' <span class="eb">/ ' + etr(sdArr).toFixed(1) + '</span>' : '') + '</td>';
                 var tip = tips && tips[i];
                 h += '<td class="ln"' + (tip ? ' data-tip="' + escAttr(tip) + '"' : '') + '>' + (lines ? lineLabel(lines[i]) : '') + '</td></tr>';
+                // Blue single-dummy sub-row: the recommended blind line's spread for THIS suit (the E
+                // blind mean above, expanded to a per-trick shape). Shifted left of the black ceiling row
+                // by the double-dummy tax. Distribution cells carry no data-k, so the target highlight
+                // (cumulative rows only) ignores them, matching the black suit row above.
+                if (sdArr) {
+                    h += '<tr class="suit-sd"><td class="sl">sd</td>';
+                    for (var k = 0; k < 14; k++) h += '<td>' + pctCell(sdArr[k] || 0) + '</td>';
+                    h += '<td class="etr"></td><td class="ln"></td></tr>';
+                }
             });
             h += '<tr class="tot"><td class="sl">tot</td>';
             for (var k = 0; k < 14; k++) h += '<td>' + pctCell(total[k]) + '</td>';
