@@ -19,6 +19,22 @@ Seat :: enum {
 	West,
 }
 
+// Parse a seat from its single-character label: N E S W (the compass initials). Case-insensitive.
+// ok = false on any other byte. Used by the PBN reader to read the deal tag's prefix seat.
+seat_from_letter :: proc "contextless" (c: u8) -> (seat: Seat, ok: bool) {
+	switch c {
+	case 'N', 'n':
+		return .North, true
+	case 'E', 'e':
+		return .East, true
+	case 'S', 's':
+		return .South, true
+	case 'W', 'w':
+		return .West, true
+	}
+	return .North, false
+}
+
 // Number of seats (players) and cards in one hand.
 SEAT_COUNT :: 4
 HAND_SIZE :: 13
