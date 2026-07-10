@@ -614,8 +614,8 @@ hcp_probability :: proc(n: int) -> (exact: f64, cumulative: f64) {
 	return HCP_PROBABILITY[m] * 100, cum * 100
 }
 
-// The Unicode card-suit glyph, used by the card diagram (hearts/diamonds are coloured red via CSS).
-@(private = "file")
+// The Unicode card-suit glyph, used by the card diagram (hearts/diamonds are coloured red via CSS) and
+// by consumers labelling per-suit output (e.g. the dd package's OPC breakdown tooltip).
 suit_glyph :: proc "contextless" (suit: Suit) -> string {
 	switch suit {
 	case .Spades:

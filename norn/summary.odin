@@ -690,6 +690,68 @@ opc_points :: proc(s: Hand_Summary) -> Opc_Points {
 // `with_partners_shortage`, `fitting_weak_honours`, the "Fit points" note). A later `combined_opc`
 // composes them over two hands. Each takes raw per-suit rank masks, so it can be unit-tested alone.
 
+// Why a single combined-OPC adjustment fired — the label the reference render_summary attaches to each
+// entry. `combined_opc_breakdown` tags every per-suit entry with one of these so a consumer can print
+// "misfit (♠): singleton opposite long" rather than only a summed number. `opc_reason_text` renders the
+// human phrase.
+Opc_Reason :: enum {
+	None,
+	Fit, // 8/9/10-card fit (the card count is read off the entry's value: 1→8, 2→9, 3→10+)
+	Misfit_Void, // -3: void opposite partner's 5+ suit
+	Misfit_Singleton, // -2: singleton opposite long
+	Misfit_Xx, // -1: two small opposite long
+	Semi_Fit, // +1: Kx/Qx/Jx/JT working doubleton opposite long
+	Wasted_Void, // -3: K/Q/J opposite partner's void
+	Wasted_Singleton, // -2: K/Q/J opposite partner's singleton
+	Freed_Void, // +3: no wasted honour opposite void
+	Freed_Singleton, // +2: no wasted honour opposite singleton
+	Freed_Ace_Singleton, // +1: bare ace opposite singleton
+	Weak_Honour_Fit, // +1: weak picture holding firms up inside an 8+ fit
+	Per_Suit_Mirror, // -1: same-suit equal short length (duplicated shortness)
+	Whole_Hand_Mirror, // -2: identical patterns with a long suit
+	Ruff_Support, // responder's 2-4 trump support ruffing its shortest side suit
+	Ruff_Long_Trump, // responder's 5+ trump length counting shortage in full
+}
+
+// The reference render_summary phrase for a reason (no suit / sign — the caller prints those).
+opc_reason_text :: proc(r: Opc_Reason) -> string {
+	switch r {
+	case .None:
+		return ""
+	case .Fit:
+		return "fit"
+	case .Misfit_Void:
+		return "void opp long"
+	case .Misfit_Singleton:
+		return "singleton opp long"
+	case .Misfit_Xx:
+		return "xx opp long"
+	case .Semi_Fit:
+		return "Kx/Qx/Jx/JT opp long"
+	case .Wasted_Void:
+		return "honour opp void"
+	case .Wasted_Singleton:
+		return "honour opp singleton"
+	case .Freed_Void:
+		return "no wasted honour opp void"
+	case .Freed_Singleton:
+		return "no wasted honour opp singleton"
+	case .Freed_Ace_Singleton:
+		return "bare ace opp singleton"
+	case .Weak_Honour_Fit:
+		return "weak honour in fit"
+	case .Per_Suit_Mirror:
+		return "mirror suit"
+	case .Whole_Hand_Mirror:
+		return "mirror hand"
+	case .Ruff_Support:
+		return "ruff, support"
+	case .Ruff_Long_Trump:
+		return "ruff, long trump"
+	}
+	return ""
+}
+
 // Fit points for a suit's COMBINED partnership length: an eight-card fit is worth 1, a nine 2, a
 // ten-or-longer 3 — at suit and notrump alike. Shorter than eight scores nothing. This is per SUIT:
 // the composition sums it over all four, so a double fit (two 8+ suits) rightly counts both.
@@ -712,25 +774,32 @@ opc_fit_points :: proc(combined_length: int) -> f32 {
 // this only when PARTNER is long (>=5) in the suit. (opc `with_partners_long_suit`.)
 @(private)
 opc_opposite_long_suit :: proc(m: u16, l: int) -> f32 {
+	v, _ := opc_opposite_long_suit_detail(m, l)
+	return v
+}
+
+// As opc_opposite_long_suit, also returning WHICH case fired (for the breakdown's labelled entry).
+@(private)
+opc_opposite_long_suit_detail :: proc(m: u16, l: int) -> (f32, Opc_Reason) {
 	switch l {
 	case 0:
-		return -3.0
+		return -3.0, .Misfit_Void
 	case 1:
-		return -2.0
+		return -2.0, .Misfit_Singleton
 	case 2:
 		if m & (PICTURE_BITS | TEN_BIT) == 0 {
-			return -1.0 // xx: two small cards
+			return -1.0, .Misfit_Xx // xx: two small cards
 		}
 		// Exactly one of K/Q/J plus a small card (no ace, no ten) is Kx/Qx/Jx; a bare JT also half-fits.
 		honours := int(intrinsics.count_ones(m & (KING_BIT | QUEEN_BIT | JACK_BIT)))
 		if honours == 1 && m & (ACE_BIT | TEN_BIT) == 0 {
-			return 1.0 // Kx / Qx / Jx
+			return 1.0, .Semi_Fit // Kx / Qx / Jx
 		}
 		if m & JACK_BIT != 0 && m & TEN_BIT != 0 {
-			return 1.0 // JT
+			return 1.0, .Semi_Fit // JT
 		}
 	}
-	return 0.0
+	return 0.0, .None
 }
 
 // This hand's honours in `m` OPPOSITE partner's shortage in the SAME suit (`partner_length` 0 = void,
@@ -740,14 +809,24 @@ opc_opposite_long_suit :: proc(m: u16, l: int) -> f32 {
 // `with_partners_shortage`.)
 @(private)
 opc_honour_opposite_shortage :: proc(m: u16, partner_length: int) -> f32 {
+	v, _ := opc_honour_opposite_shortage_detail(m, partner_length)
+	return v
+}
+
+// As opc_honour_opposite_shortage, also returning WHICH case fired (for the breakdown's labelled entry).
+@(private)
+opc_honour_opposite_shortage_detail :: proc(m: u16, partner_length: int) -> (f32, Opc_Reason) {
 	void := partner_length == 0
 	if m & (KING_BIT | QUEEN_BIT | JACK_BIT) != 0 {
-		return -3.0 if void else -2.0
+		if void {return -3.0, .Wasted_Void}
+		return -2.0, .Wasted_Singleton
 	}
 	if m & ACE_BIT == 0 {
-		return 3.0 if void else 2.0
+		if void {return 3.0, .Freed_Void}
+		return 2.0, .Freed_Singleton
 	}
-	return 0.0 if void else 1.0 // isolated ace
+	if void {return 0.0, .None} // nothing to free opposite a void with a bare ace
+	return 1.0, .Freed_Ace_Singleton
 }
 
 // A weak but real honour holding `m` firms up inside an eight-plus fit: under four Milton points, not
@@ -812,21 +891,48 @@ has_five_plus :: proc(s: Hand_Summary) -> bool {
 	return false
 }
 
-// Mirror penalty: two hands of identical shape (a "mirror") duplicate each other's shortness and offer
-// no ruffing value, so the partnership is worth less than the raw points — but only where there is a
-// long suit whose length that mirrored shortness fails to exploit. Identical distributions with a 5+
-// suit somewhere -> -2; otherwise 0. (opc `with_partners_long_suit`: "mirror hand when partner has a
-// long suit".) Per-suit mirror penalties are deliberately not applied here — the reference lists them
-// only as an unconditional reminder, without a precise rule.
+// Whole-hand mirror penalty: two hands with the SAME LENGTH IN EVERY SUIT (identical distributions,
+// e.g. both 5=3=3=2 with the spades opposite the spades) duplicate each other's shape exactly — no
+// shortness can ruff, no length is complementary — so the partnership is worth -2 beyond the per-suit
+// mirrors. Positional (per-suit) equality, NOT merely the same sorted pattern: two 5-3-3-2 hands whose
+// five-card suits differ are not a whole-hand mirror. Gated, like the reference, on a 5+ suit somewhere
+// ("mirror hand when partner has a long suit"). Stacks ON TOP of the per-suit mirrors (a full mirror is
+// necessarily four mirror suits too — the -2 is the extra whole-hand tax).
 @(private)
 opc_mirror_penalty :: proc(a, b: Hand_Summary) -> f32 {
 	if !has_five_plus(a) && !has_five_plus(b) {
 		return 0.0
 	}
-	if pattern(a) == pattern(b) {
-		return -2.0
+	for suit in Suit {
+		if suit_length(a, suit) != suit_length(b, suit) {
+			return 0.0 // any suit of differing length -> not a whole-hand mirror
+		}
 	}
-	return 0.0
+	return -2.0
+}
+
+// Per-suit mirror penalty (opc `with_partners_long_suit`: "per mirror suit when partner has a long
+// suit"): a "mirror suit" is one where BOTH hands hold the SAME length and that length is NON-FIT
+// (combined < 8, i.e. an equal length of 3 or fewer) — the shape is duplicated with no complementary
+// value (short mirrors can't ruff; a mirrored 3-3 wastes the third card). Charge -1 per such suit. The
+// combined-<8 bound means a mirror suit is never a fit, so this never fights the fit-points term (an
+// equal 4-4+ is a fit, scored there, not a mirror). Gated, like the whole-hand mirror, on a 5+ suit
+// existing somewhere; with no long suit the mirrored shape is not a liability. This is the COMMON case
+// (a full whole-hand mirror is rare); it stacks with the whole-hand -2 when every suit mirrors.
+@(private)
+opc_per_suit_mirror_penalty :: proc(a, b: Hand_Summary) -> f32 {
+	if !has_five_plus(a) && !has_five_plus(b) {
+		return 0.0
+	}
+	penalty: f32 = 0.0
+	for suit in Suit {
+		la := suit_length(a, suit)
+		lb := suit_length(b, suit)
+		if la == lb && la <= 3 { 	// equal length, combined < 8 (non-fit)
+			penalty -= 1.0
+		}
+	}
+	return penalty
 }
 
 // Distribution-fit ("ruffing") value a hand brings as trump support once an 8+ fit exists — the
@@ -839,15 +945,25 @@ opc_mirror_penalty :: proc(a, b: Hand_Summary) -> f32 {
 // the RESPONDER — the opener already carries its own shortage in its opening base.
 @(private)
 opc_support_ruffing :: proc(s: Hand_Summary, trump: Suit) -> f32 {
+	v, _, _ := opc_support_ruffing_detail(s, trump)
+	return v
+}
+
+// As opc_support_ruffing, also returning the reason and the RELEVANT suit: the shortest side suit that
+// ruffs (2-4 support), or the trump suit itself (5+ long trump). `suit`/`reason` are meaningful only
+// when the returned value is non-zero.
+@(private)
+opc_support_ruffing_detail :: proc(s: Hand_Summary, trump: Suit) -> (f32, Opc_Reason, Suit) {
 	rt := suit_length(s, trump)
 	if rt >= 5 {
-		return distribution_points(s).suit // long trump: full opening-style shortage value
+		return distribution_points(s).suit, .Ruff_Long_Trump, trump // long trump: full opening-style shortage value
 	}
 	if rt < 2 {
-		return 0.0 // not trump support
+		return 0.0, .None, trump // not trump support
 	}
 	// 2-4 card support: the single shortest side suit ruffs.
 	shortest := 13
+	shortest_suit := trump
 	for suit in Suit {
 		if suit == trump {
 			continue
@@ -855,46 +971,123 @@ opc_support_ruffing :: proc(s: Hand_Summary, trump: Suit) -> f32 {
 		l := suit_length(s, suit)
 		if l < shortest {
 			shortest = l
+			shortest_suit = suit
 		}
 	}
 	ruff := rt - shortest
-	return f32(ruff) if ruff > 0 else 0.0
+	if ruff > 0 {
+		return f32(ruff), .Ruff_Support, shortest_suit
+	}
+	return 0.0, .None, trump
 }
 
-// The partnership's combined OPC for a contract of the given strain (`is_nt`), composing the primitives
-// above. The stronger hand (higher non-opening total) is treated as the OPENER — keeping its full
-// opening total, including any aceless dock — while the weaker RESPONDS with its capped responder base
-// (see opc_responder_base). To that base it adds, per suit: fit points for every 8+ combined length (so
-// a DOUBLE fit counts twice), a misfit/semi-fit where one hand is long opposite the other's shortage or
-// working doubleton, and wasted/freed honour value where one hand holds honours opposite the other's
-// shortage; weak honours in a fit firm up; and a whole-hand mirror penalty. The long-vs-short case can
-// draw BOTH a shape misfit (on the short hand) and a wasted-honour penalty (on the long hand's honours)
-// — they are different hands' contributions and intentionally stack.
+// The most labelled entries a breakdown can hold: per suit at most fit + two misfit + two wasted + two
+// weak-fit = 7, over four suits = 28, plus ruffing and the whole-hand mirror and four per-suit mirrors.
+MAX_OPC_ENTRIES :: 40
+
+// One labelled contribution to a combined-OPC total — the granular detail the reference render_summary
+// lists per suit (WHICH suit, WHY, how much), rather than only a summed family total. Whole-hand mirror
+// is the one entry with `has_suit=false` (it is a shape property, not a single suit).
+Opc_Entry :: struct {
+	suit:     Suit,
+	value:    f32,
+	reason:   Opc_Reason,
+	has_suit: bool,
+}
+
+// A per-adjustment breakdown of a combined-OPC evaluation. Three layers of detail, each summing to
+// `total`:
+//   1. the two base totals (opener/responder), each further split into its H/L/D components;
+//   2. the per-family sums (fit / misfit / wasted / weak_fit / ruffing / mirror);
+//   3. the individual labelled `entries` (which suit, which reason) — the full render_summary detail.
+// Every value is signed; `misfit`, `wasted` and `mirror` are typically <= 0 (freed honours make
+// `wasted` positive), the rest >= 0. `entries[:n_entries]` are the live ones.
+Opc_Breakdown :: struct {
+	total:          f32, // == opener_base + responder_base + fit + misfit + wasted + weak_fit + ruffing + mirror
+	opener_base:    f32, // the stronger hand's full opening total (keeps any aceless dock)
+	opener_h:       f32, // opener honour component (== opening honour, incl. aceless dock)
+	opener_l:       f32, // opener length component
+	opener_d:       f32, // opener distribution component (suit or nt per strain) — opener_base == h+l+d
+	responder_base: f32, // the weaker hand's capped responder base
+	responder_h:    f32, // responder honour component (non-opening)
+	responder_l:    f32, // responder length (CAPPED at 2 for a suit; full for NT)
+	responder_d:    f32, // responder distribution (suit: only the -1 4333 flat; NT: full nt) — base == h+l+d
+	fit:            f32, // opc_fit_points summed over every 8+ combined suit (double fits stack)
+	misfit:         f32, // shortage/working-doubleton opposite partner's 5+ suit (opc_opposite_long_suit)
+	wasted:         f32, // honours opposite partner's shortage — negative wasted, positive freed
+	weak_fit:       f32, // weak picture holdings firming up inside a fit (opc_weak_honour_fit_upgrade)
+	ruffing:        f32, // responder distribution-fit ruffing value, only with a real (8+) trump fit
+	mirror:         f32, // whole-hand + per-suit mirror penalties (<= 0)
+	entries:        [MAX_OPC_ENTRIES]Opc_Entry, // labelled per-adjustment detail; only [:n_entries] valid
+	n_entries:      int,
+}
+
+// Append a labelled entry, skipping the no-ops (zero value or `.None` reason) and never overflowing the
+// fixed store. `has_suit` is false only for the whole-hand mirror.
+@(private = "file")
+opc_push :: proc(r: ^Opc_Breakdown, suit: Suit, value: f32, reason: Opc_Reason, has_suit := true) {
+	if reason == .None || value == 0 {
+		return
+	}
+	if r.n_entries >= MAX_OPC_ENTRIES {
+		return
+	}
+	r.entries[r.n_entries] = Opc_Entry{suit, value, reason, has_suit}
+	r.n_entries += 1
+}
+
+// The partnership's combined OPC for a contract of the given strain, broken into its component
+// adjustments (see Opc_Breakdown). The stronger hand (higher non-opening total) is treated as the
+// OPENER — keeping its full opening total, including any aceless dock — while the weaker RESPONDS with
+// its capped responder base (see opc_responder_base). To that base it adds, per suit: fit points for
+// every 8+ combined length (so a DOUBLE fit counts twice), a misfit/semi-fit where one hand is long
+// opposite the other's shortage or working doubleton, and wasted/freed honour value where one hand
+// holds honours opposite the other's shortage; weak honours in a fit firm up; whole-hand and per-suit
+// mirror penalties. The long-vs-short case can draw BOTH a shape misfit (on the short hand) and a
+// wasted-honour penalty (on the long hand's honours) — they are different hands' contributions and
+// intentionally stack.
 //
 // The `trump` parameter (nil = notrump) selects the strain: it picks the suit-vs-NT base totals and, for
 // a suit contract with a real (8+) trump fit, adds the responder's distribution-fit ruffing value — the
 // deferred shortage the responder base held back. No double count: the opener carries its own shortage
 // in its opening base, the responder's returns here.
-combined_opc :: proc(a, b: Hand_Summary, trump: Maybe(Suit)) -> f32 {
+combined_opc_breakdown :: proc(a, b: Hand_Summary, trump: Maybe(Suit)) -> Opc_Breakdown {
 	is_nt := trump == nil
 	oa := opc_points(a)
 	ob := opc_points(b)
 	a_non := oa.non_opening_nt if is_nt else oa.non_opening_suit
 	b_non := ob.non_opening_nt if is_nt else ob.non_opening_suit
-	a_open := oa.opening_nt if is_nt else oa.opening_suit
-	b_open := ob.opening_nt if is_nt else ob.opening_suit
 
 	// Stronger hand (by non-opening total) opens; the weaker responds with its capped base.
 	opener, responder: Hand_Summary
-	opener_full: f32
+	oo, ro: Opc_Points // the opener's / responder's own single-hand valuations
 	if a_non >= b_non {
-		opener, responder, opener_full = a, b, a_open
+		opener, responder, oo, ro = a, b, oa, ob
 	} else {
-		opener, responder, opener_full = b, a, b_open
+		opener, responder, oo, ro = b, a, ob, oa
 	}
-	base := opener_full + opc_responder_base(responder, is_nt)
 
-	adj: f32 = 0
+	r: Opc_Breakdown
+	// Opener base, split into its H/L/D components (opening honour keeps any aceless dock).
+	r.opener_h = oo.honour.opening
+	r.opener_l = oo.length
+	r.opener_d = oo.distribution.nt if is_nt else oo.distribution.suit
+	r.opener_base = r.opener_h + r.opener_l + r.opener_d
+
+	// Responder base, likewise split. A SUIT responder caps length at 2 and its distribution shrinks to
+	// only the -1 flat-4333 penalty (shortage waits for a fit, returning later as ruffing); NT lifts both.
+	r.responder_h = ro.honour.non_opening
+	if is_nt {
+		r.responder_l = ro.length
+		r.responder_d = ro.distribution.nt
+	} else {
+		rl := ro.length
+		if rl > 2.0 {rl = 2.0}
+		r.responder_l = rl
+		r.responder_d = -1.0 if is_4333(responder) else 0.0
+	}
+	r.responder_base = r.responder_h + r.responder_l + r.responder_d
+
 	for suit in Suit {
 		ma := a.suits[suit]
 		mb := b.suits[suit]
@@ -902,27 +1095,81 @@ combined_opc :: proc(a, b: Hand_Summary, trump: Maybe(Suit)) -> f32 {
 		lb := suit_length(b, suit)
 		combined := la + lb
 
-		adj += opc_fit_points(combined)
+		fp := opc_fit_points(combined)
+		r.fit += fp
+		opc_push(&r, suit, fp, .Fit)
 
-		if la >= 5 {adj += opc_opposite_long_suit(mb, lb)}
-		if lb >= 5 {adj += opc_opposite_long_suit(ma, la)}
+		if la >= 5 {
+			v, why := opc_opposite_long_suit_detail(mb, lb)
+			r.misfit += v
+			opc_push(&r, suit, v, why)
+		}
+		if lb >= 5 {
+			v, why := opc_opposite_long_suit_detail(ma, la)
+			r.misfit += v
+			opc_push(&r, suit, v, why)
+		}
 
-		if lb <= 1 {adj += opc_honour_opposite_shortage(ma, lb)}
-		if la <= 1 {adj += opc_honour_opposite_shortage(mb, la)}
+		if lb <= 1 {
+			v, why := opc_honour_opposite_shortage_detail(ma, lb)
+			r.wasted += v
+			opc_push(&r, suit, v, why)
+		}
+		if la <= 1 {
+			v, why := opc_honour_opposite_shortage_detail(mb, la)
+			r.wasted += v
+			opc_push(&r, suit, v, why)
+		}
 
 		if combined >= 8 {
-			adj += opc_weak_honour_fit_upgrade(ma)
-			adj += opc_weak_honour_fit_upgrade(mb)
+			wa := opc_weak_honour_fit_upgrade(ma)
+			wb := opc_weak_honour_fit_upgrade(mb)
+			r.weak_fit += wa + wb
+			opc_push(&r, suit, wa, .Weak_Honour_Fit)
+			opc_push(&r, suit, wb, .Weak_Honour_Fit)
 		}
 	}
 
 	// Responder's ruffing value, once a genuine trump fit backs the strain.
 	if t, is_suit := trump.?; is_suit {
 		if suit_length(opener, t) + suit_length(responder, t) >= 8 {
-			adj += opc_support_ruffing(responder, t)
+			v, why, rsuit := opc_support_ruffing_detail(responder, t)
+			r.ruffing = v
+			opc_push(&r, rsuit, v, why)
 		}
 	}
 
-	adj += opc_mirror_penalty(a, b)
-	return base + adj
+	whole := opc_mirror_penalty(a, b)
+	r.mirror = whole + opc_per_suit_mirror_penalty(a, b)
+	opc_push(&r, Suit.Spades, whole, .Whole_Hand_Mirror, false) // suit is a placeholder; has_suit=false
+	// Per-suit mirror entries: re-derive the same condition opc_per_suit_mirror_penalty sums (a same-suit
+	// equal short length, gated on a 5+ suit) so each mirrored suit is shown individually. Keep in step
+	// with that proc.
+	if has_five_plus(a) || has_five_plus(b) {
+		for suit in Suit {
+			la := suit_length(a, suit)
+			lb := suit_length(b, suit)
+			if la == lb && la <= 3 {
+				opc_push(&r, suit, -1.0, .Per_Suit_Mirror)
+			}
+		}
+	}
+
+	r.total =
+		r.opener_base +
+		r.responder_base +
+		r.fit +
+		r.misfit +
+		r.wasted +
+		r.weak_fit +
+		r.ruffing +
+		r.mirror
+	return r
+}
+
+// The partnership's combined OPC total for a contract of the given strain — just the `.total` of
+// combined_opc_breakdown (see there for the full composition). Call the breakdown form when the
+// component adjustments are wanted too.
+combined_opc :: proc(a, b: Hand_Summary, trump: Maybe(Suit)) -> f32 {
+	return combined_opc_breakdown(a, b, trump).total
 }
