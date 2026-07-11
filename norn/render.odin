@@ -299,49 +299,89 @@ HTML_CARDS_DEALERS := [4]string{"N", "S", "E", "W"}
 // vulnerability. `randomize_table` draws those from `context.random_generator` (matching the
 // handviewer formats); otherwise they are the fixed defaults. No page chrome here — the carousel
 // shell and script are emitted once by the page prologue/epilogue.
-render_deal_html_cards :: proc(builder: ^strings.Builder, board: Deal, randomize_table := false) {
+// `known` says which seats hold specified cards. The default (all four) is the normal full board; a
+// SUBSET renders a 2-hand (declarer + dummy) board — the missing seats draw face-down (see
+// `write_compass_seat`) and the stats box drops the unknown side. Used by the `pbn_analyse` driver.
+render_deal_html_cards :: proc(
+	builder: ^strings.Builder,
+	board: Deal,
+	randomize_table := false,
+	known := bit_set[Seat]{.North, .East, .South, .West},
+) {
+	full := known == bit_set[Seat]{.North, .East, .South, .West}
 	vul_index := 0
 	dealer_index := 0
-	if randomize_table {
+	if randomize_table && full {
 		vul_index = rand.int_max(len(HTML_CARDS_VULNERABILITIES))
 		dealer_index = rand.int_max(len(HTML_CARDS_DEALERS))
 	}
 	// Vulnerability by partnership: index 1 = NS, 2 = EW, 3 = Both (0 = None). The seat labels are
-	// coloured from this (see write_compass_seat), and the centre table shows the summary word.
+	// coloured from this. A 2-hand board has no auction context, so it stays neutral (no vul, no dealer).
 	ns_vulnerable := vul_index == 1 || vul_index == 3
 	ew_vulnerable := vul_index == 2 || vul_index == 3
-	dealer := HTML_CARDS_DEALERS[dealer_index] // "N" / "S" / "E" / "W"
+	dealer := HTML_CARDS_DEALERS[dealer_index] if full else "" // "N"/"S"/"E"/"W", or none when partial
 
-	// Per-seat summary (hcp + suit-length pattern) from the same index the predicates use.
+	// Per-seat summary (hcp + suit-length pattern). Unknown seats summarise a zeroed hand, but the
+	// compass never reads those (they render face-down) and the stats box below skips them.
 	ds := summarize_deal(board)
 
 	strings.write_string(builder, `<div class="compass">`)
 
 	// Partnership high-card-point summary, pinned top-right (see the .stats CSS).
-	n_hcp, s_hcp := hcp(ds[.North]), hcp(ds[.South])
-	e_hcp, w_hcp := hcp(ds[.East]), hcp(ds[.West])
 	strings.write_string(builder, `<div class="stats">`)
-	fmt.sbprintf(builder, `<div>NS: %d + %d = %d HCP</div>`, n_hcp, s_hcp, n_hcp + s_hcp)
-	fmt.sbprintf(builder, `<div>EW: %d + %d = %d HCP</div>`, e_hcp, w_hcp, e_hcp + w_hcp)
-	// Per-suit E–W split (how N/S's opponents' cards in each suit break), largest-first, with the
-	// a-priori probability of that break. Hidden on phones (see the media query).
-	strings.write_string(builder, `<div class="splits">`)
-	for suit in SUIT_OUTPUT_ORDER {
-		write_suit_split(builder, ds, suit)
+	if full {
+		n_hcp, s_hcp := hcp(ds[.North]), hcp(ds[.South])
+		e_hcp, w_hcp := hcp(ds[.East]), hcp(ds[.West])
+		fmt.sbprintf(builder, `<div>NS: %d + %d = %d HCP</div>`, n_hcp, s_hcp, n_hcp + s_hcp)
+		fmt.sbprintf(builder, `<div>EW: %d + %d = %d HCP</div>`, e_hcp, w_hcp, e_hcp + w_hcp)
+		// Per-suit E–W split (how N/S's opponents' cards in each suit break), largest-first, with the
+		// a-priori probability of that break. Hidden on phones (see the media query).
+		strings.write_string(builder, `<div class="splits">`)
+		for suit in SUIT_OUTPUT_ORDER {
+			write_suit_split(builder, ds, suit)
+		}
+		strings.write_string(builder, `</div>`)
+	} else {
+		// 2-hand board: only the known partnership's combined HCP. The opponents' cards — and hence the
+		// E–W splits — are unknown, which is precisely what the combo analyser reasons over.
+		side_lbl := "Known"
+		ns_side := bit_set[Seat]{.North, .South}
+		ew_side := bit_set[Seat]{.East, .West}
+		if known == ns_side {
+			side_lbl = "N/S"
+		} else if known == ew_side {
+			side_lbl = "E/W"
+		}
+		sum := 0
+		fmt.sbprintf(builder, `<div>%s: `, side_lbl)
+		first := true
+		for seat in SEAT_OUTPUT_ORDER {
+			if seat not_in known {
+				continue
+			}
+			h := hcp(ds[seat])
+			sum += h
+			if !first {
+				strings.write_string(builder, " + ")
+			}
+			fmt.sbprintf(builder, "%d", h)
+			first = false
+		}
+		fmt.sbprintf(builder, ` = %d HCP</div>`, sum)
+		strings.write_string(builder, `<div class="splits"><div class="split">defenders hidden</div></div>`)
 	}
 	strings.write_string(builder, `</div>`)
-	strings.write_string(builder, `</div>`)
 
-	write_compass_seat(builder, board, ds, .North, "N", "n", ns_vulnerable, dealer == "N")
+	write_compass_seat(builder, board, ds, .North, "N", "n", ns_vulnerable, dealer == "N", .North in known)
 	strings.write_string(builder, `<div class="mid">`)
-	write_compass_seat(builder, board, ds, .West, "W", "w", ew_vulnerable, dealer == "W")
+	write_compass_seat(builder, board, ds, .West, "W", "w", ew_vulnerable, dealer == "W", .West in known)
 	// Centre marker: the script fills it per slide — the board number in the 4-hand view, a
 	// "Reveal all" button when a single hand is focused. Vulnerability is shown by the seat-pill
 	// colours, so it is no longer spelled out here.
 	strings.write_string(builder, `<div class="table"></div>`)
-	write_compass_seat(builder, board, ds, .East, "E", "e", ew_vulnerable, dealer == "E")
+	write_compass_seat(builder, board, ds, .East, "E", "e", ew_vulnerable, dealer == "E", .East in known)
 	strings.write_string(builder, `</div>`) // .mid
-	write_compass_seat(builder, board, ds, .South, "S", "s", ns_vulnerable, dealer == "S")
+	write_compass_seat(builder, board, ds, .South, "S", "s", ns_vulnerable, dealer == "S", .South in known)
 	strings.write_string(builder, `</div>`) // .compass
 }
 
@@ -360,7 +400,19 @@ write_compass_seat :: proc(
 	class: string,
 	vulnerable: bool,
 	dealer: bool,
+	is_known := true,
 ) {
+	// A face-down defender on a 2-hand (declarer + dummy) board: show the position pill but no cards or
+	// hand stats (they are unknown — the combo analyser treats them as every possible split).
+	if !is_known {
+		fmt.sbprintf(
+			builder,
+			`<div class="seat seat-%s facedown nonvul"><span class="lbl">%s</span><div class="unknown-hand">?</div></div>`,
+			class,
+			label,
+		)
+		return
+	}
 	strings.write_string(builder, `<div class="seat seat-`)
 	strings.write_string(builder, class)
 	strings.write_string(builder, " vul" if vulnerable else " nonvul")
@@ -766,6 +818,11 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         .seat.nonvul .lbl { background: ForestGreen; }
         /* Dealer: ring around the pill plus a tag underneath. */
         .seat.is-dealer .lbl { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--sel); }
+        /* Face-down defender on a 2-hand (declarer + dummy) board: pill + a big "?" placeholder. */
+        .seat.facedown { opacity: 0.9; }
+        .seat.facedown .unknown-hand {
+            font-size: 2.4em; color: #9fb0c0; text-align: center; padding: 0.5em 0.7em 0.2em; line-height: 1;
+        }
         .dtag {
             display: block; margin: 0.35rem 0 0.4rem; font-family: 'Open Sans', sans-serif;
             font-size: 0.38em; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sel);
