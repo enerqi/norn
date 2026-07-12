@@ -863,14 +863,29 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         .cca-sub { color: #888; font-size: 0.85rem; }
         /* Small pill buttons shared by the head (help / close), the N/S<->E/W side toggle, and the
            IMPs<->MPs objective toggle. */
-        .cca-head .x, .cca-head .help, .cca-side .sidebtn, .cca-obj .sidebtn {
+        .cca-head .x, .cca-head .help, .cca-side .sidebtn, .cca-obj .sidebtn, .cca-strain .sidebtn {
             font: inherit; font-size: 0.8rem; border: 1px solid var(--line); background: #f4f4f4;
             color: #555; border-radius: 5px; padding: 0.05rem 0.45rem; cursor: pointer; line-height: 1;
         }
         .cca-side { margin-left: auto; }
-        .cca-side, .cca-obj { display: flex; align-items: center; gap: 0.15rem; }
-        .cca-side .sidebtn.sel, .cca-obj .sidebtn.sel { background: var(--sel); color: #fff; border-color: var(--sel); }
+        .cca-side, .cca-obj, .cca-strain { display: flex; align-items: center; gap: 0.15rem; }
+        .cca-side .sidebtn.sel, .cca-obj .sidebtn.sel, .cca-strain .sidebtn.sel { background: var(--sel); color: #fff; border-color: var(--sel); }
         .cca-side .sidesep, .cca-obj .sidesep { color: #bbb; }
+        /* Contract-strain picker (only shown on a board carrying baked DDS-sample data). The red suits get
+           their colour so the strain reads at a glance. */
+        .cca-strain { flex-wrap: wrap; }
+        .cca-strain[hidden] { display: none; }
+        .cca-strain .sidebtn[data-str="h"], .cca-strain .sidebtn[data-str="d"] { color: #c0392b; }
+        .cca-strain .sidebtn.sel[data-str="h"], .cca-strain .sidebtn.sel[data-str="d"] { color: #fff; }
+        /* The green "honest verdict" rung: the whole-hand simulated make-% for the picked contract, on top
+           of the CCA body. The reconciliation strip shows the ceiling -> blind -> simulated tax as a gap. */
+        .cca-sim {
+            margin: 0.1rem 0 0.5rem; padding: 0.42rem 0.6rem; border-radius: 8px;
+            background: #e7f6ec; border: 1px solid #b6e0c2; color: #1c6b39; font-size: 0.9rem; line-height: 1.35;
+        }
+        .cca-sim[hidden] { display: none; }
+        .cca-sim b { color: #12572c; }
+        .cca-sim .recon { display: block; margin-top: 0.15rem; color: #4a7d5c; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
         .cca-head .help, .cca-head .x { align-self: flex-start; }
         .cca-empty { color: #888; padding: 0.5rem 0.2rem; }
         /* Help modal: a large centred card over a dimmed backdrop, laymen's explanation of the CCA. */
@@ -1027,9 +1042,13 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             <span class="cca-obj" title="Scoring: IMPs = make the contract; MPs = chase overtricks while better than even">
                 <button class="sidebtn sel" id="nc-cca-imps">IMPs</button><span class="sidesep">|</span><button class="sidebtn" id="nc-cca-mps">MPs</button>
             </span>
+            <span class="cca-strain" id="nc-cca-strain" hidden title="Contract strain for the simulated whole-hand make-% (with the trick target below = the level)">
+                <button class="sidebtn" data-str="s">&spades;</button><button class="sidebtn" data-str="h">&hearts;</button><button class="sidebtn" data-str="d">&diams;</button><button class="sidebtn" data-str="c">&clubs;</button><button class="sidebtn" data-str="nt">NT</button>
+            </span>
             <button class="help" id="nc-cca-help" title="What is this?">?</button>
             <button class="x" id="nc-cca-close" title="Close">&#10005;</button>
         </div>
+        <div class="cca-sim" id="nc-cca-sim" hidden></div>
         <div id="nc-cca-body"></div>
         <div class="cca-foot">
             <span class="ct-head" id="nc-cca-headline"></span>
@@ -1078,6 +1097,18 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                line in advance without seeing their cards, so it counts the times a guess goes wrong.</p>
             <p>The gap between black and blue is the price of not seeing the cards. <b>&ge;sd</b> is the best you
                can do by choosing the smartest line in each suit for the target you set below.</p>
+            <h3>The green whole-hand verdict (simulated)</h3>
+            <p><span class="sw" style="background:#1c9b4f"></span><b>Whole-hand (simulated)</b> &mdash; when the
+               board carries sampled data, a green band on top gives the <b>honest</b> answer: it deals out the
+               unknown opponents' cards <b>many times</b> (each split weighted by how likely it is) and plays
+               each whole deal out double-dummy, so it already includes entries, the tempo race, and
+               cross-suit tricks (squeezes, ruffs) that the per-suit table below cannot see. Pick the
+               <b>contract strain</b> with the &spades;&hearts;&diams;&clubs;NT buttons and the <b>level</b>
+               with the trick slider; the band shows the make-% for that contract, with a &plusmn; margin and
+               the number of deals (a simulation, so it is an estimate, not exact). The <b>reconciliation</b>
+               strip &mdash; <i>ceiling &middot; blind &middot; simulated</i> &mdash; lines the three answers up:
+               the gap from the per-suit ceiling down to the simulated number <b>is</b> the entry/tempo/no-squeeze
+               tax. Trust the green number for "will it make?"; the suit rows tell you "how to play".</p>
             <h3>The "tricks &ge;" slider</h3>
             <p>Sets the target: the chance of taking <b>at least</b> that many tricks. E.g. set it to 9 for a
                game in no-trumps, 10 for a major-suit game. The headline shows the ceiling (DD) and realistic
@@ -1283,6 +1314,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // the N/S to E/W toggle just switches which one renders. ccaSide is the global choice.
         var ccaSide = 'ns';
         var ccaObj = 'imps'; // scoring objective: 'imps' (make the target) or 'mps' (chase overtricks)
+        var ccaStrain = 'nt'; // contract strain for the green whole-hand verdict (2-hand advisor only)
         function parseAttr(el, a) { try { return JSON.parse(el.getAttribute(a)); } catch (e) { return null; } }
         // What to play for, given the analysed side S and the contract target. IMPs just makes the
         // target (safety). MPs chases overtricks: aim as high as the odds stay better than even —
@@ -1318,6 +1350,9 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             var par = slide ? slide.querySelector('.par') : null;
             var d = par && par.getAttribute('data-target');
             el._target = d ? Math.max(1, Math.min(13, +d)) : 9;
+            // Optional DDS-sample grid (2-hand advisor): {n, lvl, strain, g:{s,h,d,c,nt:[p0..p13]}}
+            // baked by pbn_analyse on the same hidden .par div. Drives the green whole-hand verdict.
+            el._sim = par ? parseAttr(par, 'data-sim') : null;
         });
         function sideData(el) { return el._sides ? el._sides[ccaSide] : null; }
         // The inline one-liner for a board: CCA badge (with the analysed side) + P(>= target), both the
@@ -1394,6 +1429,8 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         var ccaSlider = document.getElementById('nc-cca-target');
         var ccaSliderVal = document.getElementById('nc-cca-target-val');
         var ccaFoot = document.querySelector('.cca-foot');
+        var ccaSimBand = document.getElementById('nc-cca-sim');
+        var ccaStrainWrap = document.getElementById('nc-cca-strain');
         var ccaOpen = false;
         var ccaPosT; // pending "reposition after the slide transition settles" timer
         function activeCombo() { var s = slides[idx]; return s ? s.querySelector('.combo') : null; }
@@ -1408,6 +1445,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 ccaBody.innerHTML = '<div class="cca-empty">No combination data for this board.</div>';
                 ccaSub.textContent = '';
                 if (ccaFoot) ccaFoot.style.visibility = 'hidden';
+                simBand();
                 return;
             }
             if (ccaFoot) ccaFoot.style.visibility = 'visible';
@@ -1415,6 +1453,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             ccaSub.textContent = 'Board ' + (idx + 1);
             ccaSlider.value = el._target;
             hlCca();
+            simBand();
             if (pos) positionCca();
         }
         // Place the (fixed) panel at its NATURAL content size (the table width is constant across
@@ -1488,6 +1527,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             el._target = +this.value;
             comboLine(el);
             hlCca();
+            simBand();
         };
         // N/S <-> E/W toggle: global choice, re-render the overlay + every inline one-liner.
         var nsBtn = document.getElementById('nc-cca-ns'), ewBtn = document.getElementById('nc-cca-ew');
@@ -1511,6 +1551,44 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         }
         if (impsBtn) impsBtn.onclick = function () { setObj('imps'); };
         if (mpsBtn) mpsBtn.onclick = function () { setObj('mps'); };
+
+        // Green whole-hand verdict (only when the active board carries baked DDS-sample data). The strain
+        // comes from the picker, the level from the trick slider (target = level + 6). make-% = the tail of
+        // that strain's sampled trick distribution at the target; the reconciliation strip shows combo's
+        // ceiling (DD) and blind (SD) expected totals beside the honest simulated mean, so the gap = the
+        // entry/tempo/no-squeeze tax.
+        var STRAIN_GLYPH = { s: '♠', h: '♥', d: '♦', c: '♣', nt: 'NT' };
+        function contractLabel(t, k) { return t >= 7 ? (t - 6) + STRAIN_GLYPH[k] : t + ' tricks ' + STRAIN_GLYPH[k]; }
+        function simBand() {
+            if (!ccaSimBand) return;
+            var el = activeCombo(), sim = el && el._sim;
+            if (!sim) { ccaSimBand.hidden = true; return; }
+            var g = sim.g[ccaStrain] || [], t = el._target;
+            var mk = 0; for (var k = t; k < 14; k++) mk += g[k] || 0;
+            var se = Math.sqrt(Math.max(0, mk * (1 - mk)) / sim.n) * 100;
+            var S = sideData(el);
+            var ceil = S && S.total ? etr(S.total) : null, blind = S && S.totalSd ? etr(S.totalSd) : null;
+            var s = '<b>Whole-hand (simulated):</b> ' + contractLabel(t, ccaStrain) +
+                    ' makes <b>' + (mk * 100).toFixed(0) + '%</b> (±' + se.toFixed(0) + '%, ' + sim.n + ' deals)';
+            s += '<span class="recon">' + (ceil != null ? 'ceiling ' + ceil.toFixed(1) + ' · ' : '') +
+                 (blind != null ? 'blind ' + blind.toFixed(1) + ' · ' : '') +
+                 'simulated ' + etr(g).toFixed(1) + '</span>';
+            ccaSimBand.innerHTML = s;
+            ccaSimBand.hidden = false;
+        }
+        // Contract-strain picker (shown only if some board has sample data). Default = the baked contract.
+        var strainBtns = ccaStrainWrap ? Array.prototype.slice.call(ccaStrainWrap.querySelectorAll('[data-str]')) : [];
+        function setStrain(k) {
+            ccaStrain = k;
+            strainBtns.forEach(function (btn) { btn.classList.toggle('sel', btn.getAttribute('data-str') === k); });
+            simBand();
+        }
+        strainBtns.forEach(function (btn) { btn.onclick = function () { setStrain(btn.getAttribute('data-str')); }; });
+        var simDefault = null;
+        for (var ci = 0; ci < combos.length; ci++) { if (combos[ci]._sim) { simDefault = combos[ci]._sim; break; } }
+        if (simDefault && ccaStrainWrap) { ccaStrainWrap.hidden = false; }
+        setStrain(simDefault && simDefault.strain ? simDefault.strain : 'nt');
+
         // Help modal.
         var helpModal = document.getElementById('nc-cca-help-modal');
         var helpBtn = document.getElementById('nc-cca-help'), helpClose = document.getElementById('nc-cca-help-close');
