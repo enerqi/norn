@@ -877,6 +877,11 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         .cca-strain[hidden] { display: none; }
         .cca-strain .sidebtn[data-str="h"], .cca-strain .sidebtn[data-str="d"] { color: #c0392b; }
         .cca-strain .sidebtn.sel[data-str="h"], .cca-strain .sidebtn.sel[data-str="d"] { color: #fff; }
+        /* Opening-lead picker: a dropdown conditioning the simulated make-% on a defender's card. */
+        .cca-lead { display: flex; align-items: center; gap: 0.3rem; }
+        .cca-lead[hidden] { display: none; }
+        .cca-lead .lbl-txt { color: #666; font-size: 0.82rem; }
+        .cca-lead select { font: inherit; font-size: 0.8rem; border: 1px solid var(--line); border-radius: 5px; padding: 0.05rem 0.3rem; color: #444; background: #fff; cursor: pointer; }
         /* The green "honest verdict" rung: the whole-hand simulated make-% for the picked contract, on top
            of the CCA body. The reconciliation strip shows the ceiling -> blind -> simulated tax as a gap. */
         .cca-sim {
@@ -885,6 +890,7 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         }
         .cca-sim[hidden] { display: none; }
         .cca-sim b { color: #12572c; }
+        .cca-sim .lead-note { color: #2f6fd8; font-size: 0.85rem; }
         .cca-sim .recon { display: block; margin-top: 0.15rem; color: #4a7d5c; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
         .cca-head .help, .cca-head .x { align-self: flex-start; }
         .cca-empty { color: #888; padding: 0.5rem 0.2rem; }
@@ -1045,6 +1051,9 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             <span class="cca-strain" id="nc-cca-strain" hidden title="Contract strain for the simulated whole-hand make-% (with the trick target below = the level)">
                 <button class="sidebtn" data-str="s">&spades;</button><button class="sidebtn" data-str="h">&hearts;</button><button class="sidebtn" data-str="d">&diams;</button><button class="sidebtn" data-str="c">&clubs;</button><button class="sidebtn" data-str="nt">NT</button>
             </span>
+            <span class="cca-lead" id="nc-cca-lead" hidden title="Condition the simulated make-% on the opening lead (a defender holding that exact card)">
+                <span class="lbl-txt">lead</span><select id="nc-cca-lead-sel"><option value="">none</option></select>
+            </span>
             <button class="help" id="nc-cca-help" title="What is this?">?</button>
             <button class="x" id="nc-cca-close" title="Close">&#10005;</button>
         </div>
@@ -1109,6 +1118,10 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                strip &mdash; <i>ceiling &middot; blind &middot; simulated</i> &mdash; lines the three answers up:
                the gap from the per-suit ceiling down to the simulated number <b>is</b> the entry/tempo/no-squeeze
                tax. Trust the green number for "will it make?"; the suit rows tell you "how to play".</p>
+            <p>The <b>lead</b> menu conditions that make-% on the <b>opening lead</b> (a defender holding that
+               exact card) &mdash; the honest "if the king is onside" swing. It re-averages only the sampled
+               deals consistent with the lead, so the deal count (and the &plusmn;) shrinks; the note reads
+               <i>given E led K&spades;</i>.</p>
             <h3>The "tricks &ge;" slider</h3>
             <p>Sets the target: the chance of taking <b>at least</b> that many tricks. E.g. set it to 9 for a
                game in no-trumps, 10 for a major-suit game. The headline shows the ceiling (DD) and realistic
@@ -1315,6 +1328,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         var ccaSide = 'ns';
         var ccaObj = 'imps'; // scoring objective: 'imps' (make the target) or 'mps' (chase overtricks)
         var ccaStrain = 'nt'; // contract strain for the green whole-hand verdict (2-hand advisor only)
+        var ccaLead = null;   // {seat, card} opening-lead condition, or null for the unconditioned verdict
         function parseAttr(el, a) { try { return JSON.parse(el.getAttribute(a)); } catch (e) { return null; } }
         // What to play for, given the analysed side S and the contract target. IMPs just makes the
         // target (safety). MPs chases overtricks: aim as high as the odds stay better than even —
@@ -1353,6 +1367,9 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             // Optional DDS-sample grid (2-hand advisor): {n, lvl, strain, g:{s,h,d,c,nt:[p0..p13]}}
             // baked by pbn_analyse on the same hidden .par div. Drives the green whole-hand verdict.
             el._sim = par ? parseAttr(par, 'data-sim') : null;
+            // Optional opening-lead sub-grids: {n, seats:{E:{"KS":{n,g},...},W:{...}}} — same distribution
+            // shape as _sim.g, but conditioned on a defender holding that card. Drives the lead picker.
+            el._leads = par ? parseAttr(par, 'data-sim-leads') : null;
         });
         function sideData(el) { return el._sides ? el._sides[ccaSide] : null; }
         // The inline one-liner for a board: CCA badge (with the analysed side) + P(>= target), both the
@@ -1431,6 +1448,8 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         var ccaFoot = document.querySelector('.cca-foot');
         var ccaSimBand = document.getElementById('nc-cca-sim');
         var ccaStrainWrap = document.getElementById('nc-cca-strain');
+        var ccaLeadWrap = document.getElementById('nc-cca-lead');
+        var ccaLeadSel = document.getElementById('nc-cca-lead-sel');
         var ccaOpen = false;
         var ccaPosT; // pending "reposition after the slide transition settles" timer
         function activeCombo() { var s = slides[idx]; return s ? s.querySelector('.combo') : null; }
@@ -1441,6 +1460,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         function renderCca(pos) {
             if (!ccaOpen) return;
             var el = activeCombo(), S = el && sideData(el);
+            buildLeadOptions(el);
             if (!S || !S.total) {
                 ccaBody.innerHTML = '<div class="cca-empty">No combination data for this board.</div>';
                 ccaSub.textContent = '';
@@ -1559,23 +1579,63 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // entry/tempo/no-squeeze tax.
         var STRAIN_GLYPH = { s: '♠', h: '♥', d: '♦', c: '♣', nt: 'NT' };
         function contractLabel(t, k) { return t >= 7 ? (t - 6) + STRAIN_GLYPH[k] : t + ' tricks ' + STRAIN_GLYPH[k]; }
+        // A card label "KS" (rank-first) -> "K♠" for the lead menu / band note.
+        function leadLabel(c) { var su = c.charAt(c.length - 1).toLowerCase(); return c.slice(0, c.length - 1) + (STRAIN_GLYPH[su] || su); }
+        // The sample source for the active board & condition: the opening-lead sub-grid when a lead is
+        // picked (and present for this board), else the unconditioned base grid. Both carry {g, n}.
+        function activeSimSrc(el) {
+            var sim = el && el._sim;
+            if (!sim) return null;
+            if (ccaLead && el._leads && el._leads.seats) {
+                var cards = el._leads.seats[ccaLead.seat];
+                var lc = cards && cards[ccaLead.card];
+                if (lc) return { g: lc.g, n: lc.n, note: ccaLead.seat + ' led ' + leadLabel(ccaLead.card) };
+            }
+            return { g: sim.g, n: sim.n, note: null };
+        }
         function simBand() {
             if (!ccaSimBand) return;
-            var el = activeCombo(), sim = el && el._sim;
-            if (!sim) { ccaSimBand.hidden = true; return; }
-            var g = sim.g[ccaStrain] || [], t = el._target;
+            var el = activeCombo(), src = activeSimSrc(el);
+            if (!src) { ccaSimBand.hidden = true; return; }
+            var g = src.g[ccaStrain] || [], t = el._target;
             var mk = 0; for (var k = t; k < 14; k++) mk += g[k] || 0;
-            var se = Math.sqrt(Math.max(0, mk * (1 - mk)) / sim.n) * 100;
+            var se = Math.sqrt(Math.max(0, mk * (1 - mk)) / src.n) * 100;
             var S = sideData(el);
             var ceil = S && S.total ? etr(S.total) : null, blind = S && S.totalSd ? etr(S.totalSd) : null;
             var s = '<b>Whole-hand (simulated):</b> ' + contractLabel(t, ccaStrain) +
-                    ' makes <b>' + (mk * 100).toFixed(0) + '%</b> (±' + se.toFixed(0) + '%, ' + sim.n + ' deals)';
+                    ' makes <b>' + (mk * 100).toFixed(0) + '%</b> (±' + se.toFixed(0) + '%, ' + src.n + ' deals)';
+            if (src.note) s += ' <span class="lead-note">given ' + src.note + '</span>';
             s += '<span class="recon">' + (ceil != null ? 'ceiling ' + ceil.toFixed(1) + ' · ' : '') +
                  (blind != null ? 'blind ' + blind.toFixed(1) + ' · ' : '') +
                  'simulated ' + etr(g).toFixed(1) + '</span>';
             ccaSimBand.innerHTML = s;
             ccaSimBand.hidden = false;
         }
+        // Populate the lead dropdown from the active board's sub-grids (grouped by defender, each card an
+        // option). Hidden when the board has no lead data. Preserves the current pick if still valid.
+        function buildLeadOptions(el) {
+            if (!ccaLeadSel || !ccaLeadWrap) return;
+            var leads = el && el._leads;
+            if (!leads || !leads.seats) { ccaLeadWrap.hidden = true; return; }
+            ccaLeadWrap.hidden = false;
+            var html = '<option value="">none</option>';
+            ['N', 'E', 'S', 'W'].forEach(function (sk) {
+                var cards = leads.seats[sk]; if (!cards) return;
+                Object.keys(cards).forEach(function (ck) {
+                    html += '<option value="' + sk + '|' + ck + '">' + sk + ' ' + leadLabel(ck) + '</option>';
+                });
+            });
+            ccaLeadSel.innerHTML = html;
+            var want = ccaLead ? (ccaLead.seat + '|' + ccaLead.card) : '', has = false;
+            for (var i = 0; i < ccaLeadSel.options.length; i++) { if (ccaLeadSel.options[i].value === want) { has = true; break; } }
+            if (!has) { ccaLead = null; want = ''; }
+            ccaLeadSel.value = want;
+        }
+        if (ccaLeadSel) ccaLeadSel.onchange = function () {
+            var v = this.value;
+            if (!v) { ccaLead = null; } else { var p = v.split('|'); ccaLead = { seat: p[0], card: p[1] }; }
+            simBand();
+        };
         // Contract-strain picker (shown only if some board has sample data). Default = the baked contract.
         var strainBtns = ccaStrainWrap ? Array.prototype.slice.call(ccaStrainWrap.querySelectorAll('[data-str]')) : [];
         function setStrain(k) {
