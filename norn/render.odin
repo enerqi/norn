@@ -1045,6 +1045,9 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             <span class="cca-side" title="Which partnership's tricks to analyse">
                 <button class="sidebtn sel" id="nc-cca-ns">N/S</button><span class="sidesep">|</span><button class="sidebtn" id="nc-cca-ew">E/W</button>
             </span>
+            <span class="cca-mode" id="nc-cca-mode" hidden title="Exact = double-dummy on the known deal; Blind = play it as if you can't see the other two hands (sampled)">
+                <button class="sidebtn sel" id="nc-cca-exact">Exact</button><span class="sidesep modesep">|</span><button class="sidebtn" id="nc-cca-blind">Blind</button>
+            </span>
             <span class="cca-obj" title="Scoring: IMPs = make the contract; MPs = chase overtricks while better than even">
                 <button class="sidebtn sel" id="nc-cca-imps">IMPs</button><span class="sidesep">|</span><button class="sidebtn" id="nc-cca-mps">MPs</button>
             </span>
@@ -1118,6 +1121,13 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                strip &mdash; <i>ceiling &middot; blind &middot; simulated</i> &mdash; lines the three answers up:
                the gap from the per-suit ceiling down to the simulated number <b>is</b> the entry/tempo/no-squeeze
                tax. Trust the green number for "will it make?"; the suit rows tell you "how to play".</p>
+            <p>The simulated make-% is still a <b>ceiling</b>: every deal is played double-dummy, so declarer
+               never misguesses. When the two known hands contain a genuine <b>two-way guess</b> (a trapped
+               honour finessable either way, which a blind declarer must guess), the band adds an
+               <b>achievable</b> figure &mdash; the make-% docked for guessing that honour wrong half the time.
+               The drop from make-% to achievable is the <b>guess tax</b> (shown as e.g. <i>Q&spades; guess,
+               &minus;35</i>). It appears only on the exact contract it was estimated for, and only with no
+               opening lead picked.</p>
             <p>The <b>lead</b> menu conditions that make-% on the <b>opening lead</b> (a defender holding that
                exact card) &mdash; the honest "if the king is onside" swing. It re-averages only the sampled
                deals consistent with the lead, so the deal count (and the &plusmn;) shrinks; the note reads
@@ -1326,6 +1336,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // adaptive P(>=t) make curve, for BOTH partnerships (data-ns.., data-ew..). We keep both sides so
         // the N/S to E/W toggle just switches which one renders. ccaSide is the global choice.
         var ccaSide = 'ns';
+        var ccaMode = 'exact'; // full-deal verdict mode: 'exact' (double-dummy) or 'blind' (sampled advisor)
         var ccaObj = 'imps'; // scoring objective: 'imps' (make the target) or 'mps' (chase overtricks)
         var ccaStrain = 'nt'; // contract strain for the green whole-hand verdict (2-hand advisor only)
         var ccaLead = null;   // {seat, card} opening-lead condition, or null for the unconditioned verdict
@@ -1364,12 +1375,25 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             var par = slide ? slide.querySelector('.par') : null;
             var d = par && par.getAttribute('data-target');
             el._target = d ? Math.max(1, Math.min(13, +d)) : 9;
-            // Optional DDS-sample grid (2-hand advisor): {n, lvl, strain, g:{s,h,d,c,nt:[p0..p13]}}
-            // baked by pbn_analyse on the same hidden .par div. Drives the green whole-hand verdict.
-            el._sim = par ? parseAttr(par, 'data-sim') : null;
+            // Optional grid driving the green verdict band: either the DDS-sample grid (2-hand advisor,
+            // {n, lvl, strain, g:{s,h,d,c,nt:[p0..p13]}}) baked on the hidden .par div, OR the exact
+            // double-dummy grid ({exact:true, n:1, ...} spikes) baked on a .sim-exact div for a full 4-hand
+            // deal. Read from wherever data-sim sits in the slide (dd.annotate owns the .par for full deals).
+            var simEl = slide ? slide.querySelector('[data-sim]') : null;
+            el._sim = simEl ? parseAttr(simEl, 'data-sim') : null;
             // Optional opening-lead sub-grids: {n, seats:{E:{"KS":{n,g},...},W:{...}}} — same distribution
             // shape as _sim.g, but conditioned on a defender holding that card. Drives the lead picker.
             el._leads = par ? parseAttr(par, 'data-sim-leads') : null;
+            // Optional per-suit blind two-way GUESS notes: {side:'ns', suits:{s:{card:'QS',tax:35}}} baked
+            // by pbn_analyse from the misguess-tax pivots. Merged into that suit's line tooltip (Option C1).
+            el._simGuess = par ? parseAttr(par, 'data-sim-guess') : null;
+            // Which partnership(s) this board really knows: 'ns'/'ew' (2-hand advisor — the OTHER side is
+            // that pair duplicated + mislabelled, so the toggle locks here) or 'all' (full deal — both real).
+            var metaEl = slide ? slide.querySelector('.cca-meta') : null;
+            el._known = metaEl ? (metaEl.getAttribute('data-known') || 'all') : 'all';
+            // Full-deal BLIND advisor grids per side ({ns:{n,lvl,strain,g,ach,..}, ew:{..}}) baked when a
+            // known deal is sampled — lets the panel toggle exact double-dummy ↔ "play it blind".
+            el._blind = simEl ? parseAttr(simEl, 'data-sim-blind') : null;
         });
         function sideData(el) { return el._sides ? el._sides[ccaSide] : null; }
         // The inline one-liner for a board: CCA badge (with the analysed side) + P(>= target), both the
@@ -1396,6 +1420,9 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         function ctTableHTML(S) {
             var data = S.data, total = S.total, totalSd = S.totalSd, atl = S.atl, sd = S.sd, lines = S.lines, tips = S.tips;
             var rows = [['s', '♠'], ['h', '♥'], ['d', '♦'], ['c', '♣']];
+            // Blind two-way guess notes for the shown side (Option C1): appended to the matching suit tip.
+            var elg = activeCombo(), guess = elg && elg._simGuess;
+            var guessSuits = (guess && guess.side === ccaSide && guess.suits) ? guess.suits : null;
             var h = '<table class="ct"><thead><tr><th></th>';
             for (var k = 0; k < 14; k++) h += '<th data-k="' + k + '">' + k + '</th>';
             // Per-suit E is shown as double-dummy / blind (dd / sd); "line" is the recommended blind play.
@@ -1406,6 +1433,11 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 for (var k = 0; k < 14; k++) h += '<td>' + pctCell(arr[k] || 0) + '</td>';
                 h += '<td class="etr">' + etr(arr).toFixed(1) + (sdArr ? ' <span class="eb">/ ' + etr(sdArr).toFixed(1) + '</span>' : '') + '</td>';
                 var tip = tips && tips[i];
+                var gu = guessSuits && guessSuits[o[0]];
+                if (gu) {
+                    var clause = 'Blind two-way guess for the ' + leadLabel(gu.card) + ' — a misguess costs about ' + gu.tax + '%.';
+                    tip = tip ? (tip + '  ·  ' + clause) : clause;
+                }
                 h += '<td class="ln"' + (tip ? ' data-tip="' + escAttr(tip) + '"' : '') + '>' + (lines ? lineLabel(lines[i]) : '') + '</td></tr>';
                 // Blue single-dummy sub-row: the recommended blind line's spread for THIS suit (the E
                 // blind mean above, expanded to a per-trick shape). Shifted left of the black ceiling row
@@ -1457,8 +1489,36 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // callers: opening the panel, resize); during a slide NAV the caller instead waits for the
         // scale(0.9->1) transition to finish before positioning (measuring par mid-transition mis-placed
         // the panel).
+        // Lock the N/S↔E/W toggle to the active board's real known side: on a 2-hand board only one side is
+        // meaningful (the other is that pair duplicated), so hide the wrong button + separator and force
+        // ccaSide; a full deal ('all') shows both. Runs before sideData so ccaSide is settled first.
+        function syncSideToggle() {
+            var el = activeCombo();
+            var known = el ? el._known : 'all';
+            var lock = known === 'ns' || known === 'ew';
+            var prev = ccaSide;
+            if (lock) ccaSide = known;
+            if (nsBtn) { nsBtn.style.display = (lock && known !== 'ns') ? 'none' : ''; nsBtn.classList.toggle('sel', ccaSide === 'ns'); }
+            if (ewBtn) { ewBtn.style.display = (lock && known !== 'ew') ? 'none' : ''; ewBtn.classList.toggle('sel', ccaSide === 'ew'); }
+            var sep = document.querySelector('.cca-side .sidesep'); if (sep) sep.style.display = lock ? 'none' : '';
+            if (ccaSide !== prev) combos.forEach(comboLine); // refresh inline badges to the locked side
+        }
+        // Show the Exact↔Blind mode toggle only when the active board has a blind advisor baked (a full deal
+        // rendered with --sample); on boards without it, force exact so the band never reads a missing grid.
+        function syncModeToggle() {
+            var el = activeCombo();
+            var hasBlind = !!(el && el._blind);
+            var modeEl = document.getElementById('nc-cca-mode');
+            if (modeEl) modeEl.hidden = !hasBlind;
+            if (!hasBlind) ccaMode = 'exact';
+            var exBtn = document.getElementById('nc-cca-exact'), blBtn = document.getElementById('nc-cca-blind');
+            if (exBtn) exBtn.classList.toggle('sel', ccaMode === 'exact');
+            if (blBtn) blBtn.classList.toggle('sel', ccaMode === 'blind');
+        }
         function renderCca(pos) {
             if (!ccaOpen) return;
+            syncSideToggle();
+            syncModeToggle();
             var el = activeCombo(), S = el && sideData(el);
             buildLeadOptions(el);
             if (!S || !S.total) {
@@ -1560,6 +1620,17 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         }
         if (nsBtn) nsBtn.onclick = function () { setSide('ns'); };
         if (ewBtn) ewBtn.onclick = function () { setSide('ew'); };
+        // Exact ↔ Blind mode (full deals only): switch the verdict band between double-dummy and the
+        // sampled "play it as if you can't see all four hands" advisor for the shown side.
+        var exactBtn = document.getElementById('nc-cca-exact'), blindBtn = document.getElementById('nc-cca-blind');
+        function setMode(m) {
+            ccaMode = m;
+            if (exactBtn) exactBtn.classList.toggle('sel', m === 'exact');
+            if (blindBtn) blindBtn.classList.toggle('sel', m === 'blind');
+            renderCca(true);
+        }
+        if (exactBtn) exactBtn.onclick = function () { setMode('exact'); };
+        if (blindBtn) blindBtn.onclick = function () { setMode('blind'); };
         // IMPs <-> MPs objective toggle: global, re-render overlay + inline lines.
         var impsBtn = document.getElementById('nc-cca-imps'), mpsBtn = document.getElementById('nc-cca-mps');
         function setObj(o) {
@@ -1583,15 +1654,32 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         function leadLabel(c) { var su = c.charAt(c.length - 1).toLowerCase(); return c.slice(0, c.length - 1) + (STRAIN_GLYPH[su] || su); }
         // The sample source for the active board & condition: the opening-lead sub-grid when a lead is
         // picked (and present for this board), else the unconditioned base grid. Both carry {g, n}.
+        // Resolve the verdict-band source for the active board, side, mode, and opening lead into one
+        // descriptor {g, n, exact, lvl, strain, ach, taxpts, pvt, note}. Full deals carry BOTH an exact
+        // double-dummy grid per side (el._sim.ns/ew spikes) and, when sampled, a blind advisor per side
+        // (el._blind.ns/ew); the mode toggle picks between them. 2-hand boards carry the flat sample grid.
         function activeSimSrc(el) {
-            var sim = el && el._sim;
+            var sim = el && el._sim, blind = el && el._blind;
+            // Full-deal BLIND mode: the DDS-sampled advisor for the shown side (same shape as 2-hand).
+            if (blind && ccaMode === 'blind') {
+                var bs = blind[ccaSide] || blind.ns || blind.ew;
+                if (bs) return { g: bs.g, n: bs.n, exact: false, lvl: bs.lvl, strain: bs.strain,
+                                 ach: bs.ach, taxpts: bs.taxpts, pvt: bs.pvt, note: null };
+            }
             if (!sim) return null;
+            // Full-deal EXACT: one spike grid per side, so the band follows the N/S↔E/W toggle.
+            if (sim.exact) {
+                return { g: sim[ccaSide] || sim.ns, n: 1, exact: true, lvl: sim.lvl, strain: sim.strain, note: null };
+            }
+            // 2-hand sample grid, optionally conditioned on an opening lead.
+            var base = { g: sim.g, n: sim.n, exact: false, lvl: sim.lvl, strain: sim.strain,
+                         ach: sim.ach, taxpts: sim.taxpts, pvt: sim.pvt, note: null };
             if (ccaLead && el._leads && el._leads.seats) {
                 var cards = el._leads.seats[ccaLead.seat];
                 var lc = cards && cards[ccaLead.card];
-                if (lc) return { g: lc.g, n: lc.n, note: ccaLead.seat + ' led ' + leadLabel(ccaLead.card) };
+                if (lc) { base.g = lc.g; base.n = lc.n; base.note = ccaLead.seat + ' led ' + leadLabel(ccaLead.card); }
             }
-            return { g: sim.g, n: sim.n, note: null };
+            return base;
         }
         function simBand() {
             if (!ccaSimBand) return;
@@ -1602,12 +1690,29 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             var se = Math.sqrt(Math.max(0, mk * (1 - mk)) / src.n) * 100;
             var S = sideData(el);
             var ceil = S && S.total ? etr(S.total) : null, blind = S && S.totalSd ? etr(S.totalSd) : null;
-            var s = '<b>Whole-hand (simulated):</b> ' + contractLabel(t, ccaStrain) +
+            var exact = src.exact;
+            var s;
+            if (exact) {
+                // Fully-known deal, exact mode: the grid is a double-dummy SPIKE (make is 1 or 0), so there
+                // is no sampling ±, no deal count, and no misguess-tax rung (both defenders are visible).
+                s = '<b>Double-dummy (exact):</b> ' + contractLabel(t, ccaStrain) +
+                    (mk >= 0.5 ? ' <b>makes</b>' : ' <b>fails</b>') +
+                    ' <span class="lead-note">(known deal, both defenders visible)</span>';
+            } else {
+                s = '<b>Whole-hand (simulated):</b> ' + contractLabel(t, ccaStrain) +
                     ' makes <b>' + (mk * 100).toFixed(0) + '%</b> (±' + se.toFixed(0) + '%, ' + src.n + ' deals)';
-            if (src.note) s += ' <span class="lead-note">given ' + src.note + '</span>';
+                if (src.note) s += ' <span class="lead-note">given ' + src.note + '</span>';
+                // The achievable (misguess-tax) rung: the make-% docked for the dominant blind two-way guess.
+                // Baked per contract, so only shown when the picker sits on that exact (strain, level) with no
+                // opening-lead condition (the tax is unconditioned). Its gap below the make-% is the guess tax.
+                if (src.ach != null && !ccaLead && ccaStrain === src.strain && t === src.lvl + 6) {
+                    s += ' · achievable <b>' + src.ach.toFixed(0) + '%</b> playing blind' +
+                         (src.pvt ? ' <span class="lead-note">(' + leadLabel(src.pvt) + ' guess, −' + src.taxpts.toFixed(0) + ')</span>' : '');
+                }
+            }
             s += '<span class="recon">' + (ceil != null ? 'ceiling ' + ceil.toFixed(1) + ' · ' : '') +
                  (blind != null ? 'blind ' + blind.toFixed(1) + ' · ' : '') +
-                 'simulated ' + etr(g).toFixed(1) + '</span>';
+                 (exact ? 'double-dummy ' : 'simulated ') + etr(g).toFixed(1) + '</span>';
             ccaSimBand.innerHTML = s;
             ccaSimBand.hidden = false;
         }
@@ -1676,6 +1781,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
 
         window.addEventListener('resize', function () { show(idx); });
         applyAll();
+        syncSideToggle(); // lock ccaSide to board 0's known side before the first inline-badge render
         combos.forEach(comboLine);
         show(0);
     })();
