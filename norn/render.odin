@@ -871,14 +871,15 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         .cca-sub { color: #888; font-size: 0.85rem; }
         /* Small pill buttons shared by the head (help / close), the N/S<->E/W side toggle, and the
            IMPs<->MPs objective toggle. */
-        .cca-head .x, .cca-head .help, .cca-side .sidebtn, .cca-obj .sidebtn, .cca-strain .sidebtn {
+        .cca-head .x, .cca-head .help, .cca-side .sidebtn, .cca-obj .sidebtn, .cca-strain .sidebtn, .cca-mode .sidebtn {
             font: inherit; font-size: 0.8rem; border: 1px solid var(--line); background: #f4f4f4;
             color: #555; border-radius: 5px; padding: 0.05rem 0.45rem; cursor: pointer; line-height: 1;
         }
         .cca-side { margin-left: auto; }
-        .cca-side, .cca-obj, .cca-strain { display: flex; align-items: center; gap: 0.15rem; }
-        .cca-side .sidebtn.sel, .cca-obj .sidebtn.sel, .cca-strain .sidebtn.sel { background: var(--sel); color: #fff; border-color: var(--sel); }
-        .cca-side .sidesep, .cca-obj .sidesep { color: #bbb; }
+        .cca-side, .cca-obj, .cca-strain, .cca-mode { display: flex; align-items: center; gap: 0.15rem; }
+        .cca-mode[hidden] { display: none; }
+        .cca-side .sidebtn.sel, .cca-obj .sidebtn.sel, .cca-strain .sidebtn.sel, .cca-mode .sidebtn.sel { background: var(--sel); color: #fff; border-color: var(--sel); }
+        .cca-side .sidesep, .cca-obj .sidesep, .cca-mode .sidesep { color: #bbb; }
         /* Contract-strain picker (only shown on a board carrying baked DDS-sample data). The red suits get
            their colour so the strain reads at a glance. */
         .cca-strain { flex-wrap: wrap; }
@@ -1160,7 +1161,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             <h3>Winner count &amp; combinations</h3>
             <p>Under the board number the panel shows your <b>sure tricks</b> &mdash; the tricks guaranteed on
                <i>every</i> layout &mdash; and, when that falls short of the slider target, how many more you must
-               <b>develop</b>. A <span style="color:#b8860b">&#9670;</span> beside a suit's <b>line</b> means the
+               <b>develop</b>. A <span style="color:#b8860b">ⓘ</span> beside a suit's <b>line</b> means the
                suit is a named <b>combination</b> (a two-way finesse, 8-ever/9-never, &hellip;); hover the line
                word to read it. With sampled data the green band also flags the <b>worst opening lead</b> &mdash;
                the defender card that beats the contract most often.</p>
@@ -1363,6 +1364,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         var ccaObj = 'imps'; // scoring objective: 'imps' (make the target) or 'mps' (chase overtricks)
         var ccaStrain = 'nt'; // contract strain for the green whole-hand verdict (2-hand advisor only)
         var ccaLead = null;   // {seat, card} opening-lead condition, or null for the unconditioned verdict
+        var ccaLeadTouched = false; // set once the user changes the lead picker, so the recorded-lead auto-seed stops
         function parseAttr(el, a) { try { return JSON.parse(el.getAttribute(a)); } catch (e) { return null; } }
         // What to play for, given the analysed side S and the contract target. IMPs just makes the
         // target (safety). MPs chases overtricks: aim as high as the odds stay better than even —
@@ -1420,6 +1422,18 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             el._blind = simEl ? parseAttr(simEl, 'data-sim-blind') : null;
         });
         function sideData(el) { return el._sides ? el._sides[ccaSide] : null; }
+        // The opening-lead sub-grids in force for the active board, side, and mode. A 2-hand board carries
+        // them flat on el._leads. A full deal carries them per side inside the BLIND advisor (el._blind[side]
+        // .leads) — so the lead picker appears ONLY in Blind mode (exact mode returns null -> picker hidden),
+        // and follows the N/S<->E/W toggle to that side's real defenders.
+        function activeLeads(el) {
+            if (!el) return null;
+            if (el._blind && ccaMode === 'blind') {
+                var bs = el._blind[ccaSide] || el._blind.ns || el._blind.ew;
+                return (bs && bs.leads) ? bs.leads : null;
+            }
+            return el._leads || null;
+        }
         // The inline one-liner for a board: CCA badge (with the analysed side) + P(>= target), both the
         // double-dummy ceiling (DD) and the achievable single-dummy optimum (SD, from the adaptive curve).
         function comboLine(el) {
@@ -1469,7 +1483,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 }
                 // Flag a named combination on the line cell so the reader knows a tooltip is worth reading.
                 var lnTxt = lines ? lineLabel(lines[i]) : '';
-                if (note) lnTxt += ' <span class="cflag" title="named combination">◆</span>';
+                if (note) lnTxt += ' <span class="cflag" title="named combination — hover for the note">ⓘ</span>';
                 h += '<td class="ln"' + (tip ? ' data-tip="' + escAttr(tip) + '"' : '') + '>' + lnTxt + '</td></tr>';
                 // Blue single-dummy sub-row: the recommended blind line's spread for THIS suit (the E
                 // blind mean above, expanded to a per-trick shape). Shifted left of the black ceiling row
@@ -1777,7 +1791,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // whose make-% at (target, strain) is lowest — the killing lead. min_n=20 guards a rare card's tiny
         // sub-sample. Returns {pct, seatCard} or null (no lead data / none clears the guard).
         function worstLead(el, t, strain) {
-            var leads = el && el._leads; if (!leads || !leads.seats) return null;
+            var leads = activeLeads(el); if (!leads || !leads.seats) return null;
             var best = null;
             ['N', 'E', 'S', 'W'].forEach(function (sk) {
                 var cards = leads.seats[sk]; if (!cards) return;
@@ -1796,13 +1810,25 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // descriptor {g, n, exact, lvl, strain, ach, taxpts, pvt, note}. Full deals carry BOTH an exact
         // double-dummy grid per side (el._sim.ns/ew spikes) and, when sampled, a blind advisor per side
         // (el._blind.ns/ew); the mode toggle picks between them. 2-hand boards carry the flat sample grid.
+        // Condition a sampled source on the picked opening lead (if any and present for the active leads),
+        // swapping in that lead's sub-grid + honest sub-n. Shared by the blind and 2-hand sample sources.
+        function condLead(el, base) {
+            var leads = activeLeads(el);
+            if (ccaLead && leads && leads.seats) {
+                var cards = leads.seats[ccaLead.seat];
+                var lc = cards && cards[ccaLead.card];
+                if (lc) { base.g = lc.g; base.n = lc.n; base.note = ccaLead.seat + ' led ' + leadLabel(ccaLead.card); }
+            }
+            return base;
+        }
         function activeSimSrc(el) {
             var sim = el && el._sim, blind = el && el._blind;
-            // Full-deal BLIND mode: the DDS-sampled advisor for the shown side (same shape as 2-hand).
+            // Full-deal BLIND mode: the DDS-sampled advisor for the shown side (same shape as 2-hand), so it
+            // takes the same opening-lead conditioning (leads baked per side inside el._blind[side]).
             if (blind && ccaMode === 'blind') {
                 var bs = blind[ccaSide] || blind.ns || blind.ew;
-                if (bs) return { g: bs.g, n: bs.n, exact: false, lvl: bs.lvl, strain: bs.strain,
-                                 ach: bs.ach, taxpts: bs.taxpts, pvt: bs.pvt, note: null };
+                if (bs) return condLead(el, { g: bs.g, n: bs.n, exact: false, lvl: bs.lvl, strain: bs.strain,
+                                 ach: bs.ach, taxpts: bs.taxpts, pvt: bs.pvt, note: null });
             }
             if (!sim) return null;
             // Full-deal EXACT: one spike grid per side, so the band follows the N/S↔E/W toggle.
@@ -1810,14 +1836,8 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 return { g: sim[ccaSide] || sim.ns, n: 1, exact: true, lvl: sim.lvl, strain: sim.strain, note: null };
             }
             // 2-hand sample grid, optionally conditioned on an opening lead.
-            var base = { g: sim.g, n: sim.n, exact: false, lvl: sim.lvl, strain: sim.strain,
-                         ach: sim.ach, taxpts: sim.taxpts, pvt: sim.pvt, note: null };
-            if (ccaLead && el._leads && el._leads.seats) {
-                var cards = el._leads.seats[ccaLead.seat];
-                var lc = cards && cards[ccaLead.card];
-                if (lc) { base.g = lc.g; base.n = lc.n; base.note = ccaLead.seat + ' led ' + leadLabel(ccaLead.card); }
-            }
-            return base;
+            return condLead(el, { g: sim.g, n: sim.n, exact: false, lvl: sim.lvl, strain: sim.strain,
+                         ach: sim.ach, taxpts: sim.taxpts, pvt: sim.pvt, note: null });
         }
         function simBand() {
             if (!ccaSimBand) return;
@@ -1868,7 +1888,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         // option). Hidden when the board has no lead data. Preserves the current pick if still valid.
         function buildLeadOptions(el) {
             if (!ccaLeadSel || !ccaLeadWrap) return;
-            var leads = el && el._leads;
+            var leads = activeLeads(el);
             if (!leads || !leads.seats) { ccaLeadWrap.hidden = true; return; }
             ccaLeadWrap.hidden = false;
             var html = '<option value="">none</option>';
@@ -1879,6 +1899,13 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 });
             });
             ccaLeadSel.innerHTML = html;
+            // Auto-seed from the recorded opening lead (baked per side on the blind advisor) until the user
+            // picks for themselves. Only on the side the lead defends; a card absent from this side's options
+            // is dropped by the has-check below.
+            if (!ccaLeadTouched && !ccaLead && ccaMode === 'blind' && el && el._blind) {
+                var bl = el._blind[ccaSide];
+                if (bl && bl.lead && bl.lead.seat && bl.lead.card) ccaLead = { seat: bl.lead.seat, card: bl.lead.card };
+            }
             var want = ccaLead ? (ccaLead.seat + '|' + ccaLead.card) : '', has = false;
             for (var i = 0; i < ccaLeadSel.options.length; i++) { if (ccaLeadSel.options[i].value === want) { has = true; break; } }
             if (!has) { ccaLead = null; want = ''; }
@@ -1886,6 +1913,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         }
         if (ccaLeadSel) ccaLeadSel.onchange = function () {
             var v = this.value;
+            ccaLeadTouched = true; // user has taken over the pick; stop auto-seeding the recorded lead
             if (!v) { ccaLead = null; } else { var p = v.split('|'); ccaLead = { seat: p[0], card: p[1] }; }
             simBand();
         };

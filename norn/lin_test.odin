@@ -36,6 +36,27 @@ test_parse_lin_full_record :: proc(t: ^testing.T) {
 	testing.expect_value(t, lin_suit_mask(board.deal[.East], .Spades), u16(0x206))
 }
 
+// A `pc|` play token surfaces the opening lead: the first played card, attributed to whichever seat holds
+// it (here ♣A, held by North). Later `pc|` tokens are ignored — only the first (the opening lead) matters.
+@(test)
+test_parse_lin_opening_lead :: proc(t: ^testing.T) {
+	rec := "pn|a,b,c,d|md|3SAKTHK96DKT65C973,SQ875HAQT4D97CKT5,S962H8752DQJ83CA6,SJ43HJ3DA42CQJ842|pc|CA|pc|C3|sv|o|"
+	board, err := parse_lin_deal(rec)
+	testing.expect_value(t, err, Lin_Parse_Error.None)
+	testing.expect(t, board.has_opening_lead)
+	testing.expect_value(t, board.opening_lead, make_card(.Clubs, .Ace))
+	testing.expect_value(t, board.opening_leader, Seat.North)
+}
+
+// No play tokens -> no opening lead recorded (the deal still parses).
+@(test)
+test_parse_lin_no_opening_lead :: proc(t: ^testing.T) {
+	rec := "pn|a,b,c,d|md|3SAKTHK96DKT65C973,SQ875HAQT4D97CKT5,S962H8752DQJ83CA6,SJ43HJ3DA42CQJ842|sv|o|"
+	board, err := parse_lin_deal(rec)
+	testing.expect_value(t, err, Lin_Parse_Error.None)
+	testing.expect(t, !board.has_opening_lead)
+}
+
 // Three hands given: the fourth (East) is derived from the 13 unused cards and equals what the
 // four-hand form would have placed there.
 @(test)

@@ -103,7 +103,39 @@ parse_lin_deal :: proc(text: string) -> (board: Parsed_Board, err: Lin_Parse_Err
 	case:
 		return {}, .Wrong_Hand_Count
 	}
+	// The opening lead, if the record carried a play sequence: the first `pc|` card. LIN always gives a full
+	// deal, so its holder (the leader) is always identifiable — set_opening_lead places it.
+	if card, ok := lin_first_pc_card(text); ok {
+		set_opening_lead(&board, card)
+	}
 	return board, .None
+}
+
+// The card in the first `pc|` token (the opening lead) as `<suit-letter><rank>`, e.g. `pc|S4|` -> ♠4. `ok`
+// is false when there is no `pc|` token or its value does not parse as a card. LIN ranks are single
+// characters (ten is `T`, never `10`), so the value is exactly two bytes.
+@(private = "file")
+lin_first_pc_card :: proc(text: string) -> (card: Card, ok: bool) {
+	pi := strings.index(text, "pc|")
+	if pi < 0 {
+		return {}, false
+	}
+	val := text[pi + len("pc|"):]
+	if bar := strings.index_byte(val, '|'); bar >= 0 {
+		val = val[:bar]
+	}
+	if len(val) < 2 {
+		return {}, false
+	}
+	suit, sok := suit_from_letter(val[0])
+	if !sok {
+		return {}, false
+	}
+	rank, rok := rank_from_char(val[1])
+	if !rok {
+		return {}, false
+	}
+	return make_card(suit, rank), true
 }
 
 // Extract the `md` value from `text`: the token after `md|`, up to the next `|` (or end of input). If

@@ -30,8 +30,30 @@ import "core:strings"
 // written `-` (unknown) are left unspecified and excluded from `known`. A standard 4-hand tag yields
 // `known == {.North, .East, .South, .West}`; a 2-hand declarer+dummy tag yields just those two seats.
 Parsed_Board :: struct {
-	deal:  Deal,
-	known: bit_set[Seat],
+	deal:             Deal,
+	known:            bit_set[Seat],
+	// The recorded opening lead, when the source carried a play sequence (LIN `pc|`, PBN `[Play]`) AND the
+	// led card sits in a KNOWN hand (so its leader is identifiable — always true for a full deal, never for
+	// a 2-hand board whose lead belongs to an unspecified defender). `opening_leader` is the seat holding it.
+	opening_lead:     Card,
+	opening_leader:   Seat,
+	has_opening_lead: bool,
+}
+
+// Record `card` as the board's opening lead: find the KNOWN seat that holds it and mark it the leader. A
+// no-op (has_opening_lead stays false) when the card is in no known hand — e.g. a 2-hand board whose lead
+// belongs to an unspecified defender. Called by the LIN / PBN readers once the deal is built.
+set_opening_lead :: proc(board: ^Parsed_Board, card: Card) {
+	for seat in board.known {
+		for c in board.deal[seat] {
+			if c == card {
+				board.opening_lead = card
+				board.opening_leader = seat
+				board.has_opening_lead = true
+				return
+			}
+		}
+	}
 }
 
 // Why a PBN `[Deal]` tag failed to parse. `None` accompanies a successful parse.
@@ -101,7 +123,40 @@ parse_pbn_deal :: proc(text: string) -> (board: Parsed_Board, err: Pbn_Parse_Err
 	if board.known == {} {
 		return {}, .No_Hands
 	}
+	if card, ok := pbn_first_play_card(text); ok {
+		set_opening_lead(&board, card)
+	}
 	return board, .None
+}
+
+// The opening-lead card from a `[Play "X"]` block, if present: the first whitespace-delimited card token
+// (suit letter + rank, e.g. `HK`) after the tag. `ok` is false when there is no `[Play]` tag or its first
+// token does not parse as a card. The leader SEAT is not read here — set_opening_lead derives it from who
+// holds the card — so the `[Play "X"]` seat annotation is not trusted.
+@(private = "file")
+pbn_first_play_card :: proc(text: string) -> (card: Card, ok: bool) {
+	pi := strings.index(text, `[Play "`)
+	if pi < 0 {
+		return {}, false
+	}
+	rest := text[pi:]
+	rb := strings.index_byte(rest, ']')
+	if rb < 0 {
+		return {}, false
+	}
+	rest = strings.trim_left_space(rest[rb + 1:]) // past the tag's closing ]
+	if len(rest) < 2 {
+		return {}, false
+	}
+	suit, sok := suit_from_letter(rest[0])
+	if !sok {
+		return {}, false
+	}
+	rank, rok := rank_from_char(rest[1])
+	if !rok {
+		return {}, false
+	}
+	return make_card(suit, rank), true
 }
 
 // Extract the deal value string from `text`: the part inside `[Deal "..."]` if that tag is present,

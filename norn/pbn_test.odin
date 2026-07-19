@@ -39,6 +39,36 @@ test_parse_pbn_full_deal_roundtrip :: proc(t: ^testing.T) {
 	}
 }
 
+// A `[Play]` block surfaces the opening lead: its first card token, attributed to whichever seat holds it.
+// Built off a rendered full deal (guaranteed valid 52 cards) with East's first card appended as the lead.
+// Absent a `[Play]` block, no opening lead is recorded.
+@(test)
+test_parse_pbn_opening_lead :: proc(t: ^testing.T) {
+	original := deal_from_deck(full_deck())
+	b := strings.builder_make()
+	defer strings.builder_destroy(&b)
+	render_deal_pbn(&b, original)
+
+	// The deal alone: no play sequence -> no opening lead.
+	deal_only := strings.clone(strings.to_string(b))
+	defer delete(deal_only)
+	plain, perr := parse_pbn_deal(deal_only)
+	testing.expect_value(t, perr, Pbn_Parse_Error.None)
+	testing.expect(t, !plain.has_opening_lead)
+
+	// Append a `[Play "E"]` block whose first card is East's first card, written as a PBN token.
+	lead := original[.East][0]
+	strings.write_string(&b, "\n[Play \"E\"]\n")
+	strings.write_rune(&b, suit_letter(card_suit(lead)))
+	strings.write_rune(&b, rank_char(card_rank(lead)))
+	strings.write_string(&b, " -\n")
+	board, err := parse_pbn_deal(strings.to_string(b))
+	testing.expect_value(t, err, Pbn_Parse_Error.None)
+	testing.expect(t, board.has_opening_lead)
+	testing.expect_value(t, board.opening_lead, lead)
+	testing.expect_value(t, board.opening_leader, Seat.East)
+}
+
 // The bare deal value (no surrounding `[Deal "..."]` tag) is accepted too.
 @(test)
 test_parse_pbn_bare_value :: proc(t: ^testing.T) {
