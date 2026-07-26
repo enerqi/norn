@@ -108,7 +108,62 @@ parse_lin_deal :: proc(text: string) -> (board: Parsed_Board, err: Lin_Parse_Err
 	if card, ok := lin_first_pc_card(text); ok {
 		set_opening_lead(&board, card)
 	}
+	// The contract, when the record carried an auction (`mb|` tokens): derive its final bid + rule-correct
+	// declarer, keyed off the BBO dealer digit (value[0], already validated 1..4 above). No auction — a
+	// bare `md` deal, or an all-pass auction — leaves has_contract false.
+	if dealer, dok := lin_dealer_seat(value[0]); dok {
+		calls := lin_auction_calls(text, context.temp_allocator)
+		if lvl, strain, declarer, cok := derive_contract(dealer, calls[:]); cok {
+			board.contract_level = lvl
+			board.contract_strain = strain
+			board.declarer = declarer
+			board.has_contract = true
+		}
+	}
 	return board, .None
+}
+
+// Map BBO's dealer digit to a Seat: 1=South, 2=West, 3=North, 4=East (BBO's own numbering, NOT the seat
+// enum order). ok=false for any other byte.
+@(private = "file")
+lin_dealer_seat :: proc "contextless" (d: u8) -> (seat: Seat, ok: bool) {
+	switch d {
+	case '1':
+		return .South, true
+	case '2':
+		return .West, true
+	case '3':
+		return .North, true
+	case '4':
+		return .East, true
+	}
+	return .North, false
+}
+
+// Collect the auction's call tokens in order — the value of each `mb|` token (a bid `1S`, a pass `p`, a
+// double `d`, a redouble `r`) left to right. The returned strings alias into `text`; the backing dynamic
+// array is the caller's to free (pass `context.temp_allocator` to avoid that). Empty when there is no
+// auction in the record.
+@(private = "file")
+lin_auction_calls :: proc(text: string, allocator := context.allocator) -> [dynamic]string {
+	calls := make([dynamic]string, allocator)
+	rest := text
+	for {
+		mi := strings.index(rest, "mb|")
+		if mi < 0 {
+			break
+		}
+		rest = rest[mi + len("mb|"):]
+		val := rest
+		if bar := strings.index_byte(rest, '|'); bar >= 0 {
+			val = rest[:bar]
+			rest = rest[bar + 1:]
+		} else {
+			rest = ""
+		}
+		append(&calls, val)
+	}
+	return calls
 }
 
 // The card in the first `pc|` token (the opening lead) as `<suit-letter><rank>`, e.g. `pc|S4|` -> ♠4. `ok`

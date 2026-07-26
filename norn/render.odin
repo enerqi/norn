@@ -941,6 +941,9 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
            dimmed + no border so it reads as subordinate to the black ceiling row directly above it. */
         .ct .suit-sd td { color: #6b93e0; border: 0; font-size: 0.9em; padding-top: 0; }
         .ct .suit-sd .sl { color: #6b93e0; font-weight: 400; font-size: 0.9em; padding-left: 0.5rem; }
+        /* Gold "book" sub-row: the published (encyclopedia) shape, shown only on covered holdings. */
+        .ct .suit-bk td { color: #b8860b; border: 0; font-size: 0.9em; padding-top: 0; }
+        .ct .suit-bk .sl { color: #b8860b; font-weight: 400; font-size: 0.9em; padding-left: 0.5rem; cursor: help; }
         .ct .etr { color: #a0a0a0; padding-left: 0.5rem; min-width: 5ch; }
         .ct .etr .eb { color: #2f6fd8; }  /* the blind (single-dummy) expected tricks */
         .ct .ln { text-align: left; color: #777; padding-left: 0.55rem; min-width: 5ch; font-size: 0.92em; }
@@ -1393,6 +1396,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 return { data: data, sd: sd, atl: parseAttr(el, 'data-' + pfx + '-atl'),
                          lines: parseAttr(el, 'data-' + pfx + '-lines'), tips: parseAttr(el, 'data-' + pfx + '-tips'),
                          notes: parseAttr(el, 'data-' + pfx + '-notes'), floor: parseAttr(el, 'data-' + pfx + '-floor'),
+                         book: parseAttr(el, 'data-' + pfx + '-book'),
                          total: tot || comboTotal(data), totalSd: totsd || (sd ? comboTotal(sd) : null) };
             }
             el._sides = { ns: side('ns'), ew: side('ew') };
@@ -1456,7 +1460,7 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         function lineLabel(n) { return n === 'top-down' ? 'cash' : n === 'duck-one' ? 'duck' : n === 'finesse' ? 'finesse' : (n || ''); }
         function escAttr(s) { return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
         function ctTableHTML(S) {
-            var data = S.data, total = S.total, totalSd = S.totalSd, atl = S.atl, sd = S.sd, lines = S.lines, tips = S.tips, notes = S.notes;
+            var data = S.data, total = S.total, totalSd = S.totalSd, atl = S.atl, sd = S.sd, lines = S.lines, tips = S.tips, notes = S.notes, book = S.book;
             var rows = [['s', '♠'], ['h', '♥'], ['d', '♦'], ['c', '♣']];
             // Blind two-way guess notes for the shown side (Option C1): appended to the matching suit tip.
             var elg = activeCombo(), guess = elg && elg._simGuess;
@@ -1492,6 +1496,16 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 if (sdArr) {
                     h += '<tr class="suit-sd"><td class="sl">sd</td>';
                     for (var k = 0; k < 14; k++) h += '<td>' + pctCell(sdArr[k] || 0) + '</td>';
+                    h += '<td class="etr"></td><td class="ln"></td></tr>';
+                }
+                // Gold "book" sub-row: the PUBLISHED suit-combination shape (encyclopedia) for this holding,
+                // present only where the book covers it. Sits below our blue engine sd row — the book's mass
+                // usually sits higher (it plays the adaptive line our fixed lines can't), which is the line-gap
+                // made visible. Cells are P(exactly k), blank where the book gives no target at that count.
+                var bkArr = book && book[i]; // book is an array in suit order (like lines/tips), not letter-keyed
+                if (bkArr) {
+                    h += '<tr class="suit-bk"><td class="sl" title="Textbook (published) chances vs best defence">bk</td>';
+                    for (var k = 0; k < 14; k++) h += '<td>' + pctCell(bkArr[k] || 0) + '</td>';
                     h += '<td class="etr"></td><td class="ln"></td></tr>';
                 }
             });
@@ -1817,7 +1831,13 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             if (ccaLead && leads && leads.seats) {
                 var cards = leads.seats[ccaLead.seat];
                 var lc = cards && cards[ccaLead.card];
-                if (lc) { base.g = lc.g; base.n = lc.n; base.note = ccaLead.seat + ' led ' + leadLabel(ccaLead.card); }
+                if (lc) {
+                    base.g = lc.g; base.n = lc.n; base.note = ccaLead.seat + ' led ' + leadLabel(ccaLead.card);
+                    // Per-lead conditioned guess tax (option (a)), baked per lead card for the default contract
+                    // when the sub-sample is robust. Absent (thin n) -> simBand falls back to the lead-
+                    // independent note (b). tax may be ~0: the lead located the honour, resolving the guess.
+                    if (typeof lc.tax === 'number') { base.leadTax = lc.tax; base.leadPvt = lc.pvt; base.leadHasTax = true; }
+                }
             }
             return base;
         }
@@ -1861,11 +1881,28 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                     ' makes <b>' + (mk * 100).toFixed(0) + '%</b> (±' + se.toFixed(0) + '%, ' + src.n + ' deals)';
                 if (src.note) s += ' <span class="lead-note">given ' + src.note + '</span>';
                 // The achievable (misguess-tax) rung: the make-% docked for the dominant blind two-way guess.
-                // Baked per contract, so only shown when the picker sits on that exact (strain, level) with no
-                // opening-lead condition (the tax is unconditioned). Its gap below the make-% is the guess tax.
-                if (src.ach != null && !ccaLead && ccaStrain === src.strain && t === src.lvl + 6) {
-                    s += ' · achievable <b>' + src.ach.toFixed(0) + '%</b> playing blind' +
-                         (src.pvt ? ' <span class="lead-note">(' + leadLabel(src.pvt) + ' guess, −' + src.taxpts.toFixed(0) + ')</span>' : '');
+                // Baked per contract, so only meaningful when the picker sits on that exact (strain, level).
+                if (src.ach != null && ccaStrain === src.strain && t === src.lvl + 6) {
+                    if (!ccaLead) {
+                        // No lead picked: the tax IS unconditioned, so pair it with the (also unconditioned)
+                        // make-% — the gap below make-% is the guess tax.
+                        s += ' · achievable <b>' + src.ach.toFixed(0) + '%</b> playing blind' +
+                             (src.pvt ? ' <span class="lead-note">(' + leadLabel(src.pvt) + ' guess, −' + src.taxpts.toFixed(0) + ')</span>' : '');
+                    } else if (src.leadHasTax) {
+                        // A lead is picked AND a lead-CONDITIONED tax was baked (option (a)): couple it to this
+                        // lead's make-% honestly. tax≈0 means the lead located the trapped honour → guess resolved.
+                        if (src.leadTax >= 1) {
+                            s += ' · achievable <b>' + (mk * 100 - src.leadTax).toFixed(0) + '%</b> playing blind' +
+                                 ' <span class="lead-note">(' + leadLabel(src.leadPvt) + ' guess, −' + src.leadTax.toFixed(0) + ')</span>';
+                        } else {
+                            s += ' <span class="lead-note">· the lead resolves the ' + leadLabel(src.leadPvt) + ' guess</span>';
+                        }
+                    } else if (src.pvt && src.taxpts >= 1) {
+                        // A lead is picked but its sub-sample was too thin to condition the tax. Fall back to the
+                        // lead-INDEPENDENT decoupled note (option (b)): the two-way guess still exists under any lead.
+                        s += ' <span class="lead-note">· blind two-way guess still costs ≈' +
+                             src.taxpts.toFixed(0) + '% (' + leadLabel(src.pvt) + ')</span>';
+                    }
                 }
                 // Worst opening lead (aids plan D): only when no specific lead is picked (else the band already
                 // shows that lead) and the killing lead costs something material vs the current make-%.

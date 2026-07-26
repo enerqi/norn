@@ -38,6 +38,14 @@ Parsed_Board :: struct {
 	opening_lead:     Card,
 	opening_leader:   Seat,
 	has_opening_lead: bool,
+	// The contract the record names, when present. LIN: derived from the `mb|` auction (final bid + the
+	// rule-correct declarer). PBN: from `[Contract]` + `[Declarer]` tags. All three fields are meaningful
+	// only when has_contract is set — false for a bare `[Deal]` tag, a passed-out auction, or a 2-hand OCR
+	// board with no metadata. `declarer` is the seat that first named the final denomination for its side.
+	contract_level:   int, // 1..7
+	contract_strain:  Contract_Strain,
+	declarer:         Seat,
+	has_contract:     bool,
 }
 
 // Record `card` as the board's opening lead: find the KNOWN seat that holds it and mark it the leader. A
@@ -126,7 +134,69 @@ parse_pbn_deal :: proc(text: string) -> (board: Parsed_Board, err: Pbn_Parse_Err
 	if card, ok := pbn_first_play_card(text); ok {
 		set_opening_lead(&board, card)
 	}
+	// The contract, when the record carried both `[Contract]` and `[Declarer]` (a full PBN record, or the
+	// hand-ocr replay metadata). Both are required: the declarer fixes the declaring side. Absent or a
+	// passed-out `[Contract "Pass"]` leaves has_contract false.
+	if lvl, strain, cok := pbn_contract(text); cok {
+		if declarer, dok := pbn_declarer(text); dok {
+			board.contract_level = lvl
+			board.contract_strain = strain
+			board.declarer = declarer
+			board.has_contract = true
+		}
+	}
 	return board, .None
+}
+
+// The contract from a `[Contract "..."]` tag: level 1..7 plus denomination (`4H`, `3NT`, `4SX` — a
+// trailing `X`/`XX` doubling marker is ignored, as the downstream contract model carries no doubling).
+// ok=false when the tag is absent, is `Pass`/empty, or otherwise malformed.
+@(private = "file")
+pbn_contract :: proc(text: string) -> (level: int, strain: Contract_Strain, ok: bool) {
+	val, found := pbn_tag_value(text, "Contract")
+	if !found || len(val) < 2 {
+		return 0, .NoTrump, false
+	}
+	if val[0] < '1' || val[0] > '7' {
+		return 0, .NoTrump, false
+	}
+	denom := val[1:]
+	for len(denom) > 0 && (denom[len(denom) - 1] == 'X' || denom[len(denom) - 1] == 'x') {
+		denom = denom[:len(denom) - 1]
+	}
+	s, sok := contract_strain_from_token(denom)
+	if !sok {
+		return 0, .NoTrump, false
+	}
+	return int(val[0] - '0'), s, true
+}
+
+// The declarer seat from a `[Declarer "N"]` tag (N/E/S/W). ok=false when the tag is absent or its value
+// is not a seat letter.
+@(private = "file")
+pbn_declarer :: proc(text: string) -> (seat: Seat, ok: bool) {
+	val, found := pbn_tag_value(text, "Declarer")
+	if !found || len(val) < 1 {
+		return .North, false
+	}
+	return seat_from_letter(val[0])
+}
+
+// The quoted value of a `[<name> "..."]` tag, if present — a generic reader mirroring pbn_deal_value.
+// Returns "" / false when the tag is absent or has no closing quote.
+@(private = "file")
+pbn_tag_value :: proc(text: string, name: string) -> (value: string, found: bool) {
+	opener := strings.concatenate({"[", name, " \""}, context.temp_allocator)
+	di := strings.index(text, opener)
+	if di < 0 {
+		return "", false
+	}
+	rest := text[di + len(opener):]
+	q := strings.index_byte(rest, '"')
+	if q < 0 {
+		return "", false
+	}
+	return rest[:q], true
 }
 
 // The opening-lead card from a `[Play "X"]` block, if present: the first whitespace-delimited card token
