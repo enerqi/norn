@@ -903,6 +903,17 @@ HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
         .cca-sim .recon { display: block; margin-top: 0.15rem; color: #4a7d5c; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
         .cca-head .help, .cca-head .x { align-self: flex-start; }
         .cca-empty { color: #888; padding: 0.5rem 0.2rem; }
+        .cca-oppnote { color: var(--sel); font-size: 0.82rem; margin: 0 0 0.35rem; line-height: 1.3; }
+        .cca-oppnote.bad { color: #c66; }
+        .cca-opp { margin: 0.15rem 0 0.5rem; padding: 0.4rem 0.5rem; border: 1px solid var(--line); border-radius: 6px; background: rgba(0,0,0,0.02); }
+        .cca-opp .opp-lbl { display: block; color: #666; font-size: 0.78rem; line-height: 1.3; margin-bottom: 0.35rem; }
+        .opp-grid { border-collapse: collapse; }
+        .opp-grid th { color: #444; font-weight: 600; font-size: 0.9rem; padding: 0 0.2rem; text-align: center; }
+        .opp-grid td { padding: 0.12rem 0.18rem; text-align: center; }
+        .opp-grid td.dl { color: var(--sel); font-weight: 700; padding-right: 0.4rem; text-align: right; }
+        .opp-grid input { width: 2.6em; background: #fff; color: #111; border: 1px solid #aaa; border-radius: 4px; padding: 0.12rem 0.2rem; text-align: center; font: inherit; }
+        .opp-grid input:focus { outline: none; border-color: var(--sel); box-shadow: 0 0 0 2px rgba(47,111,216,0.2); }
+        #nc-opp-clear { margin-top: 0.35rem; }
         /* Help modal: a large centred card over a dimmed backdrop, laymen's explanation of the CCA. */
         .cca-help { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; padding: 1rem; }
         .cca-help[hidden] { display: none; }
@@ -1070,12 +1081,21 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             <span class="cca-lead" id="nc-cca-lead" hidden title="Condition the simulated make-% on the opening lead (a defender holding that exact card)">
                 <span class="lbl-txt">lead</span><select id="nc-cca-lead-sel"><option value="">none</option></select>
             </span>
+            <button class="x" id="nc-cca-opp-btn" hidden title="Enter a known opponent length to re-weight the odds (vacant space / a-posteriori)">&ge;</button>
             <button class="x" id="nc-cca-rows" title="Collapse the per-suit rows (show only the totals) to save height">&#9662;</button>
             <button class="x" id="nc-cca-narrow" title="Narrow the panel (keeps the hands visible on small screens; the trick table scrolls sideways)">&#8596;</button>
             <button class="help" id="nc-cca-help" title="What is this?">?</button>
             <button class="x" id="nc-cca-close" title="Close">&#10005;</button>
         </div>
         <div class="cca-sim" id="nc-cca-sim" hidden></div>
+        <div class="cca-opp" id="nc-cca-opp" hidden>
+            <span class="opp-lbl">Known opponent length &mdash; the fewest cards a defender is known to hold in a suit. The whole table is re-weighted for it (vacant space), and the blind line is re-picked.</span>
+            <table class="opp-grid"><thead><tr><th></th><th>&spades;</th><th>&hearts;</th><th>&diams;</th><th>&clubs;</th></tr></thead><tbody>
+                <tr data-def="lo"><td class="dl" id="nc-opp-lo-lbl">E</td><td><input type="number" min="0" data-def="lo" data-suit="0"></td><td><input type="number" min="0" data-def="lo" data-suit="1"></td><td><input type="number" min="0" data-def="lo" data-suit="2"></td><td><input type="number" min="0" data-def="lo" data-suit="3"></td></tr>
+                <tr data-def="hi"><td class="dl" id="nc-opp-hi-lbl">W</td><td><input type="number" min="0" data-def="hi" data-suit="0"></td><td><input type="number" min="0" data-def="hi" data-suit="1"></td><td><input type="number" min="0" data-def="hi" data-suit="2"></td><td><input type="number" min="0" data-def="hi" data-suit="3"></td></tr>
+            </tbody></table>
+            <button class="sidebtn" id="nc-opp-clear">clear</button>
+        </div>
         <div id="nc-cca-body"></div>
         <div class="cca-foot">
             <span class="ct-head" id="nc-cca-headline"></span>
@@ -1168,6 +1188,21 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                suit is a named <b>combination</b> (a two-way finesse, 8-ever/9-never, &hellip;); hover the line
                word to read it. With sampled data the green band also flags the <b>worst opening lead</b> &mdash;
                the defender card that beats the contract most often.</p>
+            <h3>Known opponent length (vacant space)</h3>
+            <p>The default figures assume you know <i>nothing</i> about the opponents' shape: every split of their
+               cards is weighted only by how likely it is a priori. Often you know more &mdash; a defender
+               pre-empted, showed out, or the bidding marked length. The <b>&ge;</b> button (top right, on boards
+               that support it) opens a little grid: two rows, one per defender, four suit columns. Type the
+               <b>fewest</b> cards a defender is known to hold in a suit &mdash; e.g. a <b>3&hearts;</b> opener sitting
+               East is "E &hearts; &ge; 6".</p>
+            <p>The whole table then re-weights for it. Knowing one defender is <i>long</i> in a suit makes them
+               <i>short</i> elsewhere, so a missing queen is more likely with their partner &mdash; and the tool
+               shifts every suit's odds and <b>re-picks the blind line</b> to match (a finesse can reverse
+               direction, or give way to cashing out). It reasons from a <i>minimum</i>, not an exact count, so
+               "&ge; 5" correctly covers 5, 6, 7&hellip;. Enter both defenders' minimums in a suit and it couples
+               them. If your numbers can't both be true (they need more cards than the suit holds) the panel says so
+               and keeps the plain table. <b>clear</b>, or blanking the cells, returns to the a-priori figures;
+               moving to another board clears them automatically (they belong to one holding).</p>
             <h3>Panel layout</h3>
             <p>Two buttons at the top right resize the panel when it crowds the cards on a small screen:
                <b>&#8596;</b> <i>narrow</i> caps the width so it stops covering the hands (the trick table then
@@ -1368,6 +1403,11 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
         var ccaStrain = 'nt'; // contract strain for the green whole-hand verdict (2-hand advisor only)
         var ccaLead = null;   // {seat, card} opening-lead condition, or null for the unconditioned verdict
         var ccaLeadTouched = false; // set once the user changes the lead picker, so the recorded-lead auto-seed stops
+        // Vacant-space / a-posteriori state (Phase 3): opponent MINIMUM lengths entered for the ACTIVE board.
+        // null => a-priori (no knowledge). Shape when set: {board:<idx>, lo:[s,h,d,c], hi:[s,h,d,c]} where a
+        // per-suit minimum lo[i]/hi[i] is "the a-axis / other defender holds >= that many cards there".
+        // Cleared automatically on board nav (a holding-specific constraint can't carry to another deal).
+        var ccaOppMin = null;
         function parseAttr(el, a) { try { return JSON.parse(el.getAttribute(a)); } catch (e) { return null; } }
         // What to play for, given the analysed side S and the contract target. IMPs just makes the
         // target (safety). MPs chases overtricks: aim as high as the odds stay better than even —
@@ -1397,6 +1437,10 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                          lines: parseAttr(el, 'data-' + pfx + '-lines'), tips: parseAttr(el, 'data-' + pfx + '-tips'),
                          notes: parseAttr(el, 'data-' + pfx + '-notes'), floor: parseAttr(el, 'data-' + pfx + '-floor'),
                          book: parseAttr(el, 'data-' + pfx + '-book'),
+                         // Phase 2 a-posteriori bake: per-suit (s,h,d,c) raw JOINT count tables — census cen
+                         // + every candidate line's ln — used to re-weight everything client-side when the
+                         // user enters opponent minimums (see constrainedS below). Absent on older pages.
+                         joint: parseAttr(el, 'data-' + pfx + '-joint'),
                          total: tot || comboTotal(data), totalSd: totsd || (sd ? comboTotal(sd) : null) };
             }
             el._sides = { ns: side('ns'), ew: side('ew') };
@@ -1426,6 +1470,130 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             el._blind = simEl ? parseAttr(simEl, 'data-sim-blind') : null;
         });
         function sideData(el) { return el._sides ? el._sides[ccaSide] : null; }
+
+        // --- Vacant-space / a-posteriori re-weight (Phase 3) --------------------------------------
+        // A faithful JS mirror of combo/aposteriori.odin. Given the baked per-suit JOINT count tables
+        // (side.joint, s,h,d,c) and per-suit opponent MINIMUMS, restrict each suit's East-length axis a
+        // to the allowed range, re-couple the four suits under "East holds 13", and renormalise by the
+        // surviving weight D. Everything (marginals, total, best line) falls out of that one restricted DP,
+        // exactly as the Odin engine computes it — so a page with a constraint entered agrees with what
+        // pbn_analyse would print server-side. All arrays are length 14 (tricks/lengths 0..13).
+        var CCA_LET = ['s', 'h', 'd', 'c'];
+        // Allowed East-length range [alo,ahi] for a suit: alo from the a-side minimum, ahi = m minus the
+        // other defender's minimum (its cards come off East's max). alo>ahi => the minimums contradict this
+        // holding. (suit_a_range)
+        function apRange(m, lo, hi) { var alo = Math.max(lo | 0, 0), ahi = m - Math.max(hi | 0, 0); if (ahi > m) ahi = m; return [alo, ahi]; }
+        // Per-suit East-LENGTH weight lw[a] = sum_k count[a][k], 0 outside [alo,ahi] (length_weights).
+        function apLenWeights(mat, alo, ahi) {
+            var lw = []; for (var a = 0; a < 14; a++) lw[a] = 0;
+            for (var a = alo; a <= ahi; a++) { var row = mat[a] || [], s = 0; for (var k = 0; k < row.length; k++) s += row[k]; lw[a] = s; }
+            return lw;
+        }
+        // Convolve two East-length weight vectors, dropping paths past 13 cards (conv_len).
+        function apConv(x, y) {
+            var z = []; for (var i = 0; i < 14; i++) z[i] = 0;
+            for (var i = 0; i < 14; i++) { if (!x[i]) continue; for (var j = 0; j <= 13 - i; j++) { if (!y[j]) continue; z[i + j] += x[i] * y[j]; } }
+            return z;
+        }
+        // Shared context: per-suit ranges, the leave-one-out length weight of the OTHER three suits
+        // (others[S][e] = ways they give East e cards), and D = total surviving deal weight (constraint_ctx).
+        function apCtx(J, oc) {
+            var alo = [], ahi = [], lw = [];
+            for (var i = 0; i < 4; i++) {
+                var r = apRange(J[i].m, oc.lo[i], oc.hi[i]); alo[i] = r[0]; ahi[i] = r[1];
+                if (alo[i] > ahi[i]) return { feasible: false };
+                lw[i] = apLenWeights(J[i].cen, alo[i], ahi[i]);
+            }
+            var others = [];
+            for (var S = 0; S < 4; S++) {
+                var conv = []; for (var q = 0; q < 14; q++) conv[q] = 0; conv[0] = 1;
+                for (var i = 0; i < 4; i++) { if (i === S) continue; conv = apConv(conv, lw[i]); }
+                others[S] = conv;
+            }
+            var D = 0; for (var a = alo[0]; a <= ahi[0]; a++) { var e = 13 - a; if (e < 0) continue; D += lw[0][a] * others[0][e]; }
+            return { alo: alo, ahi: ahi, others: others, D: D, feasible: D > 0 };
+        }
+        // Constrained per-suit trick marginal p[k] of one table (census or a line), via the leave-one-out
+        // coupling (the marginal loop of constrained_census / the numerator of constrained_line_mean).
+        function apMarginal(ctx, i, mat) {
+            var m = []; for (var k = 0; k < 14; k++) m[k] = 0;
+            for (var a = ctx.alo[i]; a <= ctx.ahi[i]; a++) {
+                var e = 13 - a; if (e < 0) continue; var w = ctx.others[i][e]; if (!w) continue;
+                var row = mat[a] || []; for (var k = 0; k < row.length; k++) { if (row[k]) m[k] += row[k] * w; }
+            }
+            for (var k = 0; k < 14; k++) m[k] /= ctx.D;
+            return m;
+        }
+        // Constrained combined trick total over four chosen tables: the same joint length×trick DP as
+        // constrained_census's total (East ends on 13, tricks capped at 13), renormalised by D.
+        function apTotal(ctx, tabs) {
+            var h = []; for (var e = 0; e < 14; e++) { h[e] = []; for (var t = 0; t < 14; t++) h[e][t] = 0; } h[0][0] = 1;
+            for (var i = 0; i < 4; i++) {
+                var mat = tabs[i], nh = []; for (var e = 0; e < 14; e++) { nh[e] = []; for (var t = 0; t < 14; t++) nh[e][t] = 0; }
+                for (var e = 0; e < 14; e++) for (var t = 0; t < 14; t++) {
+                    var hv = h[e][t]; if (!hv) continue;
+                    for (var a = ctx.alo[i]; a <= ctx.ahi[i]; a++) {
+                        if (e + a > 13) break;
+                        var row = mat[a] || [];
+                        for (var k = 0; k < row.length; k++) { var c = row[k]; if (!c) continue; var nt = t + k; if (nt > 13) nt = 13; nh[e + a][nt] += hv * c; }
+                    }
+                }
+                h = nh;
+            }
+            var out = []; for (var t = 0; t < 14; t++) out[t] = h[13][t] / ctx.D;
+            return out;
+        }
+        // Constrained mean tricks of a line's table (constrained_line_mean) — drives the line re-pick.
+        function apLineMean(ctx, i, mat) {
+            var acc = 0;
+            for (var a = ctx.alo[i]; a <= ctx.ahi[i]; a++) {
+                var e = 13 - a; if (e < 0) continue; var w = ctx.others[i][e]; if (!w) continue;
+                var row = mat[a] || []; for (var k = 0; k < row.length; k++) { if (row[k]) acc += k * row[k] * w; }
+            }
+            return acc / ctx.D;
+        }
+        // Best candidate line index per suit under the constraints (constrained_best_idx) — the "flip".
+        function apBestIdx(J, ctx) {
+            var best = [];
+            for (var i = 0; i < 4; i++) {
+                var bm = -1, bj = 0, ln = J[i].ln;
+                for (var j = 0; j < ln.length; j++) { var mn = apLineMean(ctx, i, ln[j][1]); if (mn > bm) { bm = mn; bj = j; } }
+                best[i] = bj;
+            }
+            return best;
+        }
+        // Build a constrained view of a side's data (drop-in for the a-priori S in ctTableHTML): re-weighted
+        // census suit rows + total, the re-picked blind line per suit with its re-weighted shape + a fresh sd
+        // total. Returns {infeasible:true} when the minimums admit no deal; null when the joint bake is
+        // absent (older page). The a-priori-only artifacts (adaptive ≥sd curve, book override, geometry notes,
+        // per-line tips) are dropped — they aren't valid under the skewed weights.
+        function constrainedS(S, oc) {
+            var J = S && S.joint; if (!J || J.length < 4) return null;
+            var ctx = apCtx(J, oc); if (!ctx.feasible) return { infeasible: true };
+            var data = {}, sd = {}, lines = [], cenTabs = [], sdTabs = [], bi = apBestIdx(J, ctx);
+            for (var i = 0; i < 4; i++) {
+                cenTabs[i] = J[i].cen; data[CCA_LET[i]] = apMarginal(ctx, i, J[i].cen);
+                var lj = J[i].ln[bi[i]]; lines[i] = lj[0]; sdTabs[i] = lj[1]; sd[CCA_LET[i]] = apMarginal(ctx, i, lj[1]);
+            }
+            return { data: data, sd: sd, lines: lines, total: apTotal(ctx, cenTabs), totalSd: apTotal(ctx, sdTabs),
+                     atl: null, tips: null, notes: null, book: null, joint: J, constrained: true };
+        }
+        // Public setter (used by the Phase-4 UI inputs and by tests): install opponent minimums for the
+        // active board and re-render, or pass null to clear. oc = {lo:[s,h,d,c], hi:[s,h,d,c]}.
+        function ccaSetOppMin(oc) {
+            ccaOppMin = oc ? { board: idx, lo: oc.lo.slice(), hi: oc.hi.slice() } : null;
+            renderCca(true);
+        }
+        window.ccaSetOppMin = ccaSetOppMin;
+        // One-line human summary of the active constraint for the panel note.
+        function oppSummary(oc, side) {
+            var glyph = ['♠', '♥', '♦', '♣'], defs = side === 'ew' ? ['N', 'S'] : ['E', 'W'], parts = [];
+            for (var i = 0; i < 4; i++) {
+                if (oc.lo[i] > 0) parts.push(glyph[i] + ' ' + defs[0] + '&ge;' + oc.lo[i]);
+                if (oc.hi[i] > 0) parts.push(glyph[i] + ' ' + defs[1] + '&ge;' + oc.hi[i]);
+            }
+            return parts.length ? parts.join(', ') : 'no minimums';
+        }
         // The opening-lead sub-grids in force for the active board, side, and mode. A 2-hand board carries
         // them flat on el._leads. A full deal carries them per side inside the BLIND advisor (el._blind[side]
         // .leads) — so the lead picker appears ONLY in Blind mode (exact mode returns null -> picker hidden),
@@ -1581,6 +1749,10 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             syncModeToggle();
             var el = activeCombo(), S = el && sideData(el);
             buildLeadOptions(el);
+            // A-posteriori (Phase 3/4): a holding-specific constraint can't carry to another deal, so drop it
+            // on board nav BEFORE the input row syncs (so it blanks its cells for the new board).
+            if (ccaOppMin && ccaOppMin.board !== idx) ccaOppMin = null;
+            syncOppUI();
             if (!S || !S.total) {
                 ccaBody.innerHTML = '<div class="cca-empty">No combination data for this board.</div>';
                 ccaSub.textContent = '';
@@ -1589,7 +1761,19 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
                 return;
             }
             if (ccaFoot) ccaFoot.style.visibility = 'visible';
-            ccaBody.innerHTML = ctTableHTML(S);
+            // When a constraint is in force for THIS board, swap in the constrained view (feasible) or keep the
+            // a-priori table + warn (infeasible).
+            var oppNote = '';
+            if (ccaOppMin) {
+                var Sc = constrainedS(S, ccaOppMin);
+                if (Sc && Sc.infeasible) {
+                    oppNote = '<div class="cca-oppnote bad">Opponent minimums are impossible for this holding — showing the a-priori table.</div>';
+                } else if (Sc) {
+                    S = Sc;
+                    oppNote = '<div class="cca-oppnote">A-posteriori: ' + oppSummary(ccaOppMin, ccaSide) + '. Rows re-weighted; blind line re-picked.</div>';
+                }
+            }
+            ccaBody.innerHTML = oppNote + ctTableHTML(S);
             ccaSub.textContent = 'Board ' + (idx + 1);
             ccaSlider.value = el._target;
             hlCca();
@@ -1748,6 +1932,61 @@ HTML_CARDS_PAGE_FOOTER :: `        </div>
             try { localStorage.setItem('nc-cca-rows', ccaSuitsCollapsed ? '1' : '0'); } catch (e) {}
             applySuits();
             positionCca(); // height changed -> re-place
+        };
+        // --- Known-opponent-length inputs (Phase 4) -----------------------------------------------
+        // The a-posteriori re-weight UI: two rows (the two defenders) x four suits of "minimum cards held"
+        // number inputs. Any change reads all eight cells and calls ccaSetOppMin, which re-renders the table
+        // re-weighted (or blank/all-zero -> ccaSetOppMin(null), back to a-priori). Shown only on boards that
+        // carry the Phase-2 joint bake; the defender labels follow the N/S<->E/W side toggle.
+        var oppBtn = document.getElementById('nc-cca-opp-btn');
+        var oppWrap = document.getElementById('nc-cca-opp');
+        var oppLoLbl = document.getElementById('nc-opp-lo-lbl'), oppHiLbl = document.getElementById('nc-opp-hi-lbl');
+        var oppInputs = oppWrap ? Array.prototype.slice.call(oppWrap.querySelectorAll('input')) : [];
+        var oppClear = document.getElementById('nc-opp-clear');
+        var ccaOppOpen = false; // whether the input row is revealed (panel-local, not persisted)
+        // Read the eight cells into {lo:[s,h,d,c], hi:[...]}; '' counts as 0. Clamp each to that suit's m so a
+        // defender can't be asked to hold more of a suit than the opponents own (the joint bake carries m).
+        function readOpp() {
+            var el = activeCombo(), S = el && sideData(el), J = S && S.joint;
+            var oc = { lo: [0, 0, 0, 0], hi: [0, 0, 0, 0] }, any = false;
+            oppInputs.forEach(function (inp) {
+                var d = inp.getAttribute('data-def'), i = +inp.getAttribute('data-suit');
+                var v = parseInt(inp.value, 10); if (isNaN(v) || v < 0) v = 0;
+                var m = J && J[i] ? J[i].m : 13; if (v > m) { v = m; inp.value = v; }
+                oc[d][i] = v; if (v > 0) any = true;
+            });
+            return any ? oc : null;
+        }
+        function applyOpp() { ccaSetOppMin(readOpp()); }
+        // Reflect state into the input UI on every render: hide the whole feature on boards without a joint
+        // bake; label the two rows for the active side; cap each input's max at its suit's m; and blank the
+        // cells whenever no constraint is in force (e.g. after a board-nav auto-clear) so the grid never shows
+        // a stale number for a different deal.
+        function syncOppUI() {
+            var el = activeCombo(), S = el && sideData(el), J = S && S.joint;
+            var has = !!(J && J.length >= 4);
+            if (oppBtn) oppBtn.hidden = !has;
+            if (!has) { ccaOppOpen = false; if (oppBtn) oppBtn.classList.remove('sel'); }
+            if (oppWrap) oppWrap.hidden = !(has && ccaOppOpen);
+            if (oppBtn) oppBtn.classList.toggle('sel', has && ccaOppOpen);
+            var defs = ccaSide === 'ew' ? ['N', 'S'] : ['E', 'W'];
+            if (oppLoLbl) oppLoLbl.textContent = defs[0];
+            if (oppHiLbl) oppHiLbl.textContent = defs[1];
+            oppInputs.forEach(function (inp) {
+                var i = +inp.getAttribute('data-suit');
+                inp.max = has && J[i] ? J[i].m : 13;
+                if (!ccaOppMin) inp.value = '';
+            });
+        }
+        if (oppBtn) oppBtn.onclick = function () {
+            ccaOppOpen = !ccaOppOpen;
+            syncOppUI();
+            positionCca(); // height changed -> re-place
+        };
+        oppInputs.forEach(function (inp) { inp.oninput = applyOpp; });
+        if (oppClear) oppClear.onclick = function () {
+            oppInputs.forEach(function (inp) { inp.value = ''; });
+            ccaSetOppMin(null);
         };
         // Slider adjusts the ACTIVE board's target only; the inline summary + overlay update together.
         if (ccaSlider) ccaSlider.oninput = function () {
