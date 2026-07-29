@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<head>
+	<title>{{TITLE}}</title>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<link href="https://fonts.googleapis.com/css?family=Open Sans" rel="stylesheet">
+	<style>
+		:root { --ink:#222; --red:#c00; --line:#ccc; --sel:#2b6cb0; --felt:#3f7d5c; --felt-dark:#2f5f46; }
+		* { box-sizing: border-box; }
+		body { font-family: 'Open Sans', sans-serif; color: var(--ink); margin: 0; }
+		/* Compact control pill, pinned top-left — fit-content so its background never spans the width
+		   and blocks the centred card on wide screens. */
+		.toolbar {
+			position: sticky; top: 0; z-index: 10; width: fit-content;
+			background: #fff; border: 1px solid var(--line); border-radius: 0 0 10px 0;
+			box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+			display: flex; flex-wrap: wrap; gap: 0.3rem 0.6rem; align-items: center;
+			padding: 0.35rem 0.6rem;
+		}
+		.toolbar button { font: inherit; font-size: 0.9rem; padding: 0.15rem 0.45rem; cursor: pointer; border: 1px solid var(--line); background: #f7f7f7; border-radius: 4px; }
+		.toolbar button:hover { background: #ececec; }
+		.toolbar .sel { background: var(--sel); color: #fff; border-color: var(--sel); }
+		.toolbar .off { opacity: 0.5; }
+		.toolbar .group { display: flex; gap: 0.2rem; align-items: center; }
+		.toolbar .counter { font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+		.toolbar input { font: inherit; font-size: 0.9rem; width: 3rem; padding: 0.15rem 0.25rem; }
+		.toolbar .lbl-txt { color: #666; font-size: 0.78rem; }
+		/* Scenario name, centred above the carousel. Sits below the pinned toolbar pill (top-left),
+		   so it never overlaps it. */
+		.page-title { text-align: center; margin: 0.4rem 0.5rem 0; font-size: clamp(1rem, 2.6vw, 1.6rem); font-weight: 600; color: var(--ink); }
+		.viewport { overflow: hidden; width: 100%; padding: 0.75rem 0; }
+		.track { display: flex; align-items: center; gap: 40px; transition: transform 0.35s ease; will-change: transform; }
+		/* Hug the (grouped) board content and cap at the viewport width, so the slide scales with the
+		   mid-row gap above — wide on big monitors, compact at 1080p — rather than a fixed pixel width. */
+		.slide {
+			flex: 0 0 auto; width: fit-content; max-width: 96vw;
+			opacity: 0.4; transform: scale(0.9); transition: opacity 0.35s ease, transform 0.35s ease;
+		}
+		.slide.active { opacity: 1; transform: scale(1); }
+		/* The board is a green "tablecloth"; each hand sits on it as its own light card panel. */
+		.compass {
+			position: relative;
+			border: 1px solid var(--felt-dark); border-radius: 12px; background: var(--felt);
+			padding: clamp(0.6rem, 1.5vh, 1.5rem) clamp(0.5rem, 3vw, 2rem);
+			display: flex; flex-direction: column; gap: clamp(0.35rem, 1.1vh, 1.2rem);
+		}
+		.slide.active .compass { box-shadow: 0 0 0 3px var(--sel), 0 8px 24px rgba(0,0,0,0.25); }
+		/* Partnership HCP summary, pinned to the felt's top-right corner. */
+		.stats {
+			position: absolute; top: 1.1rem; right: 1.4rem; text-align: right;
+			background: rgba(255,255,255,0.92); color: #333; padding: 0.5rem 0.7rem; border-radius: 8px;
+			box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+			font-family: 'Consolas', 'Courier New', monospace; font-size: 1.05rem; line-height: 1.5;
+		}
+		.stats .splits { margin-top: 0.35rem; border-top: 1px solid #ddd; padding-top: 0.3rem; }
+		.stats .split { display: flex; justify-content: flex-end; align-items: baseline; gap: 0.45rem; }
+		.stats .split .pct { color: #888; min-width: 4.3em; text-align: right; }
+		.stats .ssym { font-size: 1.15em; }
+		.ssym.s { color: Black; } .ssym.h { color: Red; } .ssym.d { color: Orange; } .ssym.c { color: MediumSeaGreen; }
+		/* Per-hand shape pattern + how common it is, under each hand's cards. */
+		.hcp { margin-top: 0.25rem; font-family: 'Open Sans', sans-serif; font-size: 0.5em; font-weight: 600; color: #555; }
+		.opc { margin-top: 0.1rem; font-family: 'Open Sans', sans-serif; font-size: 0.42em; color: #777; }
+		.shape {
+			margin-top: 0.1rem; font-family: 'Open Sans', sans-serif; font-size: 0.4em;
+			font-weight: 300; color: #9a9a9a; opacity: 0.75;
+		}
+		.prob { color: #b5b5b5; }
+		.hcp .prob { font-weight: 400; }
+		.hcp[title] { cursor: help; }
+		.hcp[title] .prob { text-decoration: underline dotted #cfcfcf; text-underline-offset: 2px; }
+		/* West / table / East grouped and centred, with a gap that grows on wide monitors and shrinks
+		   at lower resolutions so the hands compress toward one another instead of flinging to the edges. */
+		/* A 1fr | auto | 1fr grid: the centre table lands at the exact board centre (aligned with the
+		   N/S cards above/below) no matter how wide the W/E hands are, while W/E hug the centre gap.
+		   Top-align (align-items) so the West and East pills line up regardless of card height — the
+		   dealer's "Dealer" tag makes one card taller, and centring would offset its top-anchored pill. */
+		.compass .mid {
+			display: grid; grid-template-columns: 1fr auto 1fr; align-items: flex-start;
+			column-gap: clamp(0.5rem, 7vw, 6rem);
+		}
+		.compass .mid > .seat-w { justify-self: end; }
+		.compass .mid > .seat-e { justify-self: start; }
+		.compass .mid > .table { justify-self: center; align-self: center; }
+		/* Card text sizes off the SMALLER of viewport height/width, so it fits both axes — key for
+		   phones where width is the tight one (landscape) or height is (portrait). */
+		.seat {
+			font-family: 'Consolas', 'Courier New', monospace;
+			font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem);
+			line-height: 1.28; min-width: clamp(5rem, 20vw, 11rem);
+			background: #fff; border-radius: 10px; padding: 0.85rem 1rem 0.45rem; box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+		}
+		/* North/South: centre the hand as a block but keep its suit lines left-aligned to the suit
+		   symbol, so the symbols form a column exactly like East/West (which are already left-aligned). */
+		.compass > .seat { width: fit-content; margin: 0 auto; }
+		/* The dealer's pill carries a ring that needs clearance from the card's top edge; give EVERY
+		   seat that clearance (in the base padding above) so the dealer card is not taller than the
+		   rest — otherwise the E/W pills, centred in the mid row, misalign when exactly one is dealer. */
+		/* Seat label: a big pill coloured by vulnerability (red = vulnerable, green = not). */
+		.seat .lbl {
+			display: inline-block; font-weight: 700; font-size: 1.7em; line-height: 1;
+			padding: 0.02em 0.28em; border-radius: 14px; color: #fff; margin-bottom: 0.25rem;
+		}
+		.seat.vul .lbl { background: var(--red); }
+		.seat.nonvul .lbl { background: ForestGreen; }
+		/* Dealer: ring around the pill plus a tag underneath. */
+		.seat.is-dealer .lbl { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--sel); }
+		/* Face-down defender on a 2-hand (declarer + dummy) board: pill + a big "?" placeholder. */
+		.seat.facedown { opacity: 0.9; }
+		.seat.facedown .unknown-hand {
+			font-size: 2.4em; color: #9fb0c0; text-align: center; padding: 0.5em 0.7em 0.2em; line-height: 1;
+		}
+		.dtag {
+			display: block; margin: 0.35rem 0 0.4rem; font-family: 'Open Sans', sans-serif;
+			font-size: 0.38em; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sel);
+		}
+		/* Four-colour suits, matching the bidding-system stylesheet (bml.css). */
+		.suit { display: block; white-space: nowrap; }
+		.suit.s { color: Black; }
+		.suit.h { color: Red; }
+		.suit.d { color: Orange; }
+		.suit.c { color: MediumSeaGreen; }
+		.suit .sym { display: inline-block; width: 1.15em; }
+		.table {
+			border: 1px solid rgba(255,255,255,0.35); border-radius: 8px; padding: 0.7rem 1.1rem; text-align: center;
+			font-size: 1.3rem; color: #fff; background: rgba(255,255,255,0.12); white-space: nowrap;
+		}
+		.par { margin-top: clamp(0.4rem, 1.1vh, 1rem); text-align: center; color: #555; font-size: clamp(1rem, 1.8vh, 1.3rem); }
+		/* The board's .combo div carries only the raw per-suit distributions (data-suits JSON). To keep
+		   the board short (no page scroll), inline it is just a ONE-LINE summary — the full interactive
+		   trick table lives in the CCA overlay panel, which is fixed/out-of-flow so it never adds page
+		   height. Both are built client-side and react to the toolbar's "tricks >=" slider. */
+		.combo {
+			margin-top: clamp(0.3rem, 0.8vh, 0.7rem); text-align: center; color: #555;
+			font-family: 'Consolas', 'Courier New', monospace; font-size: clamp(0.55rem, 1.35vh, 0.9rem);
+		}
+		.combo .cmini { font-weight: 700; color: var(--sel); letter-spacing: 0.05em; margin-right: 0.45rem; }
+		/* The CCA overlay: a fixed, floating panel with the full trick-chance table for the current
+		   board. position:fixed keeps it OUT of document flow (the board never grows), and it caps its
+		   own height and scrolls internally, so the page itself never gains a scrollbar. */
+		.cca-panel {
+			position: fixed; left: 0.6rem; bottom: 0.6rem; z-index: 20;
+			max-width: min(96vw, 44rem); max-height: 78vh; overflow: auto;
+			background: #fff; border: 1px solid var(--line); border-radius: 10px;
+			box-shadow: 0 6px 24px rgba(0,0,0,0.28); padding: 0.55rem 0.8rem 0.7rem;
+		}
+		.cca-panel[hidden] { display: none; }
+		/* Narrow mode (user toggle): cap the panel so it can't span both E/W hands on a small viewport;
+		   the wide trick table then scrolls sideways inside its own box instead of covering the cards. */
+		.cca-panel.narrow { max-width: min(94vw, 26rem); }
+		.cca-panel.narrow #nc-cca-body { overflow-x: auto; }
+		/* Suits-collapsed (user toggle): hide the per-suit rows (♠♥♦♣ + their blind sub-rows), leaving the
+		   tot / ≥k / sd totals — saves vertical height when the viewport is short. */
+		.cca-panel.suits-collapsed .ct tbody tr[class*="suit-"] { display: none; }
+		#nc-cca-narrow.sel, #nc-cca-rows.sel { color: var(--sel); }
+		.cca-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem; margin-bottom: 0.45rem; }
+		.cca-head b { color: var(--ink); }
+		.cca-sub { color: #888; font-size: 0.85rem; }
+		/* Small pill buttons shared by the head (help / close), the N/S<->E/W side toggle, and the
+		   IMPs<->MPs objective toggle. */
+		.cca-head .x, .cca-head .help, .cca-side .sidebtn, .cca-obj .sidebtn, .cca-strain .sidebtn, .cca-mode .sidebtn {
+			font: inherit; font-size: 0.8rem; border: 1px solid var(--line); background: #f4f4f4;
+			color: #555; border-radius: 5px; padding: 0.05rem 0.45rem; cursor: pointer; line-height: 1;
+		}
+		.cca-side { margin-left: auto; }
+		.cca-side, .cca-obj, .cca-strain, .cca-mode { display: flex; align-items: center; gap: 0.15rem; }
+		.cca-mode[hidden] { display: none; }
+		.cca-side .sidebtn.sel, .cca-obj .sidebtn.sel, .cca-strain .sidebtn.sel, .cca-mode .sidebtn.sel { background: var(--sel); color: #fff; border-color: var(--sel); }
+		.cca-side .sidesep, .cca-obj .sidesep, .cca-mode .sidesep { color: #bbb; }
+		/* Contract-strain picker (only shown on a board carrying baked DDS-sample data). The red suits get
+		   their colour so the strain reads at a glance. */
+		.cca-strain { flex-wrap: wrap; }
+		.cca-strain[hidden] { display: none; }
+		.cca-strain .sidebtn[data-str="h"], .cca-strain .sidebtn[data-str="d"] { color: #c0392b; }
+		.cca-strain .sidebtn.sel[data-str="h"], .cca-strain .sidebtn.sel[data-str="d"] { color: #fff; }
+		/* Opening-lead picker: a dropdown conditioning the simulated make-% on a defender's card. */
+		.cca-lead { display: flex; align-items: center; gap: 0.3rem; }
+		.cca-lead[hidden] { display: none; }
+		.cca-lead .lbl-txt { color: #666; font-size: 0.82rem; }
+		.cca-lead select { font: inherit; font-size: 0.8rem; border: 1px solid var(--line); border-radius: 5px; padding: 0.05rem 0.3rem; color: #444; background: #fff; cursor: pointer; }
+		/* The green "honest verdict" rung: the whole-hand simulated make-% for the picked contract, on top
+		   of the CCA body. The reconciliation strip shows the ceiling -> blind -> simulated tax as a gap. */
+		.cca-sim {
+			margin: 0.1rem 0 0.5rem; padding: 0.42rem 0.6rem; border-radius: 8px;
+			background: #e7f6ec; border: 1px solid #b6e0c2; color: #1c6b39; font-size: 0.9rem; line-height: 1.35;
+		}
+		.cca-sim[hidden] { display: none; }
+		.cca-sim b { color: #12572c; }
+		.cca-sim .lead-note { color: #2f6fd8; font-size: 0.85rem; }
+		.cca-sim .recon { display: block; margin-top: 0.15rem; color: #4a7d5c; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
+		.cca-head .help, .cca-head .x { align-self: flex-start; }
+		.cca-empty { color: #888; padding: 0.5rem 0.2rem; }
+		.cca-oppnote { color: var(--sel); font-size: 0.82rem; margin: 0 0 0.35rem; line-height: 1.3; }
+		.cca-oppnote.bad { color: #c66; }
+		.cca-opp { margin: 0.15rem 0 0.5rem; padding: 0.4rem 0.5rem; border: 1px solid var(--line); border-radius: 6px; background: rgba(0,0,0,0.02); }
+		.cca-opp .opp-lbl { display: block; color: #666; font-size: 0.78rem; line-height: 1.3; margin-bottom: 0.35rem; }
+		.opp-grid { border-collapse: collapse; }
+		.opp-grid th { color: #444; font-weight: 600; font-size: 0.9rem; padding: 0 0.2rem; text-align: center; }
+		.opp-grid td { padding: 0.12rem 0.18rem; text-align: center; }
+		.opp-grid td.dl { color: var(--sel); font-weight: 700; padding-right: 0.4rem; text-align: right; }
+		.opp-grid input { width: 2.6em; background: #fff; color: #111; border: 1px solid #aaa; border-radius: 4px; padding: 0.12rem 0.2rem; text-align: center; font: inherit; }
+		.opp-grid input:focus { outline: none; border-color: var(--sel); box-shadow: 0 0 0 2px rgba(47,111,216,0.2); }
+		#nc-opp-clear { margin-top: 0.35rem; }
+		/* Help modal: a large centred card over a dimmed backdrop, laymen's explanation of the CCA. */
+		.cca-help { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; padding: 1rem; }
+		.cca-help[hidden] { display: none; }
+		.cca-help-card { position: relative; background: #fff; border-radius: 12px; max-width: min(94vw, 40rem); max-height: 88vh; overflow: auto; padding: 1.2rem 1.4rem 1.4rem; box-shadow: 0 10px 40px rgba(0,0,0,0.35); line-height: 1.5; color: #333; }
+		.cca-help-card h2 { margin: 0 0 0.5rem; font-size: 1.2rem; }
+		.cca-help-card h3 { margin: 0.95rem 0 0.2rem; font-size: 0.97rem; color: var(--sel); }
+		.cca-help-card p { margin: 0.3rem 0; font-size: 0.9rem; }
+		.cca-help-card .x { position: absolute; top: 0.6rem; right: 0.7rem; }
+		.cca-help-card .sw { display: inline-block; width: 0.75em; height: 0.75em; border-radius: 2px; margin-right: 0.15em; position: relative; top: 0.05em; }
+		/* Popup footer: the live P(>= target) headline on the left, and the PER-BOARD "tricks >="
+		   slider beside it (long, defaults to that board's NS par trick count). */
+		.cca-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 1rem; margin-top: 0.5rem; }
+		.cca-slider { display: flex; align-items: center; gap: 0.45rem; margin-left: auto; }
+		.cca-slider .lbl-txt { color: #666; font-size: 0.82rem; }
+		.cca-slider b { font-variant-numeric: tabular-nums; min-width: 1.2em; text-align: right; }
+		.cca-slider input[type="range"] { width: 11rem; accent-color: var(--sel); cursor: pointer; }
+		.cca-slider input[type="range"]:focus { outline: 2px solid var(--sel); outline-offset: 2px; }
+		.ct {
+			display: inline-table; border-collapse: collapse;
+			font-family: 'Consolas', 'Courier New', monospace;
+			font-size: clamp(0.6rem, 1.5vw, 0.9rem); line-height: 1.35; color: #555;
+		}
+		/* Uniform min-widths so every board's table is the SAME width (the panel then never resizes as
+		   you flip slides). content-box makes min-width the CONTENT width, so a "100" cell and a "·"
+		   cell floor to the exact same size regardless of how many digits they hold. */
+		.ct th, .ct td { box-sizing: content-box; padding: 0.06rem 0.34rem; text-align: right; font-weight: 400; font-variant-numeric: tabular-nums; min-width: 3ch; }
+		.ct thead th { color: #999; font-weight: 600; }
+		.ct .sl { text-align: left; font-weight: 700; padding-right: 0.5rem; min-width: 3ch; }
+		.ct .suit-s .sl { color: Black; } .ct .suit-h .sl { color: Red; }
+		.ct .suit-d .sl { color: Orange; } .ct .suit-c .sl { color: MediumSeaGreen; }
+		.ct .tot td, .ct .cum td, .ct .tot th, .ct .cum th { border-top: 1px solid #ddd; }
+		/* Phase-2 achievable (single-dummy) total + cumulative rows, in a distinct colour so the gap
+		   to the double-dummy ceiling (the .tot/.cum rows above) reads at a glance. */
+		.ct .totsd td, .ct .cumsd td, .ct .totsd .sl, .ct .cumsd .sl { color: #2f6fd8; }
+		/* Per-suit single-dummy sub-row: the blind line's spread for that suit, blue like the SD totals,
+		   dimmed + no border so it reads as subordinate to the black ceiling row directly above it. */
+		.ct .suit-sd td { color: #6b93e0; border: 0; font-size: 0.9em; padding-top: 0; }
+		.ct .suit-sd .sl { color: #6b93e0; font-weight: 400; font-size: 0.9em; padding-left: 0.5rem; }
+		/* Gold "book" sub-row: the published (encyclopedia) shape, shown only on covered holdings. */
+		.ct .suit-bk td { color: #b8860b; border: 0; font-size: 0.9em; padding-top: 0; }
+		.ct .suit-bk .sl { color: #b8860b; font-weight: 400; font-size: 0.9em; padding-left: 0.5rem; cursor: help; }
+		.ct .etr { color: #a0a0a0; padding-left: 0.5rem; min-width: 5ch; }
+		.ct .etr .eb { color: #2f6fd8; }  /* the blind (single-dummy) expected tricks */
+		.ct .ln { text-align: left; color: #777; padding-left: 0.55rem; min-width: 5ch; font-size: 0.92em; }
+		.ct .ln[data-tip] { cursor: help; text-decoration: underline dotted #aaa; text-underline-offset: 2px; }
+		.ct .ln .cflag { color: #b8860b; cursor: help; }  /* a named suit combination has a note worth reading */
+		/* Hover tooltip: the detailed play narration for a suit's recommended line. */
+		.cca-tip { position: fixed; z-index: 50; max-width: 22rem; background: #222; color: #fff; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.82rem; line-height: 1.35; box-shadow: 0 4px 16px rgba(0,0,0,0.35); pointer-events: none; }
+		.cca-tip[hidden] { display: none; }
+		/* The target column, driven by the "tricks >=" slider — header cell + cumulative cell. Target
+		   the CELL (td/th.hl) so this out-specifies the coloured .totsd/.cumsd row rules above —
+		   otherwise the blue SD text stayed blue on the blue highlight and was unreadable. */
+		.ct td.hl, .ct th.hl { background: var(--sel); color: #fff !important; border-radius: 3px; }
+		.ct-head { margin-top: 0.45rem; font-weight: 600; color: #333; font-size: clamp(0.8rem, 1.6vw, 1rem); }
+		/* Seat toggle: keep just one seat visible across every board (layout preserved via visibility). */
+		/* Single-seat view: the other three seats collapse to just their position pill (and Dealer tag),
+		   so the compass orientation, vulnerability, and dealer stay visible — only their cards hide. */
+		/* Seat focus is now PER BOARD (a .slide class), not global on the track: each board can show
+		   all four hands or one, independently. */
+		.slide.only-n .seat:not(.seat-n), .slide.only-e .seat:not(.seat-e),
+		.slide.only-s .seat:not(.seat-s), .slide.only-w .seat:not(.seat-w) {
+			background: transparent; box-shadow: none; min-width: 0; padding: 0.2rem;
+		}
+		.slide.only-n .seat:not(.seat-n) :is(.suit, .hcp, .opc, .shape),
+		.slide.only-e .seat:not(.seat-e) :is(.suit, .hcp, .opc, .shape),
+		.slide.only-s .seat:not(.seat-s) :is(.suit, .hcp, .opc, .shape),
+		.slide.only-w .seat:not(.seat-w) :is(.suit, .hcp, .opc, .shape) { display: none; }
+		/* The Dealer tag sits on the green felt for these markers (transparent card), so make it white. */
+		.slide.only-n .seat:not(.seat-n) .dtag, .slide.only-e .seat:not(.seat-e) .dtag,
+		.slide.only-s .seat:not(.seat-s) .dtag, .slide.only-w .seat:not(.seat-w) .dtag { color: #fff; }
+		/* The chosen seat grows by REAL layout (font-size, everything inside is em-relative), so the
+		   green felt reflows to contain it — a transform would leave the card spilling off a small felt. */
+		.seat { transition: font-size 0.25s ease; }
+		.slide.only-n .seat-n, .slide.only-e .seat-e,
+		.slide.only-s .seat-s, .slide.only-w .seat-w { font-size: clamp(1.6rem, min(4vh, 6.5vw), 3.4rem); }
+		/* The partnership HCP summary is meaningless with only one hand shown, so hide it then. */
+		.slide.only-n .stats, .slide.only-e .stats,
+		.slide.only-s .stats, .slide.only-w .stats { display: none; }
+		/* The seat pill is the board's "compass icon": in the 4-hand view it is clickable to focus
+		   that hand. Once a hand is focused you must Reveal all before switching, so no pointer then. */
+		.slide:not([class*="only-"]) .seat .lbl { cursor: pointer; }
+		.slide:not([class*="only-"]) .seat .lbl:hover { filter: brightness(1.12); }
+		/* Centre marker: a plain board-number label in the 4-hand view; a "Reveal all" button (the
+		   script adds .reveal + the text) when a single hand is focused. */
+		.table.reveal { cursor: pointer; background: rgba(255,255,255,0.22); }
+		.table.reveal:hover { background: rgba(255,255,255,0.35); }
+		/* Single East/West focus: replace the 1fr|auto|1fr grid with a content-hugging flex row so the
+		   felt wraps the big card (the grid's equal 1fr columns would mirror its width as empty green on
+		   the far side), and centre the items vertically so the opposite pill + Reveal-all button sit
+		   level with the enlarged hand. North/South focus keeps the grid (the big card is outside .mid). */
+		.slide.only-e .mid, .slide.only-w .mid {
+			display: flex; justify-content: center; align-items: center; gap: clamp(0.5rem, 7vw, 6rem);
+		}
+		/* Par/combo captions describe the whole board, so hide them while a single hand is focused —
+		   they only make sense (and only show) in that board's 4-hand view. */
+		.slide[class*="only-"] .par, .slide[class*="only-"] .combo { display: none; }
+		.track.hide-par .par, .track.hide-par .combo { display: none; }
+
+		/* Phones: strip the secondary lines (OPC/shape), pull the hands tight together, and shrink the
+		   HCP badge + centre table so a whole board fits a small screen in either orientation. */
+		@media (max-width: 640px) {
+			.opc, .shape { display: none; }
+			.seat { min-width: 0; padding: 0.7rem 0.6rem 0.35rem; }
+			.compass { gap: clamp(0.25rem, 0.8vh, 0.7rem); padding: clamp(0.4rem, 1vh, 0.9rem) clamp(0.4rem, 2vw, 1rem); }
+			.compass .mid { gap: clamp(0.3rem, 3vw, 1.2rem); }
+			.hcp { font-size: 0.95rem; margin-top: 0.15rem; }
+			/* Too narrow for a top-right overlay without covering North — flow it above the board as a
+			   centred header line instead. */
+			.stats {
+				position: static; display: flex; justify-content: center; gap: 1rem;
+				margin: 0 0 0.2rem; padding: 0.15rem 0.4rem; font-size: 0.82rem; line-height: 1.3;
+			}
+			.stats .splits { display: none; } /* HCP totals only on phones */
+			.table { font-size: 1rem; padding: 0.45rem 0.7rem; }
+			.dtag { font-size: 0.7rem; margin: 0.25rem 0 0.3rem; }
+			.track { gap: 20px; }
+		}
+	</style>
+</head>
+<body>
+	<div class="toolbar">
+		<div class="group">
+			<button id="nc-prev" title="Previous (Left arrow / scroll)">&#9664;</button>
+			<span class="counter"><b id="nc-idx">1</b>/<span id="nc-total">0</span></span>
+			<button id="nc-next" title="Next (Right arrow / scroll)">&#9654;</button>
+		</div>
+		<div class="group">
+			<span class="lbl-txt">seats</span>
+			<button data-seat="" class="sel">All</button>
+			<button data-seat="n">N</button>
+			<button data-seat="e">E</button>
+			<button data-seat="s">S</button>
+			<button data-seat="w">W</button>
+		</div>
+		<button id="nc-reset" title="Reset every board to the current seat default">Reset</button>
+		<button id="nc-par-toggle">Par</button>
+		<button id="nc-cca-toggle" title="Card Combination Analyser: open the full trick-chance table for the current board">CCA</button>
+	</div>
+	<h1 class="page-title">{{TITLE}}</h1>
+	<div class="viewport">
+		<div class="track" id="nc-track">

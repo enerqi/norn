@@ -33,13 +33,7 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 		}
 	}
 
-	// Choose the seed. An explicit --seed makes the run reproducible; otherwise we pick a fresh one
-	// from the clock and report it on stderr so this exact run can be reproduced later with --seed.
-	seed := opts.seed
-	if !opts.has_seed {
-		seed = fresh_seed()
-		fmt.eprintfln("norn: seed=%d (pass --seed %d to reproduce)", seed, seed)
-	}
+	seed := resolve_seed(opts)
 
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = norn.seeded_xoshiro(&state, seed)
@@ -151,7 +145,7 @@ export_uses_dd :: proc(job: ^Export_Task) -> bool {
 	return job.deal_filter != nil || job.annotate != nil
 }
 
-// Batch-export every scenario in `registry` to `<opts.html_dir>/<name>.html`, each an HTML page of
+// Batch-export every scenario in `registry` to `<mode.dir>/<name>.html`, each an HTML page of
 // `opts.count` deals matching that scenario. The Odin equivalent of regen-html-deals.py.
 //
 // The scenarios are independent, so the rendering is split across a thread pool — up to one thread
@@ -160,7 +154,7 @@ export_uses_dd :: proc(job: ^Export_Task) -> bool {
 // many, and is reproducible from --seed. File writes and stderr warnings happen on the main thread
 // after the pool joins, in scenario order. Returns ok = false with a message on a write error;
 // per-scenario shortfalls are reported on stderr.
-export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) {
+export_all_html :: proc(registry: []Scenario, opts: Options, mode: Export_Html) -> (ok: bool, message: string) {
 	if len(registry) == 0 {
 		return false, "no scenarios to export (registry is empty)"
 	}
@@ -172,18 +166,14 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 	}
 
 	// Best-effort: create the output directory if it does not already exist.
-	if !os.is_dir(opts.html_dir) {
-		if err := os.make_directory(opts.html_dir); err != nil && !os.is_dir(opts.html_dir) {
-			return false, fmt.tprintf("could not create output directory %q: %v", opts.html_dir, err)
+	if !os.is_dir(mode.dir) {
+		if err := os.make_directory(mode.dir); err != nil && !os.is_dir(mode.dir) {
+			return false, fmt.tprintf("could not create output directory %q: %v", mode.dir, err)
 		}
 	}
 
 	// One base seed keeps the whole batch reproducible; the per-scenario seeds derive from it.
-	seed := opts.seed
-	if !opts.has_seed {
-		seed = fresh_seed()
-		fmt.eprintfln("norn: seed=%d (pass --seed %d to reproduce)", seed, seed)
-	}
+	seed := resolve_seed(opts)
 
 	// One thread per physical core, capped at the number of scenarios (no point spawning idle
 	// workers). Fall back to a single thread if the core count can't be determined.
@@ -295,13 +285,13 @@ export_all_html :: proc(registry: []Scenario, opts: Options) -> (ok: bool, messa
 				jobs[i].attempts,
 			)
 		}
-		path := fmt.tprintf("%s/%s.html", opts.html_dir, s.name)
+		path := fmt.tprintf("%s/%s.html", mode.dir, s.name)
 		if write_ok, write_msg := write_output(path, strings.to_string(builders[i])); !write_ok {
 			return false, write_msg
 		}
 	}
 
-	fmt.eprintfln("norn: exported %d scenarios to %q", len(selected), opts.html_dir)
+	fmt.eprintfln("norn: exported %d scenarios to %q", len(selected), mode.dir)
 	return true, ""
 }
 
@@ -383,7 +373,7 @@ scenario_seed :: proc(base: u64, index: int) -> u64 {
 	return base + (u64(index) + 1) * 0x9E37_79B9_7F4A_7C15
 }
 
-// Measure each selected scenario's acceptance rate over `opts.trials` random deals and print one
+// Measure each selected scenario's acceptance rate over `mode.trials` random deals and print one
 // line per scenario to stdout: name, hits, trials and percentage. No deals are rendered.
 //
 // The scenarios are independent, so the work is split across a thread pool — up to one thread per
@@ -395,7 +385,14 @@ scenario_seed :: proc(base: u64, index: int) -> u64 {
 // Under --dd each scenario's optional double-dummy filter is applied to the count too, so the rate
 // reflects predicate AND filter — what generation would actually keep. Filtered scenarios call DDS
 // (not concurrency-safe) so they run serially after the solver-free scenarios finish on the pool.
-measure_frequencies :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) {
+measure_frequencies :: proc(
+	registry: []Scenario,
+	opts: Options,
+	mode: Measure_Frequency,
+) -> (
+	ok: bool,
+	message: string,
+) {
 	if len(registry) == 0 {
 		return false, "no scenarios to measure (registry is empty)"
 	}
@@ -407,11 +404,7 @@ measure_frequencies :: proc(registry: []Scenario, opts: Options) -> (ok: bool, m
 	}
 
 	// One base seed keeps the whole run reproducible; the per-scenario seeds derive from it.
-	seed := opts.seed
-	if !opts.has_seed {
-		seed = fresh_seed()
-		fmt.eprintfln("norn: seed=%d (pass --seed %d to reproduce)", seed, seed)
-	}
+	seed := resolve_seed(opts)
 
 	// One thread per physical core, capped at the number of scenarios (no point spawning idle
 	// workers). Fall back to a single thread if the core count can't be determined.
@@ -435,7 +428,7 @@ measure_frequencies :: proc(registry: []Scenario, opts: Options) -> (ok: bool, m
 	defer delete(jobs)
 	for s, i in selected {
 		jobs[i] = Freq_Task {
-			opts.trials,
+			mode.trials,
 			scenario_seed(seed, i),
 			s.predicate,
 			opts.predeal,
@@ -503,8 +496,8 @@ measure_frequencies :: proc(registry: []Scenario, opts: Options) -> (ok: bool, m
 			width,
 			s.name,
 			results[i],
-			opts.trials,
-			100.0 * f64(results[i]) / f64(opts.trials),
+			mode.trials,
+			100.0 * f64(results[i]) / f64(mode.trials),
 		)
 	}
 
@@ -548,6 +541,17 @@ write_output :: proc(path: string, text: string) -> (ok: bool, message: string) 
 		return false, fmt.tprintf("could not write to %q: %v", path, err)
 	}
 	return true, ""
+}
+
+// The seed this run uses: the explicit --seed when given (reproducible), else a fresh one from the
+// clock, reported on stderr so the run can be reproduced later with --seed.
+resolve_seed :: proc(opts: Options) -> u64 {
+	if seed, given := opts.seed.?; given {
+		return seed
+	}
+	seed := fresh_seed()
+	fmt.eprintfln("norn: seed=%d (pass --seed %d to reproduce)", seed, seed)
+	return seed
 }
 
 // A fresh, non-reproducible seed derived from the current time. Good enough to make each unseeded

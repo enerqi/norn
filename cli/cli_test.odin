@@ -19,11 +19,10 @@ test_parse_defaults :: proc(t: ^testing.T) {
 	testing.expect_value(t, opts.count, 1)
 	testing.expect_value(t, opts.format, norn.Output_Format.Line)
 	testing.expect_value(t, opts.output, "-")
-	testing.expect_value(t, opts.has_seed, false)
-	testing.expect_value(t, opts.help, false)
+	testing.expect(t, opts.seed == nil, "no --seed means a fresh seed")
 	testing.expect_value(t, opts.scenario, "")
-	testing.expect_value(t, opts.list, false)
-	testing.expect_value(t, opts.html_dir, "")
+	_, generating := opts.mode.(Generate)
+	testing.expect(t, generating, "the default mode is plain generation")
 	// Random table is the default; --fixed-table opts out.
 	testing.expect_value(t, opts.randomize_table, true)
 }
@@ -96,22 +95,26 @@ test_parse_format :: proc(t: ^testing.T) {
 	testing.expect(t, !ok_bad, "unknown format should fail")
 }
 
-// --html-dir captures the directory.
+// --html-dir selects the export mode and captures the directory.
 @(test)
 test_parse_html_dir :: proc(t: ^testing.T) {
 	opts, ok, _ := parse_args({"--html-dir", "out/deals"})
 	testing.expect(t, ok, "--html-dir should parse")
-	testing.expect_value(t, opts.html_dir, "out/deals")
+	mode, exporting := opts.mode.(Export_Html)
+	testing.expect(t, exporting, "--html-dir should select the export mode")
+	testing.expect_value(t, mode.dir, "out/deals")
 }
 
-// --frequency sets the mode flag and the trial count; a non-positive or non-numeric value fails.
+// --frequency selects the measurement mode and carries the trial count; a non-positive or non-numeric
+// value fails.
 @(test)
 test_parse_frequency :: proc(t: ^testing.T) {
 	for args in ([][]string{{"--frequency", "1000000"}, {"--freq", "1000000"}, {"--frequency=1000000"}}) {
 		opts, ok, msg := parse_args(args)
 		testing.expectf(t, ok, "args %v should parse: %s", args, msg)
-		testing.expect_value(t, opts.frequency, true)
-		testing.expect_value(t, opts.trials, 1_000_000)
+		mode, measuring := opts.mode.(Measure_Frequency)
+		testing.expect(t, measuring, "--frequency should select the measurement mode")
+		testing.expect_value(t, mode.trials, 1_000_000)
 	}
 
 	_, ok_zero, _ := parse_args({"--frequency", "0"})
@@ -180,24 +183,26 @@ test_parse_output :: proc(t: ^testing.T) {
 	testing.expect_value(t, opts.output, "deals.txt")
 }
 
-// Seed sets both the value and the has_seed marker; a bad seed fails.
+// Seed sets the value; absent it stays nil (fresh each run). A bad seed fails.
 @(test)
 test_parse_seed :: proc(t: ^testing.T) {
 	opts, ok, _ := parse_args({"--seed", "1234"})
 	testing.expect(t, ok, "seed should parse")
-	testing.expect_value(t, opts.seed, u64(1234))
-	testing.expect_value(t, opts.has_seed, true)
+	seed, given := opts.seed.?
+	testing.expect(t, given, "--seed should set the seed")
+	testing.expect_value(t, seed, u64(1234))
 
 	_, ok_bad, _ := parse_args({"--seed", "xyz"})
 	testing.expect(t, !ok_bad, "non-numeric seed should fail")
 }
 
-// --help is reported via opts.help with ok = true.
+// --help selects the usage mode with ok = true.
 @(test)
 test_parse_help :: proc(t: ^testing.T) {
 	opts, ok, _ := parse_args({"--help"})
 	testing.expect(t, ok, "--help should parse")
-	testing.expect_value(t, opts.help, true)
+	_, showing := opts.mode.(Show_Usage)
+	testing.expect(t, showing, "--help should select the usage mode")
 }
 
 // --scenario captures the name; --list sets the flag.
@@ -213,7 +218,8 @@ test_parse_scenario_and_list :: proc(t: ^testing.T) {
 
 	opts_list, ok_list, _ := parse_args({"--list"})
 	testing.expect(t, ok_list, "--list should parse")
-	testing.expect_value(t, opts_list.list, true)
+	_, listing := opts_list.mode.(List_Scenarios)
+	testing.expect(t, listing, "--list should select the catalogue mode")
 }
 
 // Unknown flags and value-less flags are usage errors with informative messages.
@@ -307,5 +313,7 @@ test_parse_combined :: proc(t: ^testing.T) {
 	testing.expect_value(t, opts.count, 10)
 	testing.expect_value(t, opts.format, norn.Output_Format.Pretty)
 	testing.expect_value(t, opts.output, "out.txt")
-	testing.expect_value(t, opts.seed, u64(9))
+	seed, given := opts.seed.?
+	testing.expect(t, given, "--seed should set the seed")
+	testing.expect_value(t, seed, u64(9))
 }

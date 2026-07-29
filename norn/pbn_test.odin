@@ -54,7 +54,8 @@ test_parse_pbn_opening_lead :: proc(t: ^testing.T) {
 	defer delete(deal_only)
 	plain, perr := parse_pbn_deal(deal_only)
 	testing.expect_value(t, perr, Pbn_Parse_Error.None)
-	testing.expect(t, !plain.has_opening_lead)
+	_, plain_has := plain.opening_lead.?
+	testing.expect(t, !plain_has)
 
 	// Append a `[Play "E"]` block whose first card is East's first card, written as a PBN token.
 	lead := original[.East][0]
@@ -64,9 +65,10 @@ test_parse_pbn_opening_lead :: proc(t: ^testing.T) {
 	strings.write_string(&b, " -\n")
 	board, err := parse_pbn_deal(strings.to_string(b))
 	testing.expect_value(t, err, Pbn_Parse_Error.None)
-	testing.expect(t, board.has_opening_lead)
-	testing.expect_value(t, board.opening_lead, lead)
-	testing.expect_value(t, board.opening_leader, Seat.East)
+	ol, has := board.opening_lead.?
+	testing.expect(t, has)
+	testing.expect_value(t, ol.card, lead)
+	testing.expect_value(t, ol.leader, Seat.East)
 }
 
 // The bare deal value (no surrounding `[Deal "..."]` tag) is accepted too.

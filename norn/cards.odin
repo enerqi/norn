@@ -69,6 +69,23 @@ DECK_SIZE :: SUIT_COUNT * RANK_COUNT // 52
 // cannot be passed where a Card is expected by accident.
 Card :: distinct u8
 
+// The ranks held in ONE suit — the unit almost every evaluator works over (see `Hand_Summary`). Backed
+// by a `u16` so it is exactly the bit-per-rank mask the hot paths want (bit `int(rank)` set iff held),
+// but a distinct TYPE: a raw `u16` length, hcp count, or another quantity cannot be passed where a
+// holding is expected, and membership reads `.Ace in ranks` rather than `m & ACE_BIT != 0`.
+Rank_Set :: bit_set[Rank;u16]
+
+// The bit-per-rank `u16` behind a `Rank_Set`, and back. The set IS that mask (`bit_set` guarantees the
+// layout), so both are free — they exist for the boundaries where a raw mask is genuinely wanted: an
+// external solver with its own bit conventions, or a serialised/hard-coded holding in a test.
+rank_mask :: #force_inline proc "contextless" (ranks: Rank_Set) -> u16 {
+	return transmute(u16)ranks
+}
+
+rank_set :: #force_inline proc "contextless" (mask: u16) -> Rank_Set {
+	return transmute(Rank_Set)mask
+}
+
 // Build a card from its suit and rank. This is the only place the suit*13+rank encoding is
 // applied, so the layout is defined in exactly one spot.
 make_card :: proc "contextless" (suit: Suit, rank: Rank) -> Card {

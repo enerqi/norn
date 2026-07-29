@@ -7,14 +7,15 @@ package norn
 	what's its shape" by rescanning all 13 on every query is wasteful when a predicate fires dozens
 	of such queries and reject sampling runs that predicate over millions of deals.
 
-	A `Hand_Summary` is the per-suit index almost every query actually wants: four 16-bit masks, one
-	per suit, with bit `r` set when the hand holds rank `r` (rank backing value 0..12). Built once
-	from a hand in 13 ops (`summarize`), it turns the hot queries into popcount / AND / bit-test:
+	A `Hand_Summary` is the per-suit index almost every query actually wants: four `Rank_Set`s, one
+	per suit, holding the ranks the hand has in that suit. A `Rank_Set` is a `bit_set[Rank; u16]` — the
+	same bit-per-rank u16 a hand-rolled mask would be, so the hot queries stay popcount / AND / bit-test,
+	but typed, so a length or a point count can't be passed as a holding:
 
-	  suit length   -> popcount(mask)
-	  holds(r)      -> mask & (1<<r)
-	  top_count(n)  -> popcount(mask & TOP_N)
-	  hcp/controls  -> a few bit tests
+	  suit length   -> card(ranks)
+	  holds(r)      -> r in ranks
+	  top_count(n)  -> card(ranks & TOP_N)
+	  hcp/controls  -> a few membership tests
 	  pattern       -> 4 popcounts (+ sort of 4)
 
 	The summary is a LOSSLESS re-encoding of a hand for evaluation — it drops only card ordering
@@ -31,44 +32,26 @@ package norn
 	combination); the rest are ported straight from deal's evaluators/utility/features libraries.
 */
 
-import "base:intrinsics"
-
-// Per-suit rank bitmasks. `suits[suit]` has bit `int(rank)` set iff the hand holds that card.
+// Per-suit rank sets. `suits[suit]` holds exactly the ranks the hand has in that suit.
 Hand_Summary :: struct {
-	suits: [Suit]u16,
+	suits: [Suit]Rank_Set,
 }
 
 // A whole deal's worth of summaries, indexed by seat (parallel to `Deal`).
 Deal_Summary :: [Seat]Hand_Summary
 
-// Honour bits, by rank backing value (Ace=12 … Ten=8).
+// The top ranks (ace downward), as sets of the top n. `TOP_RANKS[2]` is {A, K}; index 0..7 runs through
+// A K Q J T 9 8. Matches the `deal` `TopN` honour vectors up to Top7.
 @(private = "file")
-ACE_BIT :: u16(1) << u16(Rank.Ace)
-@(private = "file")
-KING_BIT :: u16(1) << u16(Rank.King)
-@(private = "file")
-QUEEN_BIT :: u16(1) << u16(Rank.Queen)
-@(private = "file")
-JACK_BIT :: u16(1) << u16(Rank.Jack)
-@(private = "file")
-TEN_BIT :: u16(1) << u16(Rank.Ten)
-@(private = "file")
-NINE_BIT :: u16(1) << u16(Rank.Nine)
-@(private = "file")
-EIGHT_BIT :: u16(1) << u16(Rank.Eight)
-
-// Masks of the top n ranks (ace downward), indexed by n (0..7, i.e. through A K Q J T 9 8).
-// `TOP_MASKS[2]` is A|K. Matches the `deal` `TopN` honour vectors up to Top7.
-@(private = "file")
-TOP_MASKS := [8]u16 {
-	0,
-	ACE_BIT,
-	ACE_BIT | KING_BIT,
-	ACE_BIT | KING_BIT | QUEEN_BIT,
-	ACE_BIT | KING_BIT | QUEEN_BIT | JACK_BIT,
-	ACE_BIT | KING_BIT | QUEEN_BIT | JACK_BIT | TEN_BIT,
-	ACE_BIT | KING_BIT | QUEEN_BIT | JACK_BIT | TEN_BIT | NINE_BIT,
-	ACE_BIT | KING_BIT | QUEEN_BIT | JACK_BIT | TEN_BIT | NINE_BIT | EIGHT_BIT,
+TOP_RANKS := [8]Rank_Set {
+	{},
+	{.Ace},
+	{.Ace, .King},
+	{.Ace, .King, .Queen},
+	{.Ace, .King, .Queen, .Jack},
+	{.Ace, .King, .Queen, .Jack, .Ten},
+	{.Ace, .King, .Queen, .Jack, .Ten, .Nine},
+	{.Ace, .King, .Queen, .Jack, .Ten, .Nine, .Eight},
 }
 
 // `baselose` table, indexed by suit length 0..13: the crude number of losers a suit of that length
@@ -93,7 +76,7 @@ DHCP_WEIGHTS := [4][4]int {
 summarize :: proc(hand: Hand) -> Hand_Summary {
 	s: Hand_Summary
 	for card in hand {
-		s.suits[card_suit(card)] |= u16(1) << u16(card_rank(card))
+		s.suits[card_suit(card)] += {card_rank(card)}
 	}
 	return s
 }
@@ -109,9 +92,22 @@ summarize_deal :: proc(board: Deal) -> Deal_Summary {
 
 // --- Counts and lookups. ---
 
+// The ranks the hand holds in `suit`. Sugar for the field, and the name to reach for in consumer code —
+// `suit_ranks(s, .Spades)` says what it is where `s.suits[.Spades]` says where it is stored.
+suit_ranks :: #force_inline proc "contextless" (s: Hand_Summary, suit: Suit) -> Rank_Set {
+	return s.suits[suit]
+}
+
+// The raw bit-per-rank `u16` for `suit` — the escape hatch for code with its own mask conventions (the
+// combo analyser's single-suit solvers, a double-dummy solver's encoding). Prefer `suit_ranks` in new
+// code; this exists so those callers say what they are doing instead of transmuting in place.
+suit_mask :: #force_inline proc "contextless" (s: Hand_Summary, suit: Suit) -> u16 {
+	return rank_mask(s.suits[suit])
+}
+
 // Number of cards held in `suit` (0..13).
 suit_length :: proc(s: Hand_Summary, suit: Suit) -> int {
-	return int(intrinsics.count_ones(s.suits[suit]))
+	return card(s.suits[suit])
 }
 
 // Named per-suit length shortcuts, mirroring deal's `spades $hand` / `hearts $hand` vocabulary.
@@ -122,7 +118,7 @@ club_length :: proc(s: Hand_Summary) -> int {return suit_length(s, .Clubs)}
 
 // Does the hand hold this exact card?
 holds :: proc(s: Hand_Summary, suit: Suit, rank: Rank) -> bool {
-	return s.suits[suit] & (u16(1) << u16(rank)) != 0
+	return rank in s.suits[suit]
 }
 
 // High-card points for the whole hand: Ace=4, King=3, Queen=2, Jack=1.
@@ -130,10 +126,10 @@ hcp :: proc(s: Hand_Summary) -> int {
 	total := 0
 	for suit in Suit {
 		m := s.suits[suit]
-		if m & ACE_BIT != 0 {total += 4}
-		if m & KING_BIT != 0 {total += 3}
-		if m & QUEEN_BIT != 0 {total += 2}
-		if m & JACK_BIT != 0 {total += 1}
+		if .Ace in m {total += 4}
+		if .King in m {total += 3}
+		if .Queen in m {total += 2}
+		if .Jack in m {total += 1}
 	}
 	return total
 }
@@ -143,8 +139,8 @@ controls :: proc(s: Hand_Summary) -> int {
 	total := 0
 	for suit in Suit {
 		m := s.suits[suit]
-		if m & ACE_BIT != 0 {total += 2}
-		if m & KING_BIT != 0 {total += 1}
+		if .Ace in m {total += 2}
+		if .King in m {total += 1}
 	}
 	return total
 }
@@ -152,16 +148,16 @@ controls :: proc(s: Hand_Summary) -> int {
 // How many of the top `n` ranks the hand holds in `suit` (deal's `TopN` honour vectors). `n` is
 // 0..7 (A K Q J T 9 8).
 top_count :: proc(s: Hand_Summary, suit: Suit, n: int) -> int {
-	return int(intrinsics.count_ones(s.suits[suit] & TOP_MASKS[n]))
+	return card(s.suits[suit] & TOP_RANKS[n])
 }
 
 // Weighted top-honour count for `suit`: ace, king and queen score 2 each; jack and ten score 1
 // each (deal `defvector Top5Q 2 2 2 1 1`). A solid AKQ is 6; AKQJT is 8.
 top5q :: proc(s: Hand_Summary, suit: Suit) -> int {
 	m := s.suits[suit]
-	high := ACE_BIT | KING_BIT | QUEEN_BIT
-	low := JACK_BIT | TEN_BIT
-	return 2 * int(intrinsics.count_ones(m & high)) + int(intrinsics.count_ones(m & low))
+	high := Rank_Set{.Ace, .King, .Queen}
+	low := Rank_Set{.Jack, .Ten}
+	return 2 * card(m & high) + card(m & low)
 }
 
 // Sum of `weights` over the top ranks held in `suit`, ace downward: `weights[0]` for the ace,
@@ -452,18 +448,20 @@ new_ltc :: proc(s: Hand_Summary) -> int {
 // shortage, weak-honour upgrades) are NOT computed here — they need the partnership context a single
 // `Hand_Summary` doesn't have.
 
+// The picture honours — A K Q J. The Ten is an honour but not a picture, and several OPC rules turn on
+// exactly that distinction.
 @(private = "file")
-PICTURE_BITS :: ACE_BIT | KING_BIT | QUEEN_BIT | JACK_BIT
+PICTURES :: Rank_Set{.Ace, .King, .Queen, .Jack}
 
-// Milton hcp of a single suit mask (Ace 4, King 3, Queen 2, Jack 1; Ten 0). Used by the OPC length
+// Milton hcp of a single suit holding (Ace 4, King 3, Queen 2, Jack 1; Ten 0). Used by the OPC length
 // component to tell a "good" (K+ / QJ) long suit from a ragged one.
 @(private = "file")
-milton_hcp :: proc(m: u16) -> int {
+milton_hcp :: proc(m: Rank_Set) -> int {
 	total := 0
-	if m & ACE_BIT != 0 {total += 4}
-	if m & KING_BIT != 0 {total += 3}
-	if m & QUEEN_BIT != 0 {total += 2}
-	if m & JACK_BIT != 0 {total += 1}
+	if .Ace in m {total += 4}
+	if .King in m {total += 3}
+	if .Queen in m {total += 2}
+	if .Jack in m {total += 1}
 	return total
 }
 
@@ -498,33 +496,33 @@ honour_points :: proc(s: Hand_Summary) -> Honour_Points {
 
 	for suit in Suit {
 		m := s.suits[suit]
-		length := int(intrinsics.count_ones(m))
+		length := card(m)
 		if length == 0 {
 			continue
 		}
 
-		a := m & ACE_BIT != 0
-		k := m & KING_BIT != 0
-		q := m & QUEEN_BIT != 0
-		j := m & JACK_BIT != 0
-		ten := m & TEN_BIT != 0
+		a := .Ace in m
+		k := .King in m
+		q := .Queen in m
+		j := .Jack in m
+		ten := .Ten in m
 		// Picture honours (A/K/Q/J — the Ten is not a picture) and "small" cards (Nine down to Two).
-		pics := int(intrinsics.count_ones(m & PICTURE_BITS))
-		xs := length - int(intrinsics.count_ones(m & (PICTURE_BITS | TEN_BIT)))
+		pics := card(m & PICTURES)
+		xs := length - card(m & (PICTURES + {.Ten}))
 
 		if a {total += 4.5}
 		if k {total += 3.0}
 		if q {
 			// A queen "accompanied" by another picture (A/K/J) pulls its full weight; isolated it is
 			// downvalued.
-			if m & (ACE_BIT | KING_BIT | JACK_BIT) != 0 {
+			if m & {.Ace, .King, .Jack} != {} {
 				total += 2.0
 			} else {
 				total += 1.5
 			}
 		}
 		if j {
-			if m & (ACE_BIT | KING_BIT | QUEEN_BIT) != 0 {
+			if m & {.Ace, .King, .Queen} != {} {
 				total += 1.0
 			} else {
 				total += 0.5
@@ -584,9 +582,9 @@ honour_points :: proc(s: Hand_Summary) -> Honour_Points {
 	has_ace := false
 	for suit in Suit {
 		m := s.suits[suit]
-		if m & KING_BIT != 0 {kings += 1}
-		if m & QUEEN_BIT != 0 {queens += 1}
-		if m & ACE_BIT != 0 {has_ace = true}
+		if .King in m {kings += 1}
+		if .Queen in m {queens += 1}
+		if .Ace in m {has_ace = true}
 	}
 	no_kings := kings == 0
 	no_queens := queens == 0
@@ -614,7 +612,7 @@ length_points :: proc(s: Hand_Summary) -> f32 {
 	total: f32 = 0
 	for suit in Suit {
 		m := s.suits[suit]
-		length := int(intrinsics.count_ones(m))
+		length := card(m)
 		good := milton_hcp(m) >= 3
 		if length == 5 && good {total += 1.0}
 		if length >= 6 && good {total += 2.0}
@@ -648,7 +646,7 @@ distribution_points :: proc(s: Hand_Summary) -> Distribution_Points {
 	total: f32 = 0
 	nt_adjust: f32 = 0
 
-	if tripletons == 3 {total -= 1.0} // 4-3-3-3 flat
+	if tripletons == 3 {total -= 1.0} 	// 4-3-3-3 flat
 	if doubletons == 2 {total += 1.0}
 	if singletons > 0 {
 		total += f32(singletons) * 2.0
@@ -773,29 +771,29 @@ opc_fit_points :: proc(combined_length: int) -> f32 {
 // for +1. Three-plus cards, or a doubleton that is neither (Ax, QJ, KQ, …), is neutral. Caller applies
 // this only when PARTNER is long (>=5) in the suit. (opc `with_partners_long_suit`.)
 @(private)
-opc_opposite_long_suit :: proc(m: u16, l: int) -> f32 {
+opc_opposite_long_suit :: proc(m: Rank_Set, l: int) -> f32 {
 	v, _ := opc_opposite_long_suit_detail(m, l)
 	return v
 }
 
 // As opc_opposite_long_suit, also returning WHICH case fired (for the breakdown's labelled entry).
 @(private)
-opc_opposite_long_suit_detail :: proc(m: u16, l: int) -> (f32, Opc_Reason) {
+opc_opposite_long_suit_detail :: proc(m: Rank_Set, l: int) -> (f32, Opc_Reason) {
 	switch l {
 	case 0:
 		return -3.0, .Misfit_Void
 	case 1:
 		return -2.0, .Misfit_Singleton
 	case 2:
-		if m & (PICTURE_BITS | TEN_BIT) == 0 {
+		if m & (PICTURES + {.Ten}) == {} {
 			return -1.0, .Misfit_Xx // xx: two small cards
 		}
 		// Exactly one of K/Q/J plus a small card (no ace, no ten) is Kx/Qx/Jx; a bare JT also half-fits.
-		honours := int(intrinsics.count_ones(m & (KING_BIT | QUEEN_BIT | JACK_BIT)))
-		if honours == 1 && m & (ACE_BIT | TEN_BIT) == 0 {
+		honours := card(m & {.King, .Queen, .Jack})
+		if honours == 1 && m & {.Ace, .Ten} == {} {
 			return 1.0, .Semi_Fit // Kx / Qx / Jx
 		}
-		if m & JACK_BIT != 0 && m & TEN_BIT != 0 {
+		if .Jack in m && .Ten in m {
 			return 1.0, .Semi_Fit // JT
 		}
 	}
@@ -808,24 +806,24 @@ opc_opposite_long_suit_detail :: proc(m: u16, l: int) -> (f32, Opc_Reason) {
 // singleton only (+1). Caller applies this only when PARTNER is short (<=1) in the suit. (opc
 // `with_partners_shortage`.)
 @(private)
-opc_honour_opposite_shortage :: proc(m: u16, partner_length: int) -> f32 {
+opc_honour_opposite_shortage :: proc(m: Rank_Set, partner_length: int) -> f32 {
 	v, _ := opc_honour_opposite_shortage_detail(m, partner_length)
 	return v
 }
 
 // As opc_honour_opposite_shortage, also returning WHICH case fired (for the breakdown's labelled entry).
 @(private)
-opc_honour_opposite_shortage_detail :: proc(m: u16, partner_length: int) -> (f32, Opc_Reason) {
+opc_honour_opposite_shortage_detail :: proc(m: Rank_Set, partner_length: int) -> (f32, Opc_Reason) {
 	void := partner_length == 0
-	if m & (KING_BIT | QUEEN_BIT | JACK_BIT) != 0 {
+	if m & {.King, .Queen, .Jack} != {} {
 		if void {return -3.0, .Wasted_Void}
 		return -2.0, .Wasted_Singleton
 	}
-	if m & ACE_BIT == 0 {
+	if .Ace not_in m {
 		if void {return 3.0, .Freed_Void}
 		return 2.0, .Freed_Singleton
 	}
-	if void {return 0.0, .None} // nothing to free opposite a void with a bare ace
+	if void {return 0.0, .None} 	// nothing to free opposite a void with a bare ace
 	return 1.0, .Freed_Ace_Singleton
 }
 
@@ -833,14 +831,14 @@ opc_honour_opposite_shortage_detail :: proc(m: u16, partner_length: int) -> (f32
 // the full QJT (which already pulls its weight), yet holding at least one picture honour → +1. Caller
 // applies this per hand only in a suit that is an eight-plus combined fit. (opc `fitting_weak_honours`.)
 @(private)
-opc_weak_honour_fit_upgrade :: proc(m: u16) -> f32 {
+opc_weak_honour_fit_upgrade :: proc(m: Rank_Set) -> f32 {
 	if milton_hcp(m) >= 4 {
 		return 0.0
 	}
-	if m & (QUEEN_BIT | JACK_BIT | TEN_BIT) == (QUEEN_BIT | JACK_BIT | TEN_BIT) {
+	if (Rank_Set{.Queen, .Jack, .Ten}) <= m {
 		return 0.0 // QJT: excluded — essentially four points already
 	}
-	if m & PICTURE_BITS != 0 {
+	if m & PICTURES != {} {
 		return 1.0
 	}
 	return 0.0
@@ -858,6 +856,17 @@ is_4333 :: proc(s: Hand_Summary) -> bool {
 	return threes == 3
 }
 
+// A hand in its partnership ROLE. Most OPC adjustments are symmetric — a misfit is a misfit whichever
+// hand is short — but three are NOT: the responder's base is capped where the opener's is not, and the
+// ruffing value belongs to the responder alone (the opener's shortage is already inside its opening
+// base). Those procs take `Responder`, so the opener cannot reach them by accident: the roles are
+// decided in ONE place (`combined_opc_breakdown`, by strength) and the type carries that decision.
+// Cast to `Hand_Summary` for the symmetric evaluators.
+@(private)
+Opener :: distinct Hand_Summary
+@(private)
+Responder :: distinct Hand_Summary
+
 // The base OPC a RESPONDER/advancer brings to the partnership total — always the non-opening honour
 // count (a responder never gets the opener's aceless dock), but for a SUIT contract its Length points
 // are capped at 2 and its Distribution points shrink to only the -1 flat 4-3-3-3 penalty: a responder's
@@ -867,7 +876,8 @@ is_4333 :: proc(s: Hand_Summary) -> bool {
 // in full — so the NT base is just the ordinary non-opening NT total. (opc render_summary: "Responder/
 // Advancer only includes max 2 Length points and the -1 4333 Distribution points, UNLESS ... NT".)
 @(private)
-opc_responder_base :: proc(s: Hand_Summary, is_nt: bool) -> f32 {
+opc_responder_base :: proc(r: Responder, is_nt: bool) -> f32 {
+	s := Hand_Summary(r)
 	o := opc_points(s)
 	if is_nt {
 		return o.non_opening_nt
@@ -944,8 +954,8 @@ opc_per_suit_mirror_penalty :: proc(a, b: Hand_Summary) -> f32 {
 // "Distribution-Fit points".) The composition applies this only for a real (8+) trump fit and only to
 // the RESPONDER — the opener already carries its own shortage in its opening base.
 @(private)
-opc_support_ruffing :: proc(s: Hand_Summary, trump: Suit) -> f32 {
-	v, _, _ := opc_support_ruffing_detail(s, trump)
+opc_support_ruffing :: proc(r: Responder, trump: Suit) -> f32 {
+	v, _, _ := opc_support_ruffing_detail(r, trump)
 	return v
 }
 
@@ -953,7 +963,8 @@ opc_support_ruffing :: proc(s: Hand_Summary, trump: Suit) -> f32 {
 // ruffs (2-4 support), or the trump suit itself (5+ long trump). `suit`/`reason` are meaningful only
 // when the returned value is non-zero.
 @(private)
-opc_support_ruffing_detail :: proc(s: Hand_Summary, trump: Suit) -> (f32, Opc_Reason, Suit) {
+opc_support_ruffing_detail :: proc(r: Responder, trump: Suit) -> (f32, Opc_Reason, Suit) {
+	s := Hand_Summary(r)
 	rt := suit_length(s, trump)
 	if rt >= 5 {
 		return distribution_points(s).suit, .Ruff_Long_Trump, trump // long trump: full opening-style shortage value
@@ -1037,7 +1048,9 @@ opc_push :: proc(r: ^Opc_Breakdown, suit: Suit, value: f32, reason: Opc_Reason, 
 }
 
 // The partnership's combined OPC for a contract of the given strain, broken into its component
-// adjustments (see Opc_Breakdown). The stronger hand (higher non-opening total) is treated as the
+// adjustments (see Opc_Breakdown). `a` and `b` are INTERCHANGEABLE — the roles are derived from the
+// hands, not from argument position, so swapping them returns the same breakdown. The stronger hand
+// (higher non-opening total) is treated as the
 // OPENER — keeping its full opening total, including any aceless dock — while the weaker RESPONDS with
 // its capped responder base (see opc_responder_base). To that base it adds, per suit: fit points for
 // every 8+ combined length (so a DOUBLE fit counts twice), a misfit/semi-fit where one hand is long
@@ -1058,13 +1071,16 @@ combined_opc_breakdown :: proc(a, b: Hand_Summary, trump: Maybe(Suit)) -> Opc_Br
 	a_non := oa.non_opening_nt if is_nt else oa.non_opening_suit
 	b_non := ob.non_opening_nt if is_nt else ob.non_opening_suit
 
-	// Stronger hand (by non-opening total) opens; the weaker responds with its capped base.
-	opener, responder: Hand_Summary
+	// Stronger hand (by non-opening total) opens; the weaker responds with its capped base. This is the
+	// ONE place the roles are decided — from here they travel as `Opener`/`Responder`, so the asymmetric
+	// adjustments below cannot be handed the wrong hand.
+	opener: Opener
+	responder: Responder
 	oo, ro: Opc_Points // the opener's / responder's own single-hand valuations
 	if a_non >= b_non {
-		opener, responder, oo, ro = a, b, oa, ob
+		opener, responder, oo, ro = Opener(a), Responder(b), oa, ob
 	} else {
-		opener, responder, oo, ro = b, a, ob, oa
+		opener, responder, oo, ro = Opener(b), Responder(a), ob, oa
 	}
 
 	r: Opc_Breakdown
@@ -1084,7 +1100,7 @@ combined_opc_breakdown :: proc(a, b: Hand_Summary, trump: Maybe(Suit)) -> Opc_Br
 		rl := ro.length
 		if rl > 2.0 {rl = 2.0}
 		r.responder_l = rl
-		r.responder_d = -1.0 if is_4333(responder) else 0.0
+		r.responder_d = -1.0 if is_4333(Hand_Summary(responder)) else 0.0
 	}
 	r.responder_base = r.responder_h + r.responder_l + r.responder_d
 
@@ -1132,7 +1148,7 @@ combined_opc_breakdown :: proc(a, b: Hand_Summary, trump: Maybe(Suit)) -> Opc_Br
 
 	// Responder's ruffing value, once a genuine trump fit backs the strain.
 	if t, is_suit := trump.?; is_suit {
-		if suit_length(opener, t) + suit_length(responder, t) >= 8 {
+		if suit_length(Hand_Summary(opener), t) + suit_length(Hand_Summary(responder), t) >= 8 {
 			v, why, rsuit := opc_support_ruffing_detail(responder, t)
 			r.ruffing = v
 			opc_push(&r, rsuit, v, why)
@@ -1155,15 +1171,7 @@ combined_opc_breakdown :: proc(a, b: Hand_Summary, trump: Maybe(Suit)) -> Opc_Br
 		}
 	}
 
-	r.total =
-		r.opener_base +
-		r.responder_base +
-		r.fit +
-		r.misfit +
-		r.wasted +
-		r.weak_fit +
-		r.ruffing +
-		r.mirror
+	r.total = r.opener_base + r.responder_base + r.fit + r.misfit + r.wasted + r.weak_fit + r.ruffing + r.mirror
 	return r
 }
 

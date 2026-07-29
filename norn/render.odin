@@ -228,12 +228,54 @@ render_deal_numeric :: proc(builder: ^strings.Builder, board: Deal) {
 // order used by the line/pretty renderers.
 HANDVIEWER_SEAT_ORDER :: [SEAT_COUNT]Seat{.North, .South, .East, .West}
 
-// Handviewer vulnerability codes (none / NS / EW / both) and dealer codes (N S E W), used when
-// `randomize_table` picks a random table; index 0 of each is the deterministic default.
+// Which partnership is vulnerable. Written out rather than carried as an index into a codes table: the
+// renderers ask "is N/S vulnerable" far more often than they print the code, and `vul == 1 || vul == 3`
+// is the kind of arithmetic that silently rots when a table is reordered.
+Vulnerability :: enum {
+	None,
+	North_South,
+	East_West,
+	Both,
+}
+
+// Is `seat`'s partnership vulnerable under `v`?
+vulnerable :: proc "contextless" (v: Vulnerability, seat: Seat) -> bool {
+	ns := seat == .North || seat == .South
+	switch v {
+	case .None:
+		return false
+	case .Both:
+		return true
+	case .North_South:
+		return ns
+	case .East_West:
+		return !ns
+	}
+	return false
+}
+
+// The order the table randomisers draw a dealer in — N S E W (the handviewer's own dealer-code order),
+// NOT `Seat`'s clockwise N E S W backing order. Kept explicit so a random draw reproduces the same
+// board for a given seed as it did when this was a parallel array of code strings.
 @(private = "file")
-HANDVIEWER_VULNERABILITIES := [4]string{"-", "n", "e", "b"}
+DEALER_DRAW_ORDER := [SEAT_COUNT]Seat{.North, .South, .East, .West}
+
+// Draw a random table (vulnerability + dealer) from `context.random_generator`, in that order.
 @(private = "file")
-HANDVIEWER_DEALERS := [4]string{"n", "s", "e", "w"}
+random_table :: proc() -> (v: Vulnerability, dealer: Seat) {
+	v = Vulnerability(rand.int_max(len(Vulnerability)))
+	dealer = DEALER_DRAW_ORDER[rand.int_max(SEAT_COUNT)]
+	return
+}
+
+// Handviewer vulnerability codes (none / NS / EW / both); the dealer code is the seat's own letter.
+@(private = "file")
+HANDVIEWER_VULNERABILITY_CODES := [Vulnerability]string {
+	.None        = "-",
+	.North_South = "n",
+	.East_West   = "e",
+	.Both        = "b",
+}
 
 // Write `board` as a BBO handviewer query string (see the `Handviewer` doc on `Output_Format`):
 // `n=s..h..d..c..&s=...&e=...&w=...&a=_&v=..&d=..`, no trailing newline. With `randomize_table` the
@@ -250,17 +292,16 @@ render_deal_handviewer :: proc(builder: ^strings.Builder, board: Deal, randomize
 		strings.write_byte(builder, '&')
 	}
 
-	vulnerability := HANDVIEWER_VULNERABILITIES[0]
-	dealer := HANDVIEWER_DEALERS[0]
+	vulnerability := Vulnerability.None
+	dealer := Seat.North
 	if randomize_table {
-		vulnerability = HANDVIEWER_VULNERABILITIES[rand.int_max(len(HANDVIEWER_VULNERABILITIES))]
-		dealer = HANDVIEWER_DEALERS[rand.int_max(len(HANDVIEWER_DEALERS))]
+		vulnerability, dealer = random_table()
 	}
 	// Empty auction, then the (fixed or random) vulnerability and dealer.
 	strings.write_string(builder, "a=_&v=")
-	strings.write_string(builder, vulnerability)
+	strings.write_string(builder, HANDVIEWER_VULNERABILITY_CODES[vulnerability])
 	strings.write_string(builder, "&d=")
-	strings.write_string(builder, dealer)
+	strings.write_rune(builder, handviewer_seat_letter(dealer))
 }
 
 // The HTML fragment that opens one handviewer iframe, up to (and including) the `?` of the URL.
@@ -285,14 +326,6 @@ render_deal_html_iframe :: proc(builder: ^strings.Builder, board: Deal, randomiz
 	strings.write_string(builder, HTML_IFRAME_SUFFIX)
 }
 
-// Human-readable vulnerability / dealer labels for the card diagram's centre table. Indexed in
-// parallel with HANDVIEWER_VULNERABILITIES / HANDVIEWER_DEALERS, so a random draw shares the same
-// semantics as the handviewer formats; index 0 of each is the deterministic default.
-@(private = "file")
-HTML_CARDS_VULNERABILITIES := [4]string{"None", "NS", "EW", "Both"}
-@(private = "file")
-HTML_CARDS_DEALERS := [4]string{"N", "S", "E", "W"}
-
 // Write `board` as a text compass diagram (one deal of an `Html_Cards` page): North on top, then a
 // middle row of West / centre table / East, then South. Each hand lists its four suits (S H D C) as
 // a suit glyph plus ranks, a void shown as an em-dash. The centre table shows dealer and
@@ -309,17 +342,20 @@ render_deal_html_cards :: proc(
 	known := bit_set[Seat]{.North, .East, .South, .West},
 ) {
 	full := known == bit_set[Seat]{.North, .East, .South, .West}
-	vul_index := 0
-	dealer_index := 0
+	// The seat labels are coloured by vulnerability. A 2-hand board has no auction context, so it stays
+	// neutral: no vulnerability, and NO dealer at all — hence `Maybe(Seat)` rather than an empty string.
+	vulnerability := Vulnerability.None
+	dealer: Maybe(Seat)
 	if randomize_table && full {
-		vul_index = rand.int_max(len(HTML_CARDS_VULNERABILITIES))
-		dealer_index = rand.int_max(len(HTML_CARDS_DEALERS))
+		v, d := random_table()
+		vulnerability, dealer = v, d
 	}
-	// Vulnerability by partnership: index 1 = NS, 2 = EW, 3 = Both (0 = None). The seat labels are
-	// coloured from this. A 2-hand board has no auction context, so it stays neutral (no vul, no dealer).
-	ns_vulnerable := vul_index == 1 || vul_index == 3
-	ew_vulnerable := vul_index == 2 || vul_index == 3
-	dealer := HTML_CARDS_DEALERS[dealer_index] if full else "" // "N"/"S"/"E"/"W", or none when partial
+	ns_vulnerable := vulnerable(vulnerability, .North)
+	ew_vulnerable := vulnerable(vulnerability, .East)
+	is_dealer :: proc(dealer: Maybe(Seat), seat: Seat) -> bool {
+		d, has := dealer.?
+		return has && d == seat
+	}
 
 	// Per-seat summary (hcp + suit-length pattern). Unknown seats summarise a zeroed hand, but the
 	// compass never reads those (they render face-down) and the stats box below skips them.
@@ -372,16 +408,16 @@ render_deal_html_cards :: proc(
 	}
 	strings.write_string(builder, `</div>`)
 
-	write_compass_seat(builder, board, ds, .North, "N", "n", ns_vulnerable, dealer == "N", .North in known)
+	write_compass_seat(builder, board, ds, .North, "N", "n", ns_vulnerable, is_dealer(dealer, .North), .North in known)
 	strings.write_string(builder, `<div class="mid">`)
-	write_compass_seat(builder, board, ds, .West, "W", "w", ew_vulnerable, dealer == "W", .West in known)
+	write_compass_seat(builder, board, ds, .West, "W", "w", ew_vulnerable, is_dealer(dealer, .West), .West in known)
 	// Centre marker: the script fills it per slide — the board number in the 4-hand view, a
 	// "Reveal all" button when a single hand is focused. Vulnerability is shown by the seat-pill
 	// colours, so it is no longer spelled out here.
 	strings.write_string(builder, `<div class="table"></div>`)
-	write_compass_seat(builder, board, ds, .East, "E", "e", ew_vulnerable, dealer == "E", .East in known)
+	write_compass_seat(builder, board, ds, .East, "E", "e", ew_vulnerable, is_dealer(dealer, .East), .East in known)
 	strings.write_string(builder, `</div>`) // .mid
-	write_compass_seat(builder, board, ds, .South, "S", "s", ns_vulnerable, dealer == "S", .South in known)
+	write_compass_seat(builder, board, ds, .South, "S", "s", ns_vulnerable, is_dealer(dealer, .South), .South in known)
 	strings.write_string(builder, `</div>`) // .compass
 }
 
@@ -644,14 +680,44 @@ shape_probability :: proc(p: [SUIT_COUNT]int) -> string {
 // `hcp_probability` for the per-hand HCP annotation.
 @(private)
 HCP_PROBABILITY := [38]f64 {
-	0.00363896, 0.00788442, 0.0135612, 0.0246236, 0.0384544,
-	0.0518619, 0.065541, 0.0802809, 0.0889219, 0.0935623,
-	0.0940511, 0.0894468, 0.0802687, 0.0691433, 0.0569332,
-	0.0442368, 0.0331092, 0.0236169, 0.0160508, 0.0103617,
-	0.00643536, 0.00377867, 0.00210043, 0.00111904, 0.000559034,
-	0.000264278, 0.000116683, 4.90666e-05, 1.85677e-05, 6.67165e-06,
-	2.19849e-06, 6.11319e-07, 1.71896e-07, 3.52118e-08, 7.06127e-09,
-	9.82656e-10, 9.44862e-11, 6.29908e-12,
+	0.00363896,
+	0.00788442,
+	0.0135612,
+	0.0246236,
+	0.0384544,
+	0.0518619,
+	0.065541,
+	0.0802809,
+	0.0889219,
+	0.0935623,
+	0.0940511,
+	0.0894468,
+	0.0802687,
+	0.0691433,
+	0.0569332,
+	0.0442368,
+	0.0331092,
+	0.0236169,
+	0.0160508,
+	0.0103617,
+	0.00643536,
+	0.00377867,
+	0.00210043,
+	0.00111904,
+	0.000559034,
+	0.000264278,
+	0.000116683,
+	4.90666e-05,
+	1.85677e-05,
+	6.67165e-06,
+	2.19849e-06,
+	6.11319e-07,
+	1.71896e-07,
+	3.52118e-08,
+	7.06127e-09,
+	9.82656e-10,
+	9.44862e-11,
+	6.29908e-12,
 }
 
 // How likely this hand's HCP total is, as two percentages: `exact` = chance of exactly that many
@@ -682,9 +748,9 @@ suit_glyph :: proc "contextless" (suit: Suit) -> string {
 	return "?" // unreachable: the switch above is exhaustive over Suit
 }
 
-// The header emitted once before the deals of an `Html`-format run (everything up to the deal divs).
+// The header emitted once before the deals of an `Html`-format (BBO handviewer) run (everything up to the deal divs).
 @(private = "file")
-HTML_PAGE_HEADER :: `<!DOCTYPE html>
+HTML_HANDVIEWER_PAGE_HEADER :: `<!DOCTYPE html>
 <head>
     <title>{{TITLE}}</title>
     <meta charset="utf-8">
@@ -703,1543 +769,21 @@ HTML_PAGE_HEADER :: `<!DOCTYPE html>
 
 // The footer emitted once after the deals of an `Html`-format run.
 @(private = "file")
-HTML_PAGE_FOOTER :: `</body>
+HTML_HANDVIEWER_PAGE_FOOTER :: `</body>
 `
 
 // The header for an `Html_Cards` run: page chrome, the carousel CSS, the toolbar, and the open
 // viewport/track that the rendered compass diagrams are written into. The matching footer closes the
-// track and carries the script. Kept as a raw literal (it contains no backticks) so it needs no
-// escaping. The script deliberately uses plain string concatenation, not template literals, to keep
-// the whole thing backtick-free.
+// track and carries the script. Both live in `.html.tmpl` files beside this one and are `#load`ed at
+// COMPILE time — the constant is the file's bytes, so there is no runtime file I/O and the binary
+// stays self-contained, while the editor sees real HTML/CSS/JS instead of one long Odin literal.
 @(private = "file")
-HTML_CARDS_PAGE_HEADER :: `<!DOCTYPE html>
-<head>
-    <title>{{TITLE}}</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="https://fonts.googleapis.com/css?family=Open Sans" rel="stylesheet">
-    <style>
-        :root { --ink:#222; --red:#c00; --line:#ccc; --sel:#2b6cb0; --felt:#3f7d5c; --felt-dark:#2f5f46; }
-        * { box-sizing: border-box; }
-        body { font-family: 'Open Sans', sans-serif; color: var(--ink); margin: 0; }
-        /* Compact control pill, pinned top-left — fit-content so its background never spans the width
-           and blocks the centred card on wide screens. */
-        .toolbar {
-            position: sticky; top: 0; z-index: 10; width: fit-content;
-            background: #fff; border: 1px solid var(--line); border-radius: 0 0 10px 0;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-            display: flex; flex-wrap: wrap; gap: 0.3rem 0.6rem; align-items: center;
-            padding: 0.35rem 0.6rem;
-        }
-        .toolbar button { font: inherit; font-size: 0.9rem; padding: 0.15rem 0.45rem; cursor: pointer; border: 1px solid var(--line); background: #f7f7f7; border-radius: 4px; }
-        .toolbar button:hover { background: #ececec; }
-        .toolbar .sel { background: var(--sel); color: #fff; border-color: var(--sel); }
-        .toolbar .off { opacity: 0.5; }
-        .toolbar .group { display: flex; gap: 0.2rem; align-items: center; }
-        .toolbar .counter { font-variant-numeric: tabular-nums; font-size: 0.9rem; }
-        .toolbar input { font: inherit; font-size: 0.9rem; width: 3rem; padding: 0.15rem 0.25rem; }
-        .toolbar .lbl-txt { color: #666; font-size: 0.78rem; }
-        /* Scenario name, centred above the carousel. Sits below the pinned toolbar pill (top-left),
-           so it never overlaps it. */
-        .page-title { text-align: center; margin: 0.4rem 0.5rem 0; font-size: clamp(1rem, 2.6vw, 1.6rem); font-weight: 600; color: var(--ink); }
-        .viewport { overflow: hidden; width: 100%; padding: 0.75rem 0; }
-        .track { display: flex; align-items: center; gap: 40px; transition: transform 0.35s ease; will-change: transform; }
-        /* Hug the (grouped) board content and cap at the viewport width, so the slide scales with the
-           mid-row gap above — wide on big monitors, compact at 1080p — rather than a fixed pixel width. */
-        .slide {
-            flex: 0 0 auto; width: fit-content; max-width: 96vw;
-            opacity: 0.4; transform: scale(0.9); transition: opacity 0.35s ease, transform 0.35s ease;
-        }
-        .slide.active { opacity: 1; transform: scale(1); }
-        /* The board is a green "tablecloth"; each hand sits on it as its own light card panel. */
-        .compass {
-            position: relative;
-            border: 1px solid var(--felt-dark); border-radius: 12px; background: var(--felt);
-            padding: clamp(0.6rem, 1.5vh, 1.5rem) clamp(0.5rem, 3vw, 2rem);
-            display: flex; flex-direction: column; gap: clamp(0.35rem, 1.1vh, 1.2rem);
-        }
-        .slide.active .compass { box-shadow: 0 0 0 3px var(--sel), 0 8px 24px rgba(0,0,0,0.25); }
-        /* Partnership HCP summary, pinned to the felt's top-right corner. */
-        .stats {
-            position: absolute; top: 1.1rem; right: 1.4rem; text-align: right;
-            background: rgba(255,255,255,0.92); color: #333; padding: 0.5rem 0.7rem; border-radius: 8px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-            font-family: 'Consolas', 'Courier New', monospace; font-size: 1.05rem; line-height: 1.5;
-        }
-        .stats .splits { margin-top: 0.35rem; border-top: 1px solid #ddd; padding-top: 0.3rem; }
-        .stats .split { display: flex; justify-content: flex-end; align-items: baseline; gap: 0.45rem; }
-        .stats .split .pct { color: #888; min-width: 4.3em; text-align: right; }
-        .stats .ssym { font-size: 1.15em; }
-        .ssym.s { color: Black; } .ssym.h { color: Red; } .ssym.d { color: Orange; } .ssym.c { color: MediumSeaGreen; }
-        /* Per-hand shape pattern + how common it is, under each hand's cards. */
-        .hcp { margin-top: 0.25rem; font-family: 'Open Sans', sans-serif; font-size: 0.5em; font-weight: 600; color: #555; }
-        .opc { margin-top: 0.1rem; font-family: 'Open Sans', sans-serif; font-size: 0.42em; color: #777; }
-        .shape {
-            margin-top: 0.1rem; font-family: 'Open Sans', sans-serif; font-size: 0.4em;
-            font-weight: 300; color: #9a9a9a; opacity: 0.75;
-        }
-        .prob { color: #b5b5b5; }
-        .hcp .prob { font-weight: 400; }
-        .hcp[title] { cursor: help; }
-        .hcp[title] .prob { text-decoration: underline dotted #cfcfcf; text-underline-offset: 2px; }
-        /* West / table / East grouped and centred, with a gap that grows on wide monitors and shrinks
-           at lower resolutions so the hands compress toward one another instead of flinging to the edges. */
-        /* A 1fr | auto | 1fr grid: the centre table lands at the exact board centre (aligned with the
-           N/S cards above/below) no matter how wide the W/E hands are, while W/E hug the centre gap.
-           Top-align (align-items) so the West and East pills line up regardless of card height — the
-           dealer's "Dealer" tag makes one card taller, and centring would offset its top-anchored pill. */
-        .compass .mid {
-            display: grid; grid-template-columns: 1fr auto 1fr; align-items: flex-start;
-            column-gap: clamp(0.5rem, 7vw, 6rem);
-        }
-        .compass .mid > .seat-w { justify-self: end; }
-        .compass .mid > .seat-e { justify-self: start; }
-        .compass .mid > .table { justify-self: center; align-self: center; }
-        /* Card text sizes off the SMALLER of viewport height/width, so it fits both axes — key for
-           phones where width is the tight one (landscape) or height is (portrait). */
-        .seat {
-            font-family: 'Consolas', 'Courier New', monospace;
-            font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem);
-            line-height: 1.28; min-width: clamp(5rem, 20vw, 11rem);
-            background: #fff; border-radius: 10px; padding: 0.85rem 1rem 0.45rem; box-shadow: 0 2px 6px rgba(0,0,0,0.25);
-        }
-        /* North/South: centre the hand as a block but keep its suit lines left-aligned to the suit
-           symbol, so the symbols form a column exactly like East/West (which are already left-aligned). */
-        .compass > .seat { width: fit-content; margin: 0 auto; }
-        /* The dealer's pill carries a ring that needs clearance from the card's top edge; give EVERY
-           seat that clearance (in the base padding above) so the dealer card is not taller than the
-           rest — otherwise the E/W pills, centred in the mid row, misalign when exactly one is dealer. */
-        /* Seat label: a big pill coloured by vulnerability (red = vulnerable, green = not). */
-        .seat .lbl {
-            display: inline-block; font-weight: 700; font-size: 1.7em; line-height: 1;
-            padding: 0.02em 0.28em; border-radius: 14px; color: #fff; margin-bottom: 0.25rem;
-        }
-        .seat.vul .lbl { background: var(--red); }
-        .seat.nonvul .lbl { background: ForestGreen; }
-        /* Dealer: ring around the pill plus a tag underneath. */
-        .seat.is-dealer .lbl { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--sel); }
-        /* Face-down defender on a 2-hand (declarer + dummy) board: pill + a big "?" placeholder. */
-        .seat.facedown { opacity: 0.9; }
-        .seat.facedown .unknown-hand {
-            font-size: 2.4em; color: #9fb0c0; text-align: center; padding: 0.5em 0.7em 0.2em; line-height: 1;
-        }
-        .dtag {
-            display: block; margin: 0.35rem 0 0.4rem; font-family: 'Open Sans', sans-serif;
-            font-size: 0.38em; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sel);
-        }
-        /* Four-colour suits, matching the bidding-system stylesheet (bml.css). */
-        .suit { display: block; white-space: nowrap; }
-        .suit.s { color: Black; }
-        .suit.h { color: Red; }
-        .suit.d { color: Orange; }
-        .suit.c { color: MediumSeaGreen; }
-        .suit .sym { display: inline-block; width: 1.15em; }
-        .table {
-            border: 1px solid rgba(255,255,255,0.35); border-radius: 8px; padding: 0.7rem 1.1rem; text-align: center;
-            font-size: 1.3rem; color: #fff; background: rgba(255,255,255,0.12); white-space: nowrap;
-        }
-        .par { margin-top: clamp(0.4rem, 1.1vh, 1rem); text-align: center; color: #555; font-size: clamp(1rem, 1.8vh, 1.3rem); }
-        /* The board's .combo div carries only the raw per-suit distributions (data-suits JSON). To keep
-           the board short (no page scroll), inline it is just a ONE-LINE summary — the full interactive
-           trick table lives in the CCA overlay panel, which is fixed/out-of-flow so it never adds page
-           height. Both are built client-side and react to the toolbar's "tricks >=" slider. */
-        .combo {
-            margin-top: clamp(0.3rem, 0.8vh, 0.7rem); text-align: center; color: #555;
-            font-family: 'Consolas', 'Courier New', monospace; font-size: clamp(0.55rem, 1.35vh, 0.9rem);
-        }
-        .combo .cmini { font-weight: 700; color: var(--sel); letter-spacing: 0.05em; margin-right: 0.45rem; }
-        /* The CCA overlay: a fixed, floating panel with the full trick-chance table for the current
-           board. position:fixed keeps it OUT of document flow (the board never grows), and it caps its
-           own height and scrolls internally, so the page itself never gains a scrollbar. */
-        .cca-panel {
-            position: fixed; left: 0.6rem; bottom: 0.6rem; z-index: 20;
-            max-width: min(96vw, 44rem); max-height: 78vh; overflow: auto;
-            background: #fff; border: 1px solid var(--line); border-radius: 10px;
-            box-shadow: 0 6px 24px rgba(0,0,0,0.28); padding: 0.55rem 0.8rem 0.7rem;
-        }
-        .cca-panel[hidden] { display: none; }
-        /* Narrow mode (user toggle): cap the panel so it can't span both E/W hands on a small viewport;
-           the wide trick table then scrolls sideways inside its own box instead of covering the cards. */
-        .cca-panel.narrow { max-width: min(94vw, 26rem); }
-        .cca-panel.narrow #nc-cca-body { overflow-x: auto; }
-        /* Suits-collapsed (user toggle): hide the per-suit rows (♠♥♦♣ + their blind sub-rows), leaving the
-           tot / ≥k / sd totals — saves vertical height when the viewport is short. */
-        .cca-panel.suits-collapsed .ct tbody tr[class*="suit-"] { display: none; }
-        #nc-cca-narrow.sel, #nc-cca-rows.sel { color: var(--sel); }
-        .cca-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem; margin-bottom: 0.45rem; }
-        .cca-head b { color: var(--ink); }
-        .cca-sub { color: #888; font-size: 0.85rem; }
-        /* Small pill buttons shared by the head (help / close), the N/S<->E/W side toggle, and the
-           IMPs<->MPs objective toggle. */
-        .cca-head .x, .cca-head .help, .cca-side .sidebtn, .cca-obj .sidebtn, .cca-strain .sidebtn, .cca-mode .sidebtn {
-            font: inherit; font-size: 0.8rem; border: 1px solid var(--line); background: #f4f4f4;
-            color: #555; border-radius: 5px; padding: 0.05rem 0.45rem; cursor: pointer; line-height: 1;
-        }
-        .cca-side { margin-left: auto; }
-        .cca-side, .cca-obj, .cca-strain, .cca-mode { display: flex; align-items: center; gap: 0.15rem; }
-        .cca-mode[hidden] { display: none; }
-        .cca-side .sidebtn.sel, .cca-obj .sidebtn.sel, .cca-strain .sidebtn.sel, .cca-mode .sidebtn.sel { background: var(--sel); color: #fff; border-color: var(--sel); }
-        .cca-side .sidesep, .cca-obj .sidesep, .cca-mode .sidesep { color: #bbb; }
-        /* Contract-strain picker (only shown on a board carrying baked DDS-sample data). The red suits get
-           their colour so the strain reads at a glance. */
-        .cca-strain { flex-wrap: wrap; }
-        .cca-strain[hidden] { display: none; }
-        .cca-strain .sidebtn[data-str="h"], .cca-strain .sidebtn[data-str="d"] { color: #c0392b; }
-        .cca-strain .sidebtn.sel[data-str="h"], .cca-strain .sidebtn.sel[data-str="d"] { color: #fff; }
-        /* Opening-lead picker: a dropdown conditioning the simulated make-% on a defender's card. */
-        .cca-lead { display: flex; align-items: center; gap: 0.3rem; }
-        .cca-lead[hidden] { display: none; }
-        .cca-lead .lbl-txt { color: #666; font-size: 0.82rem; }
-        .cca-lead select { font: inherit; font-size: 0.8rem; border: 1px solid var(--line); border-radius: 5px; padding: 0.05rem 0.3rem; color: #444; background: #fff; cursor: pointer; }
-        /* The green "honest verdict" rung: the whole-hand simulated make-% for the picked contract, on top
-           of the CCA body. The reconciliation strip shows the ceiling -> blind -> simulated tax as a gap. */
-        .cca-sim {
-            margin: 0.1rem 0 0.5rem; padding: 0.42rem 0.6rem; border-radius: 8px;
-            background: #e7f6ec; border: 1px solid #b6e0c2; color: #1c6b39; font-size: 0.9rem; line-height: 1.35;
-        }
-        .cca-sim[hidden] { display: none; }
-        .cca-sim b { color: #12572c; }
-        .cca-sim .lead-note { color: #2f6fd8; font-size: 0.85rem; }
-        .cca-sim .recon { display: block; margin-top: 0.15rem; color: #4a7d5c; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
-        .cca-head .help, .cca-head .x { align-self: flex-start; }
-        .cca-empty { color: #888; padding: 0.5rem 0.2rem; }
-        .cca-oppnote { color: var(--sel); font-size: 0.82rem; margin: 0 0 0.35rem; line-height: 1.3; }
-        .cca-oppnote.bad { color: #c66; }
-        .cca-opp { margin: 0.15rem 0 0.5rem; padding: 0.4rem 0.5rem; border: 1px solid var(--line); border-radius: 6px; background: rgba(0,0,0,0.02); }
-        .cca-opp .opp-lbl { display: block; color: #666; font-size: 0.78rem; line-height: 1.3; margin-bottom: 0.35rem; }
-        .opp-grid { border-collapse: collapse; }
-        .opp-grid th { color: #444; font-weight: 600; font-size: 0.9rem; padding: 0 0.2rem; text-align: center; }
-        .opp-grid td { padding: 0.12rem 0.18rem; text-align: center; }
-        .opp-grid td.dl { color: var(--sel); font-weight: 700; padding-right: 0.4rem; text-align: right; }
-        .opp-grid input { width: 2.6em; background: #fff; color: #111; border: 1px solid #aaa; border-radius: 4px; padding: 0.12rem 0.2rem; text-align: center; font: inherit; }
-        .opp-grid input:focus { outline: none; border-color: var(--sel); box-shadow: 0 0 0 2px rgba(47,111,216,0.2); }
-        #nc-opp-clear { margin-top: 0.35rem; }
-        /* Help modal: a large centred card over a dimmed backdrop, laymen's explanation of the CCA. */
-        .cca-help { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; padding: 1rem; }
-        .cca-help[hidden] { display: none; }
-        .cca-help-card { position: relative; background: #fff; border-radius: 12px; max-width: min(94vw, 40rem); max-height: 88vh; overflow: auto; padding: 1.2rem 1.4rem 1.4rem; box-shadow: 0 10px 40px rgba(0,0,0,0.35); line-height: 1.5; color: #333; }
-        .cca-help-card h2 { margin: 0 0 0.5rem; font-size: 1.2rem; }
-        .cca-help-card h3 { margin: 0.95rem 0 0.2rem; font-size: 0.97rem; color: var(--sel); }
-        .cca-help-card p { margin: 0.3rem 0; font-size: 0.9rem; }
-        .cca-help-card .x { position: absolute; top: 0.6rem; right: 0.7rem; }
-        .cca-help-card .sw { display: inline-block; width: 0.75em; height: 0.75em; border-radius: 2px; margin-right: 0.15em; position: relative; top: 0.05em; }
-        /* Popup footer: the live P(>= target) headline on the left, and the PER-BOARD "tricks >="
-           slider beside it (long, defaults to that board's NS par trick count). */
-        .cca-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 1rem; margin-top: 0.5rem; }
-        .cca-slider { display: flex; align-items: center; gap: 0.45rem; margin-left: auto; }
-        .cca-slider .lbl-txt { color: #666; font-size: 0.82rem; }
-        .cca-slider b { font-variant-numeric: tabular-nums; min-width: 1.2em; text-align: right; }
-        .cca-slider input[type="range"] { width: 11rem; accent-color: var(--sel); cursor: pointer; }
-        .cca-slider input[type="range"]:focus { outline: 2px solid var(--sel); outline-offset: 2px; }
-        .ct {
-            display: inline-table; border-collapse: collapse;
-            font-family: 'Consolas', 'Courier New', monospace;
-            font-size: clamp(0.6rem, 1.5vw, 0.9rem); line-height: 1.35; color: #555;
-        }
-        /* Uniform min-widths so every board's table is the SAME width (the panel then never resizes as
-           you flip slides). content-box makes min-width the CONTENT width, so a "100" cell and a "·"
-           cell floor to the exact same size regardless of how many digits they hold. */
-        .ct th, .ct td { box-sizing: content-box; padding: 0.06rem 0.34rem; text-align: right; font-weight: 400; font-variant-numeric: tabular-nums; min-width: 3ch; }
-        .ct thead th { color: #999; font-weight: 600; }
-        .ct .sl { text-align: left; font-weight: 700; padding-right: 0.5rem; min-width: 3ch; }
-        .ct .suit-s .sl { color: Black; } .ct .suit-h .sl { color: Red; }
-        .ct .suit-d .sl { color: Orange; } .ct .suit-c .sl { color: MediumSeaGreen; }
-        .ct .tot td, .ct .cum td, .ct .tot th, .ct .cum th { border-top: 1px solid #ddd; }
-        /* Phase-2 achievable (single-dummy) total + cumulative rows, in a distinct colour so the gap
-           to the double-dummy ceiling (the .tot/.cum rows above) reads at a glance. */
-        .ct .totsd td, .ct .cumsd td, .ct .totsd .sl, .ct .cumsd .sl { color: #2f6fd8; }
-        /* Per-suit single-dummy sub-row: the blind line's spread for that suit, blue like the SD totals,
-           dimmed + no border so it reads as subordinate to the black ceiling row directly above it. */
-        .ct .suit-sd td { color: #6b93e0; border: 0; font-size: 0.9em; padding-top: 0; }
-        .ct .suit-sd .sl { color: #6b93e0; font-weight: 400; font-size: 0.9em; padding-left: 0.5rem; }
-        /* Gold "book" sub-row: the published (encyclopedia) shape, shown only on covered holdings. */
-        .ct .suit-bk td { color: #b8860b; border: 0; font-size: 0.9em; padding-top: 0; }
-        .ct .suit-bk .sl { color: #b8860b; font-weight: 400; font-size: 0.9em; padding-left: 0.5rem; cursor: help; }
-        .ct .etr { color: #a0a0a0; padding-left: 0.5rem; min-width: 5ch; }
-        .ct .etr .eb { color: #2f6fd8; }  /* the blind (single-dummy) expected tricks */
-        .ct .ln { text-align: left; color: #777; padding-left: 0.55rem; min-width: 5ch; font-size: 0.92em; }
-        .ct .ln[data-tip] { cursor: help; text-decoration: underline dotted #aaa; text-underline-offset: 2px; }
-        .ct .ln .cflag { color: #b8860b; cursor: help; }  /* a named suit combination has a note worth reading */
-        /* Hover tooltip: the detailed play narration for a suit's recommended line. */
-        .cca-tip { position: fixed; z-index: 50; max-width: 22rem; background: #222; color: #fff; padding: 0.4rem 0.6rem; border-radius: 6px; font-size: 0.82rem; line-height: 1.35; box-shadow: 0 4px 16px rgba(0,0,0,0.35); pointer-events: none; }
-        .cca-tip[hidden] { display: none; }
-        /* The target column, driven by the "tricks >=" slider — header cell + cumulative cell. Target
-           the CELL (td/th.hl) so this out-specifies the coloured .totsd/.cumsd row rules above —
-           otherwise the blue SD text stayed blue on the blue highlight and was unreadable. */
-        .ct td.hl, .ct th.hl { background: var(--sel); color: #fff !important; border-radius: 3px; }
-        .ct-head { margin-top: 0.45rem; font-weight: 600; color: #333; font-size: clamp(0.8rem, 1.6vw, 1rem); }
-        /* Seat toggle: keep just one seat visible across every board (layout preserved via visibility). */
-        /* Single-seat view: the other three seats collapse to just their position pill (and Dealer tag),
-           so the compass orientation, vulnerability, and dealer stay visible — only their cards hide. */
-        /* Seat focus is now PER BOARD (a .slide class), not global on the track: each board can show
-           all four hands or one, independently. */
-        .slide.only-n .seat:not(.seat-n), .slide.only-e .seat:not(.seat-e),
-        .slide.only-s .seat:not(.seat-s), .slide.only-w .seat:not(.seat-w) {
-            background: transparent; box-shadow: none; min-width: 0; padding: 0.2rem;
-        }
-        .slide.only-n .seat:not(.seat-n) :is(.suit, .hcp, .opc, .shape),
-        .slide.only-e .seat:not(.seat-e) :is(.suit, .hcp, .opc, .shape),
-        .slide.only-s .seat:not(.seat-s) :is(.suit, .hcp, .opc, .shape),
-        .slide.only-w .seat:not(.seat-w) :is(.suit, .hcp, .opc, .shape) { display: none; }
-        /* The Dealer tag sits on the green felt for these markers (transparent card), so make it white. */
-        .slide.only-n .seat:not(.seat-n) .dtag, .slide.only-e .seat:not(.seat-e) .dtag,
-        .slide.only-s .seat:not(.seat-s) .dtag, .slide.only-w .seat:not(.seat-w) .dtag { color: #fff; }
-        /* The chosen seat grows by REAL layout (font-size, everything inside is em-relative), so the
-           green felt reflows to contain it — a transform would leave the card spilling off a small felt. */
-        .seat { transition: font-size 0.25s ease; }
-        .slide.only-n .seat-n, .slide.only-e .seat-e,
-        .slide.only-s .seat-s, .slide.only-w .seat-w { font-size: clamp(1.6rem, min(4vh, 6.5vw), 3.4rem); }
-        /* The partnership HCP summary is meaningless with only one hand shown, so hide it then. */
-        .slide.only-n .stats, .slide.only-e .stats,
-        .slide.only-s .stats, .slide.only-w .stats { display: none; }
-        /* The seat pill is the board's "compass icon": in the 4-hand view it is clickable to focus
-           that hand. Once a hand is focused you must Reveal all before switching, so no pointer then. */
-        .slide:not([class*="only-"]) .seat .lbl { cursor: pointer; }
-        .slide:not([class*="only-"]) .seat .lbl:hover { filter: brightness(1.12); }
-        /* Centre marker: a plain board-number label in the 4-hand view; a "Reveal all" button (the
-           script adds .reveal + the text) when a single hand is focused. */
-        .table.reveal { cursor: pointer; background: rgba(255,255,255,0.22); }
-        .table.reveal:hover { background: rgba(255,255,255,0.35); }
-        /* Single East/West focus: replace the 1fr|auto|1fr grid with a content-hugging flex row so the
-           felt wraps the big card (the grid's equal 1fr columns would mirror its width as empty green on
-           the far side), and centre the items vertically so the opposite pill + Reveal-all button sit
-           level with the enlarged hand. North/South focus keeps the grid (the big card is outside .mid). */
-        .slide.only-e .mid, .slide.only-w .mid {
-            display: flex; justify-content: center; align-items: center; gap: clamp(0.5rem, 7vw, 6rem);
-        }
-        /* Par/combo captions describe the whole board, so hide them while a single hand is focused —
-           they only make sense (and only show) in that board's 4-hand view. */
-        .slide[class*="only-"] .par, .slide[class*="only-"] .combo { display: none; }
-        .track.hide-par .par, .track.hide-par .combo { display: none; }
-
-        /* Phones: strip the secondary lines (OPC/shape), pull the hands tight together, and shrink the
-           HCP badge + centre table so a whole board fits a small screen in either orientation. */
-        @media (max-width: 640px) {
-            .opc, .shape { display: none; }
-            .seat { min-width: 0; padding: 0.7rem 0.6rem 0.35rem; }
-            .compass { gap: clamp(0.25rem, 0.8vh, 0.7rem); padding: clamp(0.4rem, 1vh, 0.9rem) clamp(0.4rem, 2vw, 1rem); }
-            .compass .mid { gap: clamp(0.3rem, 3vw, 1.2rem); }
-            .hcp { font-size: 0.95rem; margin-top: 0.15rem; }
-            /* Too narrow for a top-right overlay without covering North — flow it above the board as a
-               centred header line instead. */
-            .stats {
-                position: static; display: flex; justify-content: center; gap: 1rem;
-                margin: 0 0 0.2rem; padding: 0.15rem 0.4rem; font-size: 0.82rem; line-height: 1.3;
-            }
-            .stats .splits { display: none; } /* HCP totals only on phones */
-            .table { font-size: 1rem; padding: 0.45rem 0.7rem; }
-            .dtag { font-size: 0.7rem; margin: 0.25rem 0 0.3rem; }
-            .track { gap: 20px; }
-        }
-    </style>
-</head>
-<body>
-    <div class="toolbar">
-        <div class="group">
-            <button id="nc-prev" title="Previous (Left arrow / scroll)">&#9664;</button>
-            <span class="counter"><b id="nc-idx">1</b>/<span id="nc-total">0</span></span>
-            <button id="nc-next" title="Next (Right arrow / scroll)">&#9654;</button>
-        </div>
-        <div class="group">
-            <span class="lbl-txt">seats</span>
-            <button data-seat="" class="sel">All</button>
-            <button data-seat="n">N</button>
-            <button data-seat="e">E</button>
-            <button data-seat="s">S</button>
-            <button data-seat="w">W</button>
-        </div>
-        <button id="nc-reset" title="Reset every board to the current seat default">Reset</button>
-        <button id="nc-par-toggle">Par</button>
-        <button id="nc-cca-toggle" title="Card Combination Analyser: open the full trick-chance table for the current board">CCA</button>
-    </div>
-    <h1 class="page-title">{{TITLE}}</h1>
-    <div class="viewport">
-        <div class="track" id="nc-track">
-`
+HTML_CARDS_PAGE_HEADER :: #load("html_cards_header.html.tmpl", string)
 
 // The footer for an `Html_Cards` run: closes the track/viewport, then the script that turns the
 // flat sequence of compass (and par) elements into slides and drives the carousel.
 @(private = "file")
-HTML_CARDS_PAGE_FOOTER :: `        </div>
-    </div>
-    <div class="cca-panel" id="nc-cca" hidden>
-        <div class="cca-head">
-            <b>Card Combination Analyser</b>
-            <span class="cca-sub" id="nc-cca-sub"></span>
-            <span class="cca-side" title="Which partnership's tricks to analyse">
-                <button class="sidebtn sel" id="nc-cca-ns">N/S</button><span class="sidesep">|</span><button class="sidebtn" id="nc-cca-ew">E/W</button>
-            </span>
-            <span class="cca-mode" id="nc-cca-mode" hidden title="Exact = double-dummy on the known deal; Blind = play it as if you can't see the other two hands (sampled)">
-                <button class="sidebtn sel" id="nc-cca-exact">Exact</button><span class="sidesep modesep">|</span><button class="sidebtn" id="nc-cca-blind">Blind</button>
-            </span>
-            <span class="cca-obj" title="Scoring: IMPs = make the contract; MPs = chase overtricks while better than even">
-                <button class="sidebtn sel" id="nc-cca-imps">IMPs</button><span class="sidesep">|</span><button class="sidebtn" id="nc-cca-mps">MPs</button>
-            </span>
-            <span class="cca-strain" id="nc-cca-strain" hidden title="Contract strain for the simulated whole-hand make-% (with the trick target below = the level)">
-                <button class="sidebtn" data-str="s">&spades;</button><button class="sidebtn" data-str="h">&hearts;</button><button class="sidebtn" data-str="d">&diams;</button><button class="sidebtn" data-str="c">&clubs;</button><button class="sidebtn" data-str="nt">NT</button>
-            </span>
-            <span class="cca-lead" id="nc-cca-lead" hidden title="Condition the simulated make-% on the opening lead (a defender holding that exact card)">
-                <span class="lbl-txt">lead</span><select id="nc-cca-lead-sel"><option value="">none</option></select>
-            </span>
-            <button class="x" id="nc-cca-opp-btn" hidden title="Enter a known opponent length to re-weight the odds (vacant space / a-posteriori)">&ge;</button>
-            <button class="x" id="nc-cca-rows" title="Collapse the per-suit rows (show only the totals) to save height">&#9662;</button>
-            <button class="x" id="nc-cca-narrow" title="Narrow the panel (keeps the hands visible on small screens; the trick table scrolls sideways)">&#8596;</button>
-            <button class="help" id="nc-cca-help" title="What is this?">?</button>
-            <button class="x" id="nc-cca-close" title="Close">&#10005;</button>
-        </div>
-        <div class="cca-sim" id="nc-cca-sim" hidden></div>
-        <div class="cca-opp" id="nc-cca-opp" hidden>
-            <span class="opp-lbl">Known opponent length &mdash; the fewest cards a defender is known to hold in a suit. The whole table is re-weighted for it (vacant space), and the blind line is re-picked.</span>
-            <table class="opp-grid"><thead><tr><th></th><th>&spades;</th><th>&hearts;</th><th>&diams;</th><th>&clubs;</th></tr></thead><tbody>
-                <tr data-def="lo"><td class="dl" id="nc-opp-lo-lbl">E</td><td><input type="number" min="0" data-def="lo" data-suit="0"></td><td><input type="number" min="0" data-def="lo" data-suit="1"></td><td><input type="number" min="0" data-def="lo" data-suit="2"></td><td><input type="number" min="0" data-def="lo" data-suit="3"></td></tr>
-                <tr data-def="hi"><td class="dl" id="nc-opp-hi-lbl">W</td><td><input type="number" min="0" data-def="hi" data-suit="0"></td><td><input type="number" min="0" data-def="hi" data-suit="1"></td><td><input type="number" min="0" data-def="hi" data-suit="2"></td><td><input type="number" min="0" data-def="hi" data-suit="3"></td></tr>
-            </tbody></table>
-            <button class="sidebtn" id="nc-opp-clear">clear</button>
-        </div>
-        <div id="nc-cca-body"></div>
-        <div class="cca-foot">
-            <span class="ct-head" id="nc-cca-headline"></span>
-            <span class="cca-slider">
-                <span class="lbl-txt">tricks &ge;</span>
-                <input id="nc-cca-target" type="range" min="1" max="13">
-                <b id="nc-cca-target-val"></b>
-            </span>
-        </div>
-    </div>
-    <div class="cca-help" id="nc-cca-help-modal" hidden>
-        <div class="cca-help-card">
-            <button class="x" id="nc-cca-help-close" title="Close">&#10005;</button>
-            <h2>Card Combination Analyser &mdash; what am I looking at?</h2>
-            <p>It estimates, for one partnership on <b>this</b> deal, how many <b>tricks</b> they can win &mdash;
-               suit by suit and in total &mdash; given the cards they hold and all the ways the opponents' cards
-               might be split. It is a quick guide to "how high can we go?", not the last word.</p>
-            <h3>The table</h3>
-            <p>Each row <b>&spades; &hearts; &diams; &clubs;</b> is one suit, with a small
-               <span style="color:#2f6fd8"><b>sd</b></span> sub-row under it. The black row is the
-               double-dummy ceiling; the blue <span style="color:#2f6fd8"><b>sd</b></span> row is the same
-               spread when you play the recommended line <i>blind</i> &mdash; it sits left of (worse than)
-               the black row, the shift being the price of not seeing the cards. The columns
-               <code>0&hellip;13</code> are the chance of taking <i>exactly</i> that many tricks in the suit.
-               The <b>E</b> column is the average number of tricks &mdash;
-               <b>double-dummy / <span style="color:#2f6fd8">blind</span></b>
-               (the blue figure is what you'd take playing blind, always the smaller). The <b>line</b> column
-               is the suggested way to play that suit blind: <i>cash</i> (bang out top cards), <i>finesse</i>,
-               or <i>duck</i> (give up an early round). It is a simplified pick from a few standard plays &mdash;
-               a real best line can <i>combine</i> them (e.g. duck a round <i>then</i> finesse), which the one
-               word can't show, so read it as the general idea, not an exact recipe. <b>Hover the line word</b>
-               for a fuller, cards-specific plan.</p>
-            <h3>Two answers: ceiling vs. realistic</h3>
-            <p><span class="sw" style="background:#222"></span><b>tot</b> and <b>&ge;k</b> (black) &mdash; the
-               <b>double-dummy</b> ceiling: how it would go if you could <i>see all four hands</i>. Best case /
-               hindsight &mdash; usually better than real life. These percentages are <b>not about the one split
-               you see on this deal</b>: they average double-dummy play (all four hands seen) over <i>every</i>
-               way the opponents' cards could be divided, weighted by how likely each split is. So it answers
-               "across all possible layouts of their cards, how often does the suit yield this many tricks?",
-               not "on this exact layout".</p>
-            <p><span class="sw" style="background:#2f6fd8"></span><b>sd</b> and <b>&ge;sd</b> (blue) &mdash; the
-               <b>single-dummy</b>, realistic figure: playing <i>blind</i> to the opponents' cards, so you must
-               guess (finesses, which way to play). This is closer to what you'll actually take. Like the black
-               figure it also averages over <i>every</i> possible opponent split (weighted by likelihood), not
-               the one on this deal &mdash; the only difference is that here you <b>play blind</b>, picking one
-               line in advance without seeing their cards, so it counts the times a guess goes wrong.</p>
-            <p>The gap between black and blue is the price of not seeing the cards. <b>&ge;sd</b> is the best you
-               can do by choosing the smartest line in each suit for the target you set below.</p>
-            <h3>The green whole-hand verdict (simulated)</h3>
-            <p><span class="sw" style="background:#1c9b4f"></span><b>Whole-hand (simulated)</b> &mdash; when the
-               board carries sampled data, a green band on top gives the <b>honest</b> answer: it deals out the
-               unknown opponents' cards <b>many times</b> (each split weighted by how likely it is) and plays
-               each whole deal out double-dummy, so it already includes entries, the tempo race, and
-               cross-suit tricks (squeezes, ruffs) that the per-suit table below cannot see. Pick the
-               <b>contract strain</b> with the &spades;&hearts;&diams;&clubs;NT buttons and the <b>level</b>
-               with the trick slider; the band shows the make-% for that contract, with a &plusmn; margin and
-               the number of deals (a simulation, so it is an estimate, not exact). The <b>reconciliation</b>
-               strip &mdash; <i>ceiling &middot; blind &middot; simulated</i> &mdash; lines the three answers up:
-               the gap from the per-suit ceiling down to the simulated number <b>is</b> the entry/tempo/no-squeeze
-               tax. Trust the green number for "will it make?"; the suit rows tell you "how to play".</p>
-            <p>The simulated make-% is still a <b>ceiling</b>: every deal is played double-dummy, so declarer
-               never misguesses. When the two known hands contain a genuine <b>two-way guess</b> (a trapped
-               honour finessable either way, which a blind declarer must guess), the band adds an
-               <b>achievable</b> figure &mdash; the make-% docked for guessing that honour wrong half the time.
-               The drop from make-% to achievable is the <b>guess tax</b> (shown as e.g. <i>Q&spades; guess,
-               &minus;35</i>). It appears only on the exact contract it was estimated for, and only with no
-               opening lead picked.</p>
-            <p>The <b>lead</b> menu conditions that make-% on the <b>opening lead</b> (a defender holding that
-               exact card) &mdash; the honest "if the king is onside" swing. It re-averages only the sampled
-               deals consistent with the lead, so the deal count (and the &plusmn;) shrinks; the note reads
-               <i>given E led K&spades;</i>.</p>
-            <h3>The "tricks &ge;" slider</h3>
-            <p>Sets the target: the chance of taking <b>at least</b> that many tricks. E.g. set it to 9 for a
-               game in no-trumps, 10 for a major-suit game. The headline shows the ceiling (DD) and realistic
-               (SD) chance of reaching it.</p>
-            <h3>N/S vs E/W</h3>
-            <p>The two buttons at the top switch <i>whose</i> tricks are analysed &mdash; your side or the
-               opponents'.</p>
-            <h3>IMPs vs Matchpoints</h3>
-            <p><b>IMPs</b> (teams): just <i>make the contract</i>. The recommended play is the safest one for
-               the target you set &mdash; overtricks barely matter, going down is costly.</p>
-            <p><b>MPs</b> (pairs / matchpoints): you're ranked against everyone else in your contract, so
-               <i>overtricks win boards</i>. The tool then chases the extra trick while it stays better than
-               even &mdash; it aims for the <b>highest</b> number of tricks whose chance is still at least
-               50%. The headline shows that "aim" (and still tells you the plain make chance).</p>
-            <h3>Winner count &amp; combinations</h3>
-            <p>Under the board number the panel shows your <b>sure tricks</b> &mdash; the tricks guaranteed on
-               <i>every</i> layout &mdash; and, when that falls short of the slider target, how many more you must
-               <b>develop</b>. A <span style="color:#b8860b">ⓘ</span> beside a suit's <b>line</b> means the
-               suit is a named <b>combination</b> (a two-way finesse, 8-ever/9-never, &hellip;); hover the line
-               word to read it. With sampled data the green band also flags the <b>worst opening lead</b> &mdash;
-               the defender card that beats the contract most often.</p>
-            <h3>Known opponent length (vacant space)</h3>
-            <p>The default figures assume you know <i>nothing</i> about the opponents' shape: every split of their
-               cards is weighted only by how likely it is a priori. Often you know more &mdash; a defender
-               pre-empted, showed out, or the bidding marked length. The <b>&ge;</b> button (top right, on boards
-               that support it) opens a little grid: two rows, one per defender, four suit columns. Type the
-               <b>fewest</b> cards a defender is known to hold in a suit &mdash; e.g. a <b>3&hearts;</b> opener sitting
-               East is "E &hearts; &ge; 6".</p>
-            <p>The whole table then re-weights for it. Knowing one defender is <i>long</i> in a suit makes them
-               <i>short</i> elsewhere, so a missing queen is more likely with their partner &mdash; and the tool
-               shifts every suit's odds and <b>re-picks the blind line</b> to match (a finesse can reverse
-               direction, or give way to cashing out). It reasons from a <i>minimum</i>, not an exact count, so
-               "&ge; 5" correctly covers 5, 6, 7&hellip;. Enter both defenders' minimums in a suit and it couples
-               them. If your numbers can't both be true (they need more cards than the suit holds) the panel says so
-               and keeps the plain table. <b>clear</b>, or blanking the cells, returns to the a-priori figures;
-               moving to another board clears them automatically (they belong to one holding).</p>
-            <h3>Panel layout</h3>
-            <p>Two buttons at the top right resize the panel when it crowds the cards on a small screen:
-               <b>&#8596;</b> <i>narrow</i> caps the width so it stops covering the hands (the trick table then
-               scrolls sideways inside), and <b>&#9662;/&#9656;</b> <i>collapse</i> folds the per-suit rows away,
-               leaving just the totals. Both are remembered between boards.</p>
-            <h3>The small print</h3>
-            <p>It treats the four suits independently and assumes you can always get to the right hand ("free
-               entries"). Real play has entry problems and suits interact, so treat the numbers as a
-               <b>guide</b>, not a guarantee.</p>
-            <p><b>Why the total can read too high &mdash; tempo.</b> The tool lets you take all your tricks
-               <i>without ever handing the lead to the opponents</i>. Real bridge isn't like that: to set up
-               extra tricks you often have to <b>lose the lead first</b> (a finesse that fails, conceding an
-               early round). The moment the defenders are in, they <b>cash their own winners</b> &mdash; and
-               they may beat you before you ever run yours. Adding up each suit's best case ignores this race
-               for the lead, so a hand that looks like "13 tricks" can really be fewer once the opponents grab
-               the lead and cash an ace (or a whole suit) of their own. The suit-by-suit figure is an
-               <i>upper bound</i>; it does not know who gets in first.</p>
-            <p>The double-dummy <b>par</b> caption on the board is the honest whole-deal number &mdash; it
-               plays all four suits together <i>with</i> entries and tempo, so when combo and par disagree,
-               trust par. Combo's job is the per-suit "what's available", not the race.</p>
-        </div>
-    </div>
-    <div class="cca-tip" id="nc-cca-tip" hidden></div>
-    <script>
-    (function () {
-        var track = document.getElementById('nc-track');
-        // Each accepted deal wrote a .compass and (with --dd) one or more following caption siblings
-        // (a .par par-summary, a .combo trick table, ...). Group each compass with every sibling up to
-        // the next board into one .slide, so the carousel moves them together.
-        var comps = Array.prototype.slice.call(track.querySelectorAll(':scope > .compass'));
-        var slides = comps.map(function (c) {
-            var slide = document.createElement('div');
-            slide.className = 'slide';
-            track.insertBefore(slide, c);
-            slide.appendChild(c);
-            // Pull in trailing siblings (captions, and the whitespace text nodes between them) until the
-            // next .compass — those all belong to this board.
-            while (slide.nextSibling) {
-                var sib = slide.nextSibling;
-                if (sib.nodeType === 1 && sib.classList && sib.classList.contains('compass')) break;
-                slide.appendChild(sib);
-            }
-            return slide;
-        });
-
-        var idx = 0;
-        var total = slides.length;
-        document.getElementById('nc-total').textContent = total;
-
-        // Seat focus is per board. globalSeat is the toolbar default ('' = all four hands, else one
-        // of n/e/s/w). override[i] is an explicit per-board choice that WINS over the default — set
-        // by clicking a hand's pill (focus it) or "Reveal all" (show all four). A board with no
-        // override follows the global default; Reset drops every override.
-        var globalSeat = '';
-        var override = new Array(total); // undefined = follow globalSeat
-        function seatFor(i) { return override[i] !== undefined ? override[i] : globalSeat; }
-        function applySeat(i) {
-            var s = slides[i];
-            s.classList.remove('only-n', 'only-e', 'only-s', 'only-w');
-            var seat = seatFor(i);
-            if (seat) s.classList.add('only-' + seat);
-            var table = s.querySelector('.table');
-            if (table) {
-                if (seat) { table.textContent = 'Reveal all'; table.classList.add('reveal'); }
-                else { table.textContent = 'Board ' + (i + 1); table.classList.remove('reveal'); }
-            }
-        }
-        function applyAll() { for (var i = 0; i < total; i++) applySeat(i); }
-        // A focus/reveal reflows the felt (font-size transition): re-centre now and after it settles.
-        function recentre() { show(idx); setTimeout(function () { show(idx); }, 280); }
-
-        function show(i) {
-            idx = Math.max(0, Math.min(total - 1, i));
-            for (var j = 0; j < slides.length; j++) slides[j].classList.toggle('active', j === idx);
-            var s = slides[idx];
-            if (s) {
-                // Centre the active slide in the viewport; measuring the live DOM makes this responsive
-                // (1-up on narrow screens, 3-up on wide) with no width maths here.
-                var off = s.offsetLeft + s.offsetWidth / 2 - track.parentNode.clientWidth / 2;
-                track.style.transform = 'translateX(' + (-off) + 'px)';
-            }
-            document.getElementById('nc-idx').textContent = idx + 1;
-            // Rebuild the overlay for the new board now, but place it only AFTER the slide's
-            // scale(0.9->1) transition finishes — the par-caption geometry is still animating here, so
-            // positioning now would mis-place (drift) the panel. One reposition on the settled layout.
-            renderCca(false);
-            clearTimeout(ccaPosT);
-            ccaPosT = setTimeout(positionCca, 380);
-        }
-
-        document.getElementById('nc-prev').onclick = function () { show(idx - 1); };
-        document.getElementById('nc-next').onclick = function () { show(idx + 1); };
-        document.addEventListener('keydown', function (e) {
-            // When a form control is focused (the target slider), let it handle keys natively — arrows
-            // then nudge the slider one trick, and the carousel shortcuts below are suppressed.
-            var t = e.target;
-            if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
-            if (e.key === 'ArrowLeft') { show(idx - 1); return; }
-            if (e.key === 'ArrowRight') { show(idx + 1); return; }
-            // a = all seats, n/e/s/w = just that seat — press the matching toolbar button so the
-            // click handler (class + highlight) runs, keeping keyboard and buttons in lockstep.
-            var k = e.key.toLowerCase();
-            var seat = (k === 'a') ? '' : ((k === 'n' || k === 'e' || k === 's' || k === 'w') ? k : null);
-            if (seat === null) return;
-            var btn = document.querySelector('[data-seat="' + seat + '"]');
-            if (btn) btn.click();
-        });
-
-        // Scroll wheel: down/right = next, up/left = prev (like the arrow keys). preventDefault so the
-        // page doesn't also scroll while navigating deals.
-        document.querySelector('.viewport').addEventListener('wheel', function (e) {
-            if (e.ctrlKey) return; // let Ctrl+wheel zoom the page as usual
-            e.preventDefault();
-            show(idx + ((e.deltaY + e.deltaX) > 0 ? 1 : -1));
-        }, { passive: false });
-
-        // Toolbar seat buttons set the GLOBAL default (empty data-seat = all four hands). Per-board
-        // overrides are kept — the default only moves boards you haven't focused individually.
-        var seatBtns = document.querySelectorAll('[data-seat]');
-        for (var k = 0; k < seatBtns.length; k++) {
-            seatBtns[k].onclick = function () {
-                globalSeat = this.getAttribute('data-seat');
-                for (var m = 0; m < seatBtns.length; m++) seatBtns[m].classList.toggle('sel', seatBtns[m] === this);
-                applyAll();
-                recentre();
-            };
-        }
-
-        // Reset: drop every per-board override so all boards follow the global default again.
-        document.getElementById('nc-reset').onclick = function () {
-            for (var i = 0; i < total; i++) override[i] = undefined;
-            applyAll();
-            recentre();
-        };
-
-        // Delegated board clicks. A hand's pill is its "compass icon": click it — only from the
-        // 4-hand view — to focus that hand. When a hand is focused the centre marker is a "Reveal
-        // all" button back to four hands. You cannot jump hand->hand; reveal all first.
-        track.addEventListener('click', function (e) {
-            var slideEl = e.target.closest('.slide');
-            if (!slideEl) return;
-            var i = slides.indexOf(slideEl);
-            if (i < 0) return;
-            if (e.target.closest('.table')) {
-                if (seatFor(i)) { override[i] = ''; applySeat(i); recentre(); } // Reveal all
-                return;
-            }
-            var lbl = e.target.closest('.lbl');
-            if (!lbl) return;
-            if (seatFor(i)) return; // single-hand view: Reveal all before switching
-            var seatEl = lbl.closest('.seat');
-            var m = seatEl && seatEl.className.match(/seat-([nesw])/);
-            if (!m) return;
-            override[i] = m[1];
-            applySeat(i);
-            recentre();
-        });
-
-        var parToggle = document.getElementById('nc-par-toggle');
-        parToggle.onclick = function () {
-            track.classList.toggle('hide-par');
-            parToggle.classList.toggle('off');
-        };
-
-        // --- Combo trick-chance analysis (client-side) ---------------------------------------
-        // Each board's .combo div carries ONLY raw per-suit p[k] arrays (data-suits JSON, from the
-        // combo annotator). We convolve the four suits here. The target is PER BOARD: it defaults to
-        // that board's NS par trick count (data-target on the board's .par caption, from the dd
-        // annotator) and is adjustable via the slider at the bottom of the CCA overlay. INLINE the
-        // .combo is a one-line summary; the full trick table lives in the CCA overlay (a fixed panel,
-        // out of page flow) for the ACTIVE board only. A run with no combo data has no .combo divs.
-        // FALLBACK ONLY: totals are now BAKED server-side by the constrained joint convolution (the
-        // data-*-tot/-totsd blobs, read in side() below) which fixes the length-independence bias. This
-        // independent client convolution is kept only for older pages missing those blobs. It clamps any
-        // total > 13 onto index 13 (the four suits folded as independent can credit a strong side more
-        // than 13 tricks); the clamp keeps a valid distribution but leaves the mean bias the baked joint
-        // total removes (see COMBO_ANALYSER.md joint-model notes).
-        function convolve(a, b) {
-            var out = []; for (var i = 0; i < 14; i++) out[i] = 0;
-            for (var i = 0; i < 14; i++) { if (!a[i]) continue; for (var j = 0; j < 14; j++) { if (!b[j]) continue; var t = i + j; if (t > 13) t = 13; out[t] += a[i] * b[j]; } }
-            return out;
-        }
-        function comboTotal(suits) {
-            var t = []; for (var i = 0; i < 14; i++) t[i] = 0; t[0] = 1;
-            ['s', 'h', 'd', 'c'].forEach(function (k) { t = convolve(t, suits[k] || []); });
-            return t;
-        }
-        function tail(total, t) { var p = 0; for (var k = t; k < 14; k++) p += total[k]; return p; }
-        function pctCell(p) { return p < 0.005 ? '·' : Math.round(p * 100); }
-        function etr(arr) { var s = 0; for (var k = 0; k < 14; k++) s += k * (arr[k] || 0); return s; }
-
-        // Each board's .combo carries SIX blobs: per-suit census + achievable-single-dummy + the
-        // adaptive P(>=t) make curve, for BOTH partnerships (data-ns.., data-ew..). We keep both sides so
-        // the N/S to E/W toggle just switches which one renders. ccaSide is the global choice.
-        var ccaSide = 'ns';
-        var ccaMode = 'exact'; // full-deal verdict mode: 'exact' (double-dummy) or 'blind' (sampled advisor)
-        var ccaObj = 'imps'; // scoring objective: 'imps' (make the target) or 'mps' (chase overtricks)
-        var ccaStrain = 'nt'; // contract strain for the green whole-hand verdict (2-hand advisor only)
-        var ccaLead = null;   // {seat, card} opening-lead condition, or null for the unconditioned verdict
-        var ccaLeadTouched = false; // set once the user changes the lead picker, so the recorded-lead auto-seed stops
-        // Vacant-space / a-posteriori state (Phase 3): opponent MINIMUM lengths entered for the ACTIVE board.
-        // null => a-priori (no knowledge). Shape when set: {board:<idx>, lo:[s,h,d,c], hi:[s,h,d,c]} where a
-        // per-suit minimum lo[i]/hi[i] is "the a-axis / other defender holds >= that many cards there".
-        // Cleared automatically on board nav (a holding-specific constraint can't carry to another deal).
-        var ccaOppMin = null;
-        function parseAttr(el, a) { try { return JSON.parse(el.getAttribute(a)); } catch (e) { return null; } }
-        // What to play for, given the analysed side S and the contract target. IMPs just makes the
-        // target (safety). MPs chases overtricks: aim as high as the odds stay better than even —
-        // the highest k (>= target) whose achievable chance P(>=k) is still >= 50%. aim is the
-        // recommended trick count, atl[aim] its chance; both fall back to the target when no overtrick
-        // is worth it or when the adaptive curve is absent.
-        function recommend(S, target) {
-            var aim = target;
-            if (ccaObj === 'mps' && S.atl) {
-                for (var k = target + 1; k <= 13; k++) { if (S.atl[k] >= 0.5) aim = k; else break; }
-            }
-            return { aim: aim, makePct: S.atl ? S.atl[target] : tail(S.total, target),
-                     aimPct: S.atl ? S.atl[aim] : tail(S.total, aim) };
-        }
-        var combos = Array.prototype.slice.call(document.querySelectorAll('.combo'));
-        combos.forEach(function (el) {
-            var ns = parseAttr(el, 'data-ns'); if (!ns) return;
-            function side(pfx) {
-                var data = parseAttr(el, 'data-' + pfx);
-                var sd = parseAttr(el, 'data-' + pfx + '-sd');
-                // Prefer the BAKED joint totals (data-*-tot/-totsd), computed server-side by the
-                // constrained joint convolution (East holds 13 cards, tricks capped at 13). They fix the
-                // length-independence bias the client-side comboTotal (kept as a fallback) carried.
-                var tot = parseAttr(el, 'data-' + pfx + '-tot');
-                var totsd = parseAttr(el, 'data-' + pfx + '-totsd');
-                return { data: data, sd: sd, atl: parseAttr(el, 'data-' + pfx + '-atl'),
-                         lines: parseAttr(el, 'data-' + pfx + '-lines'), tips: parseAttr(el, 'data-' + pfx + '-tips'),
-                         notes: parseAttr(el, 'data-' + pfx + '-notes'), floor: parseAttr(el, 'data-' + pfx + '-floor'),
-                         book: parseAttr(el, 'data-' + pfx + '-book'),
-                         // Phase 2 a-posteriori bake: per-suit (s,h,d,c) raw JOINT count tables — census cen
-                         // + every candidate line's ln — used to re-weight everything client-side when the
-                         // user enters opponent minimums (see constrainedS below). Absent on older pages.
-                         joint: parseAttr(el, 'data-' + pfx + '-joint'),
-                         total: tot || comboTotal(data), totalSd: totsd || (sd ? comboTotal(sd) : null) };
-            }
-            el._sides = { ns: side('ns'), ew: side('ew') };
-            // Per-board default target = this board's NS par trick count (dd's .par data-target), else 9.
-            var slide = el.closest('.slide');
-            var par = slide ? slide.querySelector('.par') : null;
-            var d = par && par.getAttribute('data-target');
-            el._target = d ? Math.max(1, Math.min(13, +d)) : 9;
-            // Optional grid driving the green verdict band: either the DDS-sample grid (2-hand advisor,
-            // {n, lvl, strain, g:{s,h,d,c,nt:[p0..p13]}}) baked on the hidden .par div, OR the exact
-            // double-dummy grid ({exact:true, n:1, ...} spikes) baked on a .sim-exact div for a full 4-hand
-            // deal. Read from wherever data-sim sits in the slide (dd.annotate owns the .par for full deals).
-            var simEl = slide ? slide.querySelector('[data-sim]') : null;
-            el._sim = simEl ? parseAttr(simEl, 'data-sim') : null;
-            // Optional opening-lead sub-grids: {n, seats:{E:{"KS":{n,g},...},W:{...}}} — same distribution
-            // shape as _sim.g, but conditioned on a defender holding that card. Drives the lead picker.
-            el._leads = par ? parseAttr(par, 'data-sim-leads') : null;
-            // Optional per-suit blind two-way GUESS notes: {side:'ns', suits:{s:{card:'QS',tax:35}}} baked
-            // by pbn_analyse from the misguess-tax pivots. Merged into that suit's line tooltip (Option C1).
-            el._simGuess = par ? parseAttr(par, 'data-sim-guess') : null;
-            // Which partnership(s) this board really knows: 'ns'/'ew' (2-hand advisor — the OTHER side is
-            // that pair duplicated + mislabelled, so the toggle locks here) or 'all' (full deal — both real).
-            var metaEl = slide ? slide.querySelector('.cca-meta') : null;
-            el._known = metaEl ? (metaEl.getAttribute('data-known') || 'all') : 'all';
-            // Full-deal BLIND advisor grids per side ({ns:{n,lvl,strain,g,ach,..}, ew:{..}}) baked when a
-            // known deal is sampled — lets the panel toggle exact double-dummy ↔ "play it blind".
-            el._blind = simEl ? parseAttr(simEl, 'data-sim-blind') : null;
-        });
-        function sideData(el) { return el._sides ? el._sides[ccaSide] : null; }
-
-        // --- Vacant-space / a-posteriori re-weight (Phase 3) --------------------------------------
-        // A faithful JS mirror of combo/aposteriori.odin. Given the baked per-suit JOINT count tables
-        // (side.joint, s,h,d,c) and per-suit opponent MINIMUMS, restrict each suit's East-length axis a
-        // to the allowed range, re-couple the four suits under "East holds 13", and renormalise by the
-        // surviving weight D. Everything (marginals, total, best line) falls out of that one restricted DP,
-        // exactly as the Odin engine computes it — so a page with a constraint entered agrees with what
-        // pbn_analyse would print server-side. All arrays are length 14 (tricks/lengths 0..13).
-        var CCA_LET = ['s', 'h', 'd', 'c'];
-        // Allowed East-length range [alo,ahi] for a suit: alo from the a-side minimum, ahi = m minus the
-        // other defender's minimum (its cards come off East's max). alo>ahi => the minimums contradict this
-        // holding. (suit_a_range)
-        function apRange(m, lo, hi) { var alo = Math.max(lo | 0, 0), ahi = m - Math.max(hi | 0, 0); if (ahi > m) ahi = m; return [alo, ahi]; }
-        // Per-suit East-LENGTH weight lw[a] = sum_k count[a][k], 0 outside [alo,ahi] (length_weights).
-        function apLenWeights(mat, alo, ahi) {
-            var lw = []; for (var a = 0; a < 14; a++) lw[a] = 0;
-            for (var a = alo; a <= ahi; a++) { var row = mat[a] || [], s = 0; for (var k = 0; k < row.length; k++) s += row[k]; lw[a] = s; }
-            return lw;
-        }
-        // Convolve two East-length weight vectors, dropping paths past 13 cards (conv_len).
-        function apConv(x, y) {
-            var z = []; for (var i = 0; i < 14; i++) z[i] = 0;
-            for (var i = 0; i < 14; i++) { if (!x[i]) continue; for (var j = 0; j <= 13 - i; j++) { if (!y[j]) continue; z[i + j] += x[i] * y[j]; } }
-            return z;
-        }
-        // Shared context: per-suit ranges, the leave-one-out length weight of the OTHER three suits
-        // (others[S][e] = ways they give East e cards), and D = total surviving deal weight (constraint_ctx).
-        function apCtx(J, oc) {
-            var alo = [], ahi = [], lw = [];
-            for (var i = 0; i < 4; i++) {
-                var r = apRange(J[i].m, oc.lo[i], oc.hi[i]); alo[i] = r[0]; ahi[i] = r[1];
-                if (alo[i] > ahi[i]) return { feasible: false };
-                lw[i] = apLenWeights(J[i].cen, alo[i], ahi[i]);
-            }
-            var others = [];
-            for (var S = 0; S < 4; S++) {
-                var conv = []; for (var q = 0; q < 14; q++) conv[q] = 0; conv[0] = 1;
-                for (var i = 0; i < 4; i++) { if (i === S) continue; conv = apConv(conv, lw[i]); }
-                others[S] = conv;
-            }
-            var D = 0; for (var a = alo[0]; a <= ahi[0]; a++) { var e = 13 - a; if (e < 0) continue; D += lw[0][a] * others[0][e]; }
-            return { alo: alo, ahi: ahi, others: others, D: D, feasible: D > 0 };
-        }
-        // Constrained per-suit trick marginal p[k] of one table (census or a line), via the leave-one-out
-        // coupling (the marginal loop of constrained_census / the numerator of constrained_line_mean).
-        function apMarginal(ctx, i, mat) {
-            var m = []; for (var k = 0; k < 14; k++) m[k] = 0;
-            for (var a = ctx.alo[i]; a <= ctx.ahi[i]; a++) {
-                var e = 13 - a; if (e < 0) continue; var w = ctx.others[i][e]; if (!w) continue;
-                var row = mat[a] || []; for (var k = 0; k < row.length; k++) { if (row[k]) m[k] += row[k] * w; }
-            }
-            for (var k = 0; k < 14; k++) m[k] /= ctx.D;
-            return m;
-        }
-        // Constrained combined trick total over four chosen tables: the same joint length×trick DP as
-        // constrained_census's total (East ends on 13, tricks capped at 13), renormalised by D.
-        function apTotal(ctx, tabs) {
-            var h = []; for (var e = 0; e < 14; e++) { h[e] = []; for (var t = 0; t < 14; t++) h[e][t] = 0; } h[0][0] = 1;
-            for (var i = 0; i < 4; i++) {
-                var mat = tabs[i], nh = []; for (var e = 0; e < 14; e++) { nh[e] = []; for (var t = 0; t < 14; t++) nh[e][t] = 0; }
-                for (var e = 0; e < 14; e++) for (var t = 0; t < 14; t++) {
-                    var hv = h[e][t]; if (!hv) continue;
-                    for (var a = ctx.alo[i]; a <= ctx.ahi[i]; a++) {
-                        if (e + a > 13) break;
-                        var row = mat[a] || [];
-                        for (var k = 0; k < row.length; k++) { var c = row[k]; if (!c) continue; var nt = t + k; if (nt > 13) nt = 13; nh[e + a][nt] += hv * c; }
-                    }
-                }
-                h = nh;
-            }
-            var out = []; for (var t = 0; t < 14; t++) out[t] = h[13][t] / ctx.D;
-            return out;
-        }
-        // Constrained mean tricks of a line's table (constrained_line_mean) — drives the line re-pick.
-        function apLineMean(ctx, i, mat) {
-            var acc = 0;
-            for (var a = ctx.alo[i]; a <= ctx.ahi[i]; a++) {
-                var e = 13 - a; if (e < 0) continue; var w = ctx.others[i][e]; if (!w) continue;
-                var row = mat[a] || []; for (var k = 0; k < row.length; k++) { if (row[k]) acc += k * row[k] * w; }
-            }
-            return acc / ctx.D;
-        }
-        // Best candidate line index per suit under the constraints (constrained_best_idx) — the "flip".
-        function apBestIdx(J, ctx) {
-            var best = [];
-            for (var i = 0; i < 4; i++) {
-                var bm = -1, bj = 0, ln = J[i].ln;
-                for (var j = 0; j < ln.length; j++) { var mn = apLineMean(ctx, i, ln[j][1]); if (mn > bm) { bm = mn; bj = j; } }
-                best[i] = bj;
-            }
-            return best;
-        }
-        // Build a constrained view of a side's data (drop-in for the a-priori S in ctTableHTML): re-weighted
-        // census suit rows + total, the re-picked blind line per suit with its re-weighted shape + a fresh sd
-        // total. Returns {infeasible:true} when the minimums admit no deal; null when the joint bake is
-        // absent (older page). The a-priori-only artifacts (adaptive ≥sd curve, book override, geometry notes,
-        // per-line tips) are dropped — they aren't valid under the skewed weights.
-        function constrainedS(S, oc) {
-            var J = S && S.joint; if (!J || J.length < 4) return null;
-            var ctx = apCtx(J, oc); if (!ctx.feasible) return { infeasible: true };
-            var data = {}, sd = {}, lines = [], cenTabs = [], sdTabs = [], bi = apBestIdx(J, ctx);
-            for (var i = 0; i < 4; i++) {
-                cenTabs[i] = J[i].cen; data[CCA_LET[i]] = apMarginal(ctx, i, J[i].cen);
-                var lj = J[i].ln[bi[i]]; lines[i] = lj[0]; sdTabs[i] = lj[1]; sd[CCA_LET[i]] = apMarginal(ctx, i, lj[1]);
-            }
-            return { data: data, sd: sd, lines: lines, total: apTotal(ctx, cenTabs), totalSd: apTotal(ctx, sdTabs),
-                     atl: null, tips: null, notes: null, book: null, joint: J, constrained: true };
-        }
-        // Public setter (used by the Phase-4 UI inputs and by tests): install opponent minimums for the
-        // active board and re-render, or pass null to clear. oc = {lo:[s,h,d,c], hi:[s,h,d,c]}.
-        function ccaSetOppMin(oc) {
-            ccaOppMin = oc ? { board: idx, lo: oc.lo.slice(), hi: oc.hi.slice() } : null;
-            renderCca(true);
-        }
-        window.ccaSetOppMin = ccaSetOppMin;
-        // One-line human summary of the active constraint for the panel note.
-        function oppSummary(oc, side) {
-            var glyph = ['♠', '♥', '♦', '♣'], defs = side === 'ew' ? ['N', 'S'] : ['E', 'W'], parts = [];
-            for (var i = 0; i < 4; i++) {
-                if (oc.lo[i] > 0) parts.push(glyph[i] + ' ' + defs[0] + '&ge;' + oc.lo[i]);
-                if (oc.hi[i] > 0) parts.push(glyph[i] + ' ' + defs[1] + '&ge;' + oc.hi[i]);
-            }
-            return parts.length ? parts.join(', ') : 'no minimums';
-        }
-        // The opening-lead sub-grids in force for the active board, side, and mode. A 2-hand board carries
-        // them flat on el._leads. A full deal carries them per side inside the BLIND advisor (el._blind[side]
-        // .leads) — so the lead picker appears ONLY in Blind mode (exact mode returns null -> picker hidden),
-        // and follows the N/S<->E/W toggle to that side's real defenders.
-        function activeLeads(el) {
-            if (!el) return null;
-            if (el._blind && ccaMode === 'blind') {
-                var bs = el._blind[ccaSide] || el._blind.ns || el._blind.ew;
-                return (bs && bs.leads) ? bs.leads : null;
-            }
-            return el._leads || null;
-        }
-        // The inline one-liner for a board: CCA badge (with the analysed side) + P(>= target), both the
-        // double-dummy ceiling (DD) and the achievable single-dummy optimum (SD, from the adaptive curve).
-        function comboLine(el) {
-            var S = sideData(el); if (!S || !S.total) return;
-            var t = el._target, dd = (tail(S.total, t) * 100).toFixed(0), r = recommend(S, t);
-            var s = '<span class="cmini">CCA ' + ccaSide.toUpperCase() + ' ' + ccaObj.toUpperCase() + '</span> ';
-            if (ccaObj === 'mps' && r.aim > t) {
-                s += 'aim ' + r.aim + ': SD ' + (r.aimPct * 100).toFixed(0) + '% &middot; make ' + t + ': SD ' + (r.makePct * 100).toFixed(0) + '%';
-            } else {
-                s += 'P(&ge;' + t + ') = DD ' + dd + '% &middot; SD ' + (r.makePct * 100).toFixed(0) + '%';
-            }
-            s += ' &middot; E[tot] = ' + etr(S.total).toFixed(1) + (S.totalSd ? ' / ' + etr(S.totalSd).toFixed(1) : '');
-            el.innerHTML = s;
-        }
-        // The full per-suit table for the active board & side. Per-suit rows + the "tot"/"≥k" pair are
-        // the double-dummy CENSUS (ceiling). The "sd" row is a realistic single-dummy line's shape; the
-        // "≥sd" row is the ADAPTIVE optimum P(>=k) (best line per suit for that target) — the gap from
-        // the black rows is the double-dummy tax.
-        // Friendly labels for the recommended blind line per suit.
-        function lineLabel(n) { return n === 'top-down' ? 'cash' : n === 'duck-one' ? 'duck' : n === 'finesse' ? 'finesse' : (n || ''); }
-        function escAttr(s) { return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
-        function ctTableHTML(S) {
-            var data = S.data, total = S.total, totalSd = S.totalSd, atl = S.atl, sd = S.sd, lines = S.lines, tips = S.tips, notes = S.notes, book = S.book;
-            var rows = [['s', '♠'], ['h', '♥'], ['d', '♦'], ['c', '♣']];
-            // Blind two-way guess notes for the shown side (Option C1): appended to the matching suit tip.
-            var elg = activeCombo(), guess = elg && elg._simGuess;
-            var guessSuits = (guess && guess.side === ccaSide && guess.suits) ? guess.suits : null;
-            var h = '<table class="ct"><thead><tr><th></th>';
-            for (var k = 0; k < 14; k++) h += '<th data-k="' + k + '">' + k + '</th>';
-            // Per-suit E is shown as double-dummy / blind (dd / sd); "line" is the recommended blind play.
-            h += '<th class="etr" title="expected tricks: double-dummy / blind">E</th><th class="ln" title="recommended blind line">line</th></tr></thead><tbody>';
-            rows.forEach(function (o, i) {
-                var arr = data[o[0]] || [], sdArr = sd && sd[o[0]];
-                h += '<tr class="suit-' + o[0] + '"><td class="sl">' + o[1] + '</td>';
-                for (var k = 0; k < 14; k++) h += '<td>' + pctCell(arr[k] || 0) + '</td>';
-                h += '<td class="etr">' + etr(arr).toFixed(1) + (sdArr ? ' <span class="eb">/ ' + etr(sdArr).toFixed(1) + '</span>' : '') + '</td>';
-                var tip = tips && tips[i];
-                // Combination PATTERN note (aids plan B) — combo geometry, present with or without --sample.
-                var note = notes && notes[i];
-                if (note) {
-                    tip = tip ? (tip + '  ·  Combination: ' + note) : ('Combination: ' + note);
-                }
-                var gu = guessSuits && guessSuits[o[0]];
-                if (gu) {
-                    var clause = 'Blind two-way guess for the ' + leadLabel(gu.card) + ' — a misguess costs about ' + gu.tax + '%.';
-                    tip = tip ? (tip + '  ·  ' + clause) : clause;
-                }
-                // Flag a named combination on the line cell so the reader knows a tooltip is worth reading.
-                var lnTxt = lines ? lineLabel(lines[i]) : '';
-                if (note) lnTxt += ' <span class="cflag" title="named combination — hover for the note">ⓘ</span>';
-                h += '<td class="ln"' + (tip ? ' data-tip="' + escAttr(tip) + '"' : '') + '>' + lnTxt + '</td></tr>';
-                // Blue single-dummy sub-row: the recommended blind line's spread for THIS suit (the E
-                // blind mean above, expanded to a per-trick shape). Shifted left of the black ceiling row
-                // by the double-dummy tax. Distribution cells carry no data-k, so the target highlight
-                // (cumulative rows only) ignores them, matching the black suit row above.
-                if (sdArr) {
-                    h += '<tr class="suit-sd"><td class="sl">sd</td>';
-                    for (var k = 0; k < 14; k++) h += '<td>' + pctCell(sdArr[k] || 0) + '</td>';
-                    h += '<td class="etr"></td><td class="ln"></td></tr>';
-                }
-                // Gold "book" sub-row: the PUBLISHED suit-combination shape (encyclopedia) for this holding,
-                // present only where the book covers it. Sits below our blue engine sd row — the book's mass
-                // usually sits higher (it plays the adaptive line our fixed lines can't), which is the line-gap
-                // made visible. Cells are P(exactly k), blank where the book gives no target at that count.
-                var bkArr = book && book[i]; // book is an array in suit order (like lines/tips), not letter-keyed
-                if (bkArr) {
-                    h += '<tr class="suit-bk"><td class="sl" title="Textbook (published) chances vs best defence">bk</td>';
-                    for (var k = 0; k < 14; k++) h += '<td>' + pctCell(bkArr[k] || 0) + '</td>';
-                    h += '<td class="etr"></td><td class="ln"></td></tr>';
-                }
-            });
-            h += '<tr class="tot"><td class="sl">tot</td>';
-            for (var k = 0; k < 14; k++) h += '<td>' + pctCell(total[k]) + '</td>';
-            h += '<td class="etr">' + etr(total).toFixed(1) + '</td><td class="ln"></td></tr>';
-            h += '<tr class="cum"><td class="sl">≥k</td>';
-            for (var k = 0; k < 14; k++) h += '<td data-k="' + k + '">' + pctCell(tail(total, k)) + '</td>';
-            h += '<td class="etr"></td><td class="ln"></td></tr>';
-            if (totalSd) {
-                h += '<tr class="tot totsd"><td class="sl">sd</td>';
-                for (var k = 0; k < 14; k++) h += '<td>' + pctCell(totalSd[k]) + '</td>';
-                h += '<td class="etr">' + etr(totalSd).toFixed(1) + '</td><td class="ln"></td></tr>';
-            }
-            if (atl) {
-                h += '<tr class="cum cumsd"><td class="sl">≥sd</td>';
-                for (var k = 0; k < 14; k++) h += '<td data-k="' + k + '">' + pctCell(atl[k]) + '</td>';
-                h += '<td class="etr"></td><td class="ln"></td></tr>';
-            }
-            h += '</tbody></table>';
-            return h;
-        }
-
-        // CCA overlay: full table for the ACTIVE board, with the per-board target slider in its footer.
-        var ccaPanel = document.getElementById('nc-cca');
-        var ccaBody = document.getElementById('nc-cca-body');
-        var ccaSub = document.getElementById('nc-cca-sub');
-        var ccaBtn = document.getElementById('nc-cca-toggle');
-        var ccaHead = document.getElementById('nc-cca-headline');
-        var ccaSlider = document.getElementById('nc-cca-target');
-        var ccaSliderVal = document.getElementById('nc-cca-target-val');
-        var ccaFoot = document.querySelector('.cca-foot');
-        var ccaSimBand = document.getElementById('nc-cca-sim');
-        var ccaStrainWrap = document.getElementById('nc-cca-strain');
-        var ccaLeadWrap = document.getElementById('nc-cca-lead');
-        var ccaLeadSel = document.getElementById('nc-cca-lead-sel');
-        var ccaOpen = false;
-        var ccaPosT; // pending "reposition after the slide transition settles" timer
-        function activeCombo() { var s = slides[idx]; return s ? s.querySelector('.combo') : null; }
-        // Rebuild the overlay for the active board. pos=true places it now (for the no-transition
-        // callers: opening the panel, resize); during a slide NAV the caller instead waits for the
-        // scale(0.9->1) transition to finish before positioning (measuring par mid-transition mis-placed
-        // the panel).
-        // Lock the N/S↔E/W toggle to the active board's real known side: on a 2-hand board only one side is
-        // meaningful (the other is that pair duplicated), so hide the wrong button + separator and force
-        // ccaSide; a full deal ('all') shows both. Runs before sideData so ccaSide is settled first.
-        function syncSideToggle() {
-            var el = activeCombo();
-            var known = el ? el._known : 'all';
-            var lock = known === 'ns' || known === 'ew';
-            var prev = ccaSide;
-            if (lock) ccaSide = known;
-            if (nsBtn) { nsBtn.style.display = (lock && known !== 'ns') ? 'none' : ''; nsBtn.classList.toggle('sel', ccaSide === 'ns'); }
-            if (ewBtn) { ewBtn.style.display = (lock && known !== 'ew') ? 'none' : ''; ewBtn.classList.toggle('sel', ccaSide === 'ew'); }
-            var sep = document.querySelector('.cca-side .sidesep'); if (sep) sep.style.display = lock ? 'none' : '';
-            if (ccaSide !== prev) combos.forEach(comboLine); // refresh inline badges to the locked side
-        }
-        // Show the Exact↔Blind mode toggle only when the active board has a blind advisor baked (a full deal
-        // rendered with --sample); on boards without it, force exact so the band never reads a missing grid.
-        function syncModeToggle() {
-            var el = activeCombo();
-            var hasBlind = !!(el && el._blind);
-            var modeEl = document.getElementById('nc-cca-mode');
-            if (modeEl) modeEl.hidden = !hasBlind;
-            if (!hasBlind) ccaMode = 'exact';
-            var exBtn = document.getElementById('nc-cca-exact'), blBtn = document.getElementById('nc-cca-blind');
-            if (exBtn) exBtn.classList.toggle('sel', ccaMode === 'exact');
-            if (blBtn) blBtn.classList.toggle('sel', ccaMode === 'blind');
-        }
-        function renderCca(pos) {
-            if (!ccaOpen) return;
-            syncSideToggle();
-            syncModeToggle();
-            var el = activeCombo(), S = el && sideData(el);
-            buildLeadOptions(el);
-            // A-posteriori (Phase 3/4): a holding-specific constraint can't carry to another deal, so drop it
-            // on board nav BEFORE the input row syncs (so it blanks its cells for the new board).
-            if (ccaOppMin && ccaOppMin.board !== idx) ccaOppMin = null;
-            syncOppUI();
-            if (!S || !S.total) {
-                ccaBody.innerHTML = '<div class="cca-empty">No combination data for this board.</div>';
-                ccaSub.textContent = '';
-                if (ccaFoot) ccaFoot.style.visibility = 'hidden';
-                simBand();
-                return;
-            }
-            if (ccaFoot) ccaFoot.style.visibility = 'visible';
-            // When a constraint is in force for THIS board, swap in the constrained view (feasible) or keep the
-            // a-priori table + warn (infeasible).
-            var oppNote = '';
-            if (ccaOppMin) {
-                var Sc = constrainedS(S, ccaOppMin);
-                if (Sc && Sc.infeasible) {
-                    oppNote = '<div class="cca-oppnote bad">Opponent minimums are impossible for this holding — showing the a-priori table.</div>';
-                } else if (Sc) {
-                    S = Sc;
-                    oppNote = '<div class="cca-oppnote">A-posteriori: ' + oppSummary(ccaOppMin, ccaSide) + '. Rows re-weighted; blind line re-picked.</div>';
-                }
-            }
-            ccaBody.innerHTML = oppNote + ctTableHTML(S);
-            ccaSub.textContent = 'Board ' + (idx + 1);
-            ccaSlider.value = el._target;
-            hlCca();
-            simBand();
-            if (pos) positionCca();
-        }
-        // Place the (fixed) panel at its NATURAL content size (the table width is constant across slides,
-        // so the panel never resizes as you navigate). PREFERENCE bottom-left (keeps the established feel);
-        // but the VISIBLE hands must not be covered — for an E/W-known 2-hand board the West hand sits
-        // bottom-left, right under the default anchor, and on a narrow viewport even a 4-hand board's hands
-        // creep under it. So we try the four corners in order and take the one with the least overlap with
-        // the real-card seats (face-down unknown seats don't count). When a BOTTOM corner wins we still lift
-        // above the par/combo captions, as before. No width/height overrides -> no per-slide resize.
-        function positionCca() {
-            if (!ccaOpen) return;
-            var slide = slides[idx];
-            if (!slide) return;
-            var vw = window.innerWidth, vh = window.innerHeight, M = 10;
-            var s = ccaPanel.style;
-            s.top = s.right = s.maxWidth = s.maxHeight = ''; // natural size; CSS caps width/height
-            s.left = M + 'px';
-            s.bottom = M + 'px';
-            var pw = ccaPanel.offsetWidth, ph = ccaPanel.offsetHeight;
-            // The visible (real-card) hands to keep clear. Unknown seats render face-down ('?') — ignore them.
-            var hands = [];
-            slide.querySelectorAll('.seat').forEach(function (seat) {
-                if (seat.classList.contains('facedown')) return;
-                var r = seat.getBoundingClientRect();
-                if (r.width > 0 && r.height > 0) hands.push(r);
-            });
-            // Candidate anchors (panel box left/top), in preference order: bottom-left, bottom-right, then top.
-            var C = [
-                { left: M, top: vh - ph - M, bottom: true },
-                { left: vw - pw - M, top: vh - ph - M, bottom: true },
-                { left: M, top: M, bottom: false },
-                { left: vw - pw - M, top: M, bottom: false }
-            ];
-            function handOverlap(a) {
-                var area = 0;
-                for (var i = 0; i < hands.length; i++) {
-                    var r = hands[i];
-                    var ox = Math.max(0, Math.min(a.left + pw, r.right) - Math.max(a.left, r.left));
-                    var oy = Math.max(0, Math.min(a.top + ph, r.bottom) - Math.max(a.top, r.top));
-                    area += ox * oy;
-                }
-                return area;
-            }
-            var best = C[0], bestOv = handOverlap(C[0]);
-            for (var i = 1; i < C.length && bestOv > 0; i++) {
-                var ov = handOverlap(C[i]);
-                if (ov < bestOv) { best = C[i]; bestOv = ov; }
-            }
-            s.left = Math.max(M, Math.min(best.left, vw - pw - M)) + 'px';
-            if (!best.bottom) {
-                s.bottom = '';
-                s.top = M + 'px';
-                return;
-            }
-            // Bottom corner: keep the caption-lift so the par/combo score stays visible — BUT only when the
-            // hands are already clear (bestOv === 0). If the panel is too big to dodge the hands anyway
-            // (small viewport), lifting would only ride it further UP into them, so stay pinned low instead.
-            s.top = '';
-            s.bottom = M + 'px';
-            if (bestOv > 0) return;
-            var pr = ccaPanel.getBoundingClientRect();
-            var capTop = Infinity;
-            ['.par', '.combo'].forEach(function (sel) {
-                var c = slide.querySelector(sel);
-                if (!c) return;
-                var cr = c.getBoundingClientRect();
-                if (cr.height > 0 && cr.right > pr.left && cr.left < pr.right) capTop = Math.min(capTop, cr.top);
-            });
-            if (capTop !== Infinity && pr.bottom > capTop) {
-                var lift = vh - capTop + M;      // css bottom putting the panel's bottom M above capTop
-                var maxLift = vh - ph - M;       // highest possible (panel top at M)
-                s.bottom = Math.max(M, Math.min(lift, maxLift)) + 'px';
-            }
-        }
-        // Highlight the target column + set the headline/slider value for the ACTIVE board's target.
-        function hlCca() {
-            if (!ccaOpen) return;
-            var el = activeCombo(), S = el && sideData(el);
-            if (!S || !S.total) return;
-            var t = el._target, r = recommend(S, t);
-            if (ccaSliderVal) ccaSliderVal.textContent = t;
-            // A. Winner/loser count (aids plan A): sum the per-suit guaranteed floors of the recommended
-            // blind lines; the gap to the target is what must be developed. Follows the slider.
-            if (ccaSub) {
-                var sub = 'Board ' + (idx + 1);
-                if (S.floor) {
-                    var sure = 0;
-                    for (var fi = 0; fi < 4; fi++) sure += (S.floor[fi] || 0);
-                    var gap = t - sure;
-                    sub += ' · sure tricks ' + sure + (gap > 0 ? ', develop ' + gap + ' for ' + t : ' (≥ ' + t + ' already)');
-                }
-                ccaSub.textContent = sub;
-            }
-            // Highlight the column we're actually playing for (= target under IMPs, the overtrick aim
-            // under MPs).
-            var cells = ccaBody.querySelectorAll('[data-k]');
-            for (var i = 0; i < cells.length; i++)
-                cells[i].classList.toggle('hl', +cells[i].getAttribute('data-k') === r.aim);
-            if (ccaHead) {
-                var dd = (tail(S.total, t) * 100).toFixed(1);
-                if (ccaObj === 'mps' && r.aim > t) {
-                    ccaHead.textContent = 'MPs — aim ' + r.aim + ': SD ' + (r.aimPct * 100).toFixed(1) +
-                        '%   (make ' + t + ': SD ' + (r.makePct * 100).toFixed(1) + '%)';
-                } else if (S.atl) {
-                    ccaHead.textContent = (ccaObj === 'mps' ? 'MPs' : 'IMPs') + ' — make ' + t +
-                        ':  DD ' + dd + '%  ·  SD ' + (r.makePct * 100).toFixed(1) + '%';
-                } else {
-                    ccaHead.textContent = 'P(≥ ' + t + ' tricks) = ' + dd + '%';
-                }
-            }
-        }
-        function setCca(open) {
-            ccaOpen = open; ccaPanel.hidden = !open;
-            if (ccaBtn) ccaBtn.classList.toggle('sel', open);
-            renderCca(true); // opening: no slide transition in flight, place immediately
-        }
-        if (ccaBtn) ccaBtn.onclick = function () { setCca(!ccaOpen); };
-        document.getElementById('nc-cca-close').onclick = function () { setCca(false); };
-        // Narrow toggle: cap the panel width so it stops spanning both E/W hands on a small viewport (the
-        // trick table scrolls sideways inside instead). A user choice — remembered across boards/sessions.
-        var ccaNarrow = false;
-        try { ccaNarrow = localStorage.getItem('nc-cca-narrow') === '1'; } catch (e) {}
-        var narrowBtn = document.getElementById('nc-cca-narrow');
-        function applyNarrow() {
-            ccaPanel.classList.toggle('narrow', ccaNarrow);
-            if (narrowBtn) narrowBtn.classList.toggle('sel', ccaNarrow);
-        }
-        applyNarrow();
-        if (narrowBtn) narrowBtn.onclick = function () {
-            ccaNarrow = !ccaNarrow;
-            try { localStorage.setItem('nc-cca-narrow', ccaNarrow ? '1' : '0'); } catch (e) {}
-            applyNarrow();
-            positionCca(); // width changed -> re-place (a narrower panel may now clear a hand)
-        };
-        // Suits-collapsed toggle: hide the per-suit rows (keep only the totals) to shrink the panel's
-        // HEIGHT on a short viewport. The class lives on the panel, so it survives table rebuilds. Persisted.
-        var ccaSuitsCollapsed = false;
-        try { ccaSuitsCollapsed = localStorage.getItem('nc-cca-rows') === '1'; } catch (e) {}
-        var rowsBtn = document.getElementById('nc-cca-rows');
-        function applySuits() {
-            ccaPanel.classList.toggle('suits-collapsed', ccaSuitsCollapsed);
-            if (rowsBtn) {
-                rowsBtn.classList.toggle('sel', ccaSuitsCollapsed);
-                // Disclosure triangle: ▾ when the suit rows are shown (click to fold up), ▸ when collapsed.
-                rowsBtn.innerHTML = ccaSuitsCollapsed ? '&#9656;' : '&#9662;';
-                rowsBtn.title = ccaSuitsCollapsed ? 'Show the per-suit rows' : 'Collapse the per-suit rows (show only the totals) to save height';
-            }
-        }
-        applySuits();
-        if (rowsBtn) rowsBtn.onclick = function () {
-            ccaSuitsCollapsed = !ccaSuitsCollapsed;
-            try { localStorage.setItem('nc-cca-rows', ccaSuitsCollapsed ? '1' : '0'); } catch (e) {}
-            applySuits();
-            positionCca(); // height changed -> re-place
-        };
-        // --- Known-opponent-length inputs (Phase 4) -----------------------------------------------
-        // The a-posteriori re-weight UI: two rows (the two defenders) x four suits of "minimum cards held"
-        // number inputs. Any change reads all eight cells and calls ccaSetOppMin, which re-renders the table
-        // re-weighted (or blank/all-zero -> ccaSetOppMin(null), back to a-priori). Shown only on boards that
-        // carry the Phase-2 joint bake; the defender labels follow the N/S<->E/W side toggle.
-        var oppBtn = document.getElementById('nc-cca-opp-btn');
-        var oppWrap = document.getElementById('nc-cca-opp');
-        var oppLoLbl = document.getElementById('nc-opp-lo-lbl'), oppHiLbl = document.getElementById('nc-opp-hi-lbl');
-        var oppInputs = oppWrap ? Array.prototype.slice.call(oppWrap.querySelectorAll('input')) : [];
-        var oppClear = document.getElementById('nc-opp-clear');
-        var ccaOppOpen = false; // whether the input row is revealed (panel-local, not persisted)
-        // Read the eight cells into {lo:[s,h,d,c], hi:[...]}; '' counts as 0. Clamp each to that suit's m so a
-        // defender can't be asked to hold more of a suit than the opponents own (the joint bake carries m).
-        function readOpp() {
-            var el = activeCombo(), S = el && sideData(el), J = S && S.joint;
-            var oc = { lo: [0, 0, 0, 0], hi: [0, 0, 0, 0] }, any = false;
-            oppInputs.forEach(function (inp) {
-                var d = inp.getAttribute('data-def'), i = +inp.getAttribute('data-suit');
-                var v = parseInt(inp.value, 10); if (isNaN(v) || v < 0) v = 0;
-                var m = J && J[i] ? J[i].m : 13; if (v > m) { v = m; inp.value = v; }
-                oc[d][i] = v; if (v > 0) any = true;
-            });
-            return any ? oc : null;
-        }
-        function applyOpp() { ccaSetOppMin(readOpp()); }
-        // Reflect state into the input UI on every render: hide the whole feature on boards without a joint
-        // bake; label the two rows for the active side; cap each input's max at its suit's m; and blank the
-        // cells whenever no constraint is in force (e.g. after a board-nav auto-clear) so the grid never shows
-        // a stale number for a different deal.
-        function syncOppUI() {
-            var el = activeCombo(), S = el && sideData(el), J = S && S.joint;
-            var has = !!(J && J.length >= 4);
-            if (oppBtn) oppBtn.hidden = !has;
-            if (!has) { ccaOppOpen = false; if (oppBtn) oppBtn.classList.remove('sel'); }
-            if (oppWrap) oppWrap.hidden = !(has && ccaOppOpen);
-            if (oppBtn) oppBtn.classList.toggle('sel', has && ccaOppOpen);
-            var defs = ccaSide === 'ew' ? ['N', 'S'] : ['E', 'W'];
-            if (oppLoLbl) oppLoLbl.textContent = defs[0];
-            if (oppHiLbl) oppHiLbl.textContent = defs[1];
-            oppInputs.forEach(function (inp) {
-                var i = +inp.getAttribute('data-suit');
-                inp.max = has && J[i] ? J[i].m : 13;
-                if (!ccaOppMin) inp.value = '';
-            });
-        }
-        if (oppBtn) oppBtn.onclick = function () {
-            ccaOppOpen = !ccaOppOpen;
-            syncOppUI();
-            positionCca(); // height changed -> re-place
-        };
-        oppInputs.forEach(function (inp) { inp.oninput = applyOpp; });
-        if (oppClear) oppClear.onclick = function () {
-            oppInputs.forEach(function (inp) { inp.value = ''; });
-            ccaSetOppMin(null);
-        };
-        // Slider adjusts the ACTIVE board's target only; the inline summary + overlay update together.
-        if (ccaSlider) ccaSlider.oninput = function () {
-            var el = activeCombo();
-            if (!el) return;
-            el._target = +this.value;
-            comboLine(el);
-            hlCca();
-            simBand();
-        };
-        // N/S <-> E/W toggle: global choice, re-render the overlay + every inline one-liner.
-        var nsBtn = document.getElementById('nc-cca-ns'), ewBtn = document.getElementById('nc-cca-ew');
-        function setSide(s) {
-            ccaSide = s;
-            if (nsBtn) nsBtn.classList.toggle('sel', s === 'ns');
-            if (ewBtn) ewBtn.classList.toggle('sel', s === 'ew');
-            combos.forEach(comboLine);
-            renderCca(true);
-        }
-        if (nsBtn) nsBtn.onclick = function () { setSide('ns'); };
-        if (ewBtn) ewBtn.onclick = function () { setSide('ew'); };
-        // Exact ↔ Blind mode (full deals only): switch the verdict band between double-dummy and the
-        // sampled "play it as if you can't see all four hands" advisor for the shown side.
-        var exactBtn = document.getElementById('nc-cca-exact'), blindBtn = document.getElementById('nc-cca-blind');
-        function setMode(m) {
-            ccaMode = m;
-            if (exactBtn) exactBtn.classList.toggle('sel', m === 'exact');
-            if (blindBtn) blindBtn.classList.toggle('sel', m === 'blind');
-            renderCca(true);
-        }
-        if (exactBtn) exactBtn.onclick = function () { setMode('exact'); };
-        if (blindBtn) blindBtn.onclick = function () { setMode('blind'); };
-        // IMPs <-> MPs objective toggle: global, re-render overlay + inline lines.
-        var impsBtn = document.getElementById('nc-cca-imps'), mpsBtn = document.getElementById('nc-cca-mps');
-        function setObj(o) {
-            ccaObj = o;
-            if (impsBtn) impsBtn.classList.toggle('sel', o === 'imps');
-            if (mpsBtn) mpsBtn.classList.toggle('sel', o === 'mps');
-            combos.forEach(comboLine);
-            renderCca(true);
-        }
-        if (impsBtn) impsBtn.onclick = function () { setObj('imps'); };
-        if (mpsBtn) mpsBtn.onclick = function () { setObj('mps'); };
-
-        // Green whole-hand verdict (only when the active board carries baked DDS-sample data). The strain
-        // comes from the picker, the level from the trick slider (target = level + 6). make-% = the tail of
-        // that strain's sampled trick distribution at the target; the reconciliation strip shows combo's
-        // ceiling (DD) and blind (SD) expected totals beside the honest simulated mean, so the gap = the
-        // entry/tempo/no-squeeze tax.
-        var STRAIN_GLYPH = { s: '♠', h: '♥', d: '♦', c: '♣', nt: 'NT' };
-        function contractLabel(t, k) { return t >= 7 ? (t - 6) + STRAIN_GLYPH[k] : t + ' tricks ' + STRAIN_GLYPH[k]; }
-        // A card label "KS" (rank-first) -> "K♠" for the lead menu / band note.
-        function leadLabel(c) { var su = c.charAt(c.length - 1).toLowerCase(); return c.slice(0, c.length - 1) + (STRAIN_GLYPH[su] || su); }
-        // D. Worst opening lead (aids plan D): over the sampled opening-lead sub-grids, the defender card
-        // whose make-% at (target, strain) is lowest — the killing lead. min_n=20 guards a rare card's tiny
-        // sub-sample. Returns {pct, seatCard} or null (no lead data / none clears the guard).
-        function worstLead(el, t, strain) {
-            var leads = activeLeads(el); if (!leads || !leads.seats) return null;
-            var best = null;
-            ['N', 'E', 'S', 'W'].forEach(function (sk) {
-                var cards = leads.seats[sk]; if (!cards) return;
-                Object.keys(cards).forEach(function (ck) {
-                    var lc = cards[ck]; if (!lc || lc.n < 20) return;
-                    var g = lc.g[strain] || [], mk = 0; for (var k = t; k < 14; k++) mk += g[k] || 0;
-                    var pct = mk * 100;
-                    if (!best || pct < best.pct) best = { pct: pct, seatCard: sk + ' ' + leadLabel(ck) };
-                });
-            });
-            return best;
-        }
-        // The sample source for the active board & condition: the opening-lead sub-grid when a lead is
-        // picked (and present for this board), else the unconditioned base grid. Both carry {g, n}.
-        // Resolve the verdict-band source for the active board, side, mode, and opening lead into one
-        // descriptor {g, n, exact, lvl, strain, ach, taxpts, pvt, note}. Full deals carry BOTH an exact
-        // double-dummy grid per side (el._sim.ns/ew spikes) and, when sampled, a blind advisor per side
-        // (el._blind.ns/ew); the mode toggle picks between them. 2-hand boards carry the flat sample grid.
-        // Condition a sampled source on the picked opening lead (if any and present for the active leads),
-        // swapping in that lead's sub-grid + honest sub-n. Shared by the blind and 2-hand sample sources.
-        function condLead(el, base) {
-            var leads = activeLeads(el);
-            if (ccaLead && leads && leads.seats) {
-                var cards = leads.seats[ccaLead.seat];
-                var lc = cards && cards[ccaLead.card];
-                if (lc) {
-                    base.g = lc.g; base.n = lc.n; base.note = ccaLead.seat + ' led ' + leadLabel(ccaLead.card);
-                    // Per-lead conditioned guess tax (option (a)), baked per lead card for the default contract
-                    // when the sub-sample is robust. Absent (thin n) -> simBand falls back to the lead-
-                    // independent note (b). tax may be ~0: the lead located the honour, resolving the guess.
-                    if (typeof lc.tax === 'number') { base.leadTax = lc.tax; base.leadPvt = lc.pvt; base.leadHasTax = true; }
-                }
-            }
-            return base;
-        }
-        function activeSimSrc(el) {
-            var sim = el && el._sim, blind = el && el._blind;
-            // Full-deal BLIND mode: the DDS-sampled advisor for the shown side (same shape as 2-hand), so it
-            // takes the same opening-lead conditioning (leads baked per side inside el._blind[side]).
-            if (blind && ccaMode === 'blind') {
-                var bs = blind[ccaSide] || blind.ns || blind.ew;
-                if (bs) return condLead(el, { g: bs.g, n: bs.n, exact: false, lvl: bs.lvl, strain: bs.strain,
-                                 ach: bs.ach, taxpts: bs.taxpts, pvt: bs.pvt, note: null });
-            }
-            if (!sim) return null;
-            // Full-deal EXACT: one spike grid per side, so the band follows the N/S↔E/W toggle.
-            if (sim.exact) {
-                return { g: sim[ccaSide] || sim.ns, n: 1, exact: true, lvl: sim.lvl, strain: sim.strain, note: null };
-            }
-            // 2-hand sample grid, optionally conditioned on an opening lead.
-            return condLead(el, { g: sim.g, n: sim.n, exact: false, lvl: sim.lvl, strain: sim.strain,
-                         ach: sim.ach, taxpts: sim.taxpts, pvt: sim.pvt, note: null });
-        }
-        function simBand() {
-            if (!ccaSimBand) return;
-            var el = activeCombo(), src = activeSimSrc(el);
-            if (!src) { ccaSimBand.hidden = true; return; }
-            var g = src.g[ccaStrain] || [], t = el._target;
-            var mk = 0; for (var k = t; k < 14; k++) mk += g[k] || 0;
-            var se = Math.sqrt(Math.max(0, mk * (1 - mk)) / src.n) * 100;
-            var S = sideData(el);
-            var ceil = S && S.total ? etr(S.total) : null, blind = S && S.totalSd ? etr(S.totalSd) : null;
-            var exact = src.exact;
-            var s;
-            if (exact) {
-                // Fully-known deal, exact mode: the grid is a double-dummy SPIKE (make is 1 or 0), so there
-                // is no sampling ±, no deal count, and no misguess-tax rung (both defenders are visible).
-                s = '<b>Double-dummy (exact):</b> ' + contractLabel(t, ccaStrain) +
-                    (mk >= 0.5 ? ' <b>makes</b>' : ' <b>fails</b>') +
-                    ' <span class="lead-note">(known deal, both defenders visible)</span>';
-            } else {
-                s = '<b>Whole-hand (simulated):</b> ' + contractLabel(t, ccaStrain) +
-                    ' makes <b>' + (mk * 100).toFixed(0) + '%</b> (±' + se.toFixed(0) + '%, ' + src.n + ' deals)';
-                if (src.note) s += ' <span class="lead-note">given ' + src.note + '</span>';
-                // The achievable (misguess-tax) rung: the make-% docked for the dominant blind two-way guess.
-                // Baked per contract, so only meaningful when the picker sits on that exact (strain, level).
-                if (src.ach != null && ccaStrain === src.strain && t === src.lvl + 6) {
-                    if (!ccaLead) {
-                        // No lead picked: the tax IS unconditioned, so pair it with the (also unconditioned)
-                        // make-% — the gap below make-% is the guess tax.
-                        s += ' · achievable <b>' + src.ach.toFixed(0) + '%</b> playing blind' +
-                             (src.pvt ? ' <span class="lead-note">(' + leadLabel(src.pvt) + ' guess, −' + src.taxpts.toFixed(0) + ')</span>' : '');
-                    } else if (src.leadHasTax) {
-                        // A lead is picked AND a lead-CONDITIONED tax was baked (option (a)): couple it to this
-                        // lead's make-% honestly. tax≈0 means the lead located the trapped honour → guess resolved.
-                        if (src.leadTax >= 1) {
-                            s += ' · achievable <b>' + (mk * 100 - src.leadTax).toFixed(0) + '%</b> playing blind' +
-                                 ' <span class="lead-note">(' + leadLabel(src.leadPvt) + ' guess, −' + src.leadTax.toFixed(0) + ')</span>';
-                        } else {
-                            s += ' <span class="lead-note">· the lead resolves the ' + leadLabel(src.leadPvt) + ' guess</span>';
-                        }
-                    } else if (src.pvt && src.taxpts >= 1) {
-                        // A lead is picked but its sub-sample was too thin to condition the tax. Fall back to the
-                        // lead-INDEPENDENT decoupled note (option (b)): the two-way guess still exists under any lead.
-                        s += ' <span class="lead-note">· blind two-way guess still costs ≈' +
-                             src.taxpts.toFixed(0) + '% (' + leadLabel(src.pvt) + ')</span>';
-                    }
-                }
-                // Worst opening lead (aids plan D): only when no specific lead is picked (else the band already
-                // shows that lead) and the killing lead costs something material vs the current make-%.
-                if (!ccaLead) {
-                    var wl = worstLead(el, t, ccaStrain);
-                    if (wl && (mk * 100 - wl.pct) >= 3) {
-                        s += ' <span class="lead-note">worst lead ' + wl.seatCard + ' → ' + wl.pct.toFixed(0) + '%</span>';
-                    }
-                }
-            }
-            // Reconciliation strip (own line, so room for the fuller labels that match the text report):
-            // naive ceiling (DD census) · naive blind (SD census) · simulated (DDS whole-hand).
-            s += '<span class="recon">' + (ceil != null ? 'naive ceiling ' + ceil.toFixed(1) + ' (DD census) · ' : '') +
-                 (blind != null ? 'naive blind ' + blind.toFixed(1) + ' (SD census) · ' : '') +
-                 (exact ? 'double-dummy ' + etr(g).toFixed(1) + ' (exact)' : 'simulated ' + etr(g).toFixed(1) + ' (DDS whole-hand)') + '</span>';
-            ccaSimBand.innerHTML = s;
-            ccaSimBand.hidden = false;
-        }
-        // Populate the lead dropdown from the active board's sub-grids (grouped by defender, each card an
-        // option). Hidden when the board has no lead data. Preserves the current pick if still valid.
-        function buildLeadOptions(el) {
-            if (!ccaLeadSel || !ccaLeadWrap) return;
-            var leads = activeLeads(el);
-            if (!leads || !leads.seats) { ccaLeadWrap.hidden = true; return; }
-            ccaLeadWrap.hidden = false;
-            var html = '<option value="">none</option>';
-            ['N', 'E', 'S', 'W'].forEach(function (sk) {
-                var cards = leads.seats[sk]; if (!cards) return;
-                Object.keys(cards).forEach(function (ck) {
-                    html += '<option value="' + sk + '|' + ck + '">' + sk + ' ' + leadLabel(ck) + '</option>';
-                });
-            });
-            ccaLeadSel.innerHTML = html;
-            // Auto-seed from the recorded opening lead (baked per side on the blind advisor) until the user
-            // picks for themselves. Only on the side the lead defends; a card absent from this side's options
-            // is dropped by the has-check below.
-            if (!ccaLeadTouched && !ccaLead && ccaMode === 'blind' && el && el._blind) {
-                var bl = el._blind[ccaSide];
-                if (bl && bl.lead && bl.lead.seat && bl.lead.card) ccaLead = { seat: bl.lead.seat, card: bl.lead.card };
-            }
-            var want = ccaLead ? (ccaLead.seat + '|' + ccaLead.card) : '', has = false;
-            for (var i = 0; i < ccaLeadSel.options.length; i++) { if (ccaLeadSel.options[i].value === want) { has = true; break; } }
-            if (!has) { ccaLead = null; want = ''; }
-            ccaLeadSel.value = want;
-        }
-        if (ccaLeadSel) ccaLeadSel.onchange = function () {
-            var v = this.value;
-            ccaLeadTouched = true; // user has taken over the pick; stop auto-seeding the recorded lead
-            if (!v) { ccaLead = null; } else { var p = v.split('|'); ccaLead = { seat: p[0], card: p[1] }; }
-            simBand();
-        };
-        // Contract-strain picker (shown only if some board has sample data). Default = the baked contract.
-        var strainBtns = ccaStrainWrap ? Array.prototype.slice.call(ccaStrainWrap.querySelectorAll('[data-str]')) : [];
-        function setStrain(k) {
-            ccaStrain = k;
-            strainBtns.forEach(function (btn) { btn.classList.toggle('sel', btn.getAttribute('data-str') === k); });
-            simBand();
-        }
-        strainBtns.forEach(function (btn) { btn.onclick = function () { setStrain(btn.getAttribute('data-str')); }; });
-        var simDefault = null;
-        for (var ci = 0; ci < combos.length; ci++) { if (combos[ci]._sim) { simDefault = combos[ci]._sim; break; } }
-        if (simDefault && ccaStrainWrap) { ccaStrainWrap.hidden = false; }
-        setStrain(simDefault && simDefault.strain ? simDefault.strain : 'nt');
-
-        // Help modal.
-        var helpModal = document.getElementById('nc-cca-help-modal');
-        var helpBtn = document.getElementById('nc-cca-help'), helpClose = document.getElementById('nc-cca-help-close');
-        if (helpBtn) helpBtn.onclick = function () { if (helpModal) helpModal.hidden = false; };
-        if (helpClose) helpClose.onclick = function () { if (helpModal) helpModal.hidden = true; };
-        if (helpModal) helpModal.onclick = function (e) { if (e.target === helpModal) helpModal.hidden = true; };
-        // Hover tooltip: the detailed play narration for a suit's recommended line (delegation, since the
-        // table is rebuilt on every nav / toggle).
-        var tipEl = document.getElementById('nc-cca-tip');
-        function posTip(e) {
-            if (!tipEl) return;
-            var m = 14;
-            tipEl.style.left = Math.min(e.clientX + m, window.innerWidth - tipEl.offsetWidth - 8) + 'px';
-            tipEl.style.top = Math.min(e.clientY + m, window.innerHeight - tipEl.offsetHeight - 8) + 'px';
-        }
-        function tipTarget(e) { return e.target && e.target.closest ? e.target.closest('[data-tip]') : null; }
-        document.addEventListener('mouseover', function (e) {
-            var t = tipTarget(e);
-            if (t && tipEl) { tipEl.textContent = t.getAttribute('data-tip'); tipEl.hidden = false; posTip(e); }
-        });
-        document.addEventListener('mousemove', function (e) { if (tipEl && !tipEl.hidden) posTip(e); });
-        document.addEventListener('mouseout', function (e) { if (tipTarget(e) && tipEl) tipEl.hidden = true; });
-
-        if (combos.length === 0 && ccaBtn) ccaBtn.style.display = 'none';
-
-        window.addEventListener('resize', function () { show(idx); });
-        applyAll();
-        syncSideToggle(); // lock ccaSide to board 0's known side before the first inline-badge render
-        combos.forEach(comboLine);
-        show(0);
-    })();
-    </script>
-</body>
-`
+HTML_CARDS_PAGE_FOOTER :: #load("html_cards_footer.html.tmpl", string)
 
 // Write the once-per-run prologue for `format`. Only the HTML formats have one (the page header);
 // every other format opens with nothing. `page_title` (empty -> "Practice Deals") fills both the
@@ -2248,7 +792,7 @@ render_page_prologue :: proc(builder: ^strings.Builder, format: Output_Format, p
 	header: string
 	#partial switch format {
 	case .Html_Handviewer:
-		header = HTML_PAGE_HEADER
+		header = HTML_HANDVIEWER_PAGE_HEADER
 	case .Html_Cards:
 		header = HTML_CARDS_PAGE_HEADER
 	case:
@@ -2264,7 +808,7 @@ render_page_prologue :: proc(builder: ^strings.Builder, format: Output_Format, p
 render_page_epilogue :: proc(builder: ^strings.Builder, format: Output_Format) {
 	#partial switch format {
 	case .Html_Handviewer:
-		strings.write_string(builder, HTML_PAGE_FOOTER)
+		strings.write_string(builder, HTML_HANDVIEWER_PAGE_FOOTER)
 	case .Html_Cards:
 		strings.write_string(builder, HTML_CARDS_PAGE_FOOTER)
 	}

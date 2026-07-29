@@ -11,11 +11,11 @@ package norn
 
 import "core:testing"
 
-// Build a single-suit rank mask (bit r set per rank) from an explicit list of ranks.
-mask :: proc(ranks: ..Rank) -> u16 {
-	m: u16
+// Build a single-suit holding from an explicit list of ranks.
+mask :: proc(ranks: ..Rank) -> Rank_Set {
+	m: Rank_Set
 	for r in ranks {
-		m |= u16(1) << u16(r)
+		m += {r}
 	}
 	return m
 }
@@ -140,47 +140,71 @@ test_opc_responder_base :: proc(t: ^testing.T) {
 	testing.expect_value(t, o.honour.non_opening, f32(-2.0))
 	testing.expect_value(t, o.length, f32(3.0))
 	// Suit responder: honour(-2) + capped length(2) + no shortage(0) = 0.
-	testing.expect_value(t, opc_responder_base(long, false), f32(0.0))
+	testing.expect_value(t, opc_responder_base(Responder(long), false), f32(0.0))
 	// NT responder: the ordinary non-opening NT total (no cap, no strip).
-	testing.expect_value(t, opc_responder_base(long, true), o.non_opening_nt)
+	testing.expect_value(t, opc_responder_base(Responder(long), true), o.non_opening_nt)
 
 	// 4-3-3-3: the flat -1 is all the distribution there is, so suit responder == full non-opening suit.
 	flat := resp_4333_no_honours()
 	fo := opc_points(flat)
-	testing.expect_value(t, opc_responder_base(flat, false), f32(-3.0))
-	testing.expect_value(t, opc_responder_base(flat, false), fo.non_opening_suit)
+	testing.expect_value(t, opc_responder_base(Responder(flat), false), f32(-3.0))
+	testing.expect_value(t, opc_responder_base(Responder(flat), false), fo.non_opening_suit)
 }
 
 // Shape-only fixtures for the mirror test (honours irrelevant to pattern).
 shape_5332_spades :: proc() -> Hand_Summary {
 	return summarize(
 		Hand {
-			make_card(.Spades, .Ace), make_card(.Spades, .King), make_card(.Spades, .Five),
-			make_card(.Spades, .Four), make_card(.Spades, .Three),
-			make_card(.Hearts, .Four), make_card(.Hearts, .Three), make_card(.Hearts, .Two),
-			make_card(.Diamonds, .Four), make_card(.Diamonds, .Three), make_card(.Diamonds, .Two),
-			make_card(.Clubs, .Three), make_card(.Clubs, .Two),
+			make_card(.Spades, .Ace),
+			make_card(.Spades, .King),
+			make_card(.Spades, .Five),
+			make_card(.Spades, .Four),
+			make_card(.Spades, .Three),
+			make_card(.Hearts, .Four),
+			make_card(.Hearts, .Three),
+			make_card(.Hearts, .Two),
+			make_card(.Diamonds, .Four),
+			make_card(.Diamonds, .Three),
+			make_card(.Diamonds, .Two),
+			make_card(.Clubs, .Three),
+			make_card(.Clubs, .Two),
 		},
 	)
 }
 shape_5332_hearts :: proc() -> Hand_Summary { 	// same [5,3,3,2] pattern, long suit in hearts
 	return summarize(
 		Hand {
-			make_card(.Hearts, .Ace), make_card(.Hearts, .King), make_card(.Hearts, .Five),
-			make_card(.Hearts, .Four), make_card(.Hearts, .Three),
-			make_card(.Spades, .Four), make_card(.Spades, .Three), make_card(.Spades, .Two),
-			make_card(.Diamonds, .Four), make_card(.Diamonds, .Three), make_card(.Diamonds, .Two),
-			make_card(.Clubs, .Three), make_card(.Clubs, .Two),
+			make_card(.Hearts, .Ace),
+			make_card(.Hearts, .King),
+			make_card(.Hearts, .Five),
+			make_card(.Hearts, .Four),
+			make_card(.Hearts, .Three),
+			make_card(.Spades, .Four),
+			make_card(.Spades, .Three),
+			make_card(.Spades, .Two),
+			make_card(.Diamonds, .Four),
+			make_card(.Diamonds, .Three),
+			make_card(.Diamonds, .Two),
+			make_card(.Clubs, .Three),
+			make_card(.Clubs, .Two),
 		},
 	)
 }
 shape_6421 :: proc() -> Hand_Summary { 	// [6,4,2,1] — long, different shape
 	return summarize(
 		Hand {
-			make_card(.Spades, .Ace), make_card(.Spades, .King), make_card(.Spades, .Five),
-			make_card(.Spades, .Four), make_card(.Spades, .Three), make_card(.Spades, .Two),
-			make_card(.Hearts, .Five), make_card(.Hearts, .Four), make_card(.Hearts, .Three), make_card(.Hearts, .Two),
-			make_card(.Diamonds, .Three), make_card(.Diamonds, .Two),
+			make_card(.Spades, .Ace),
+			make_card(.Spades, .King),
+			make_card(.Spades, .Five),
+			make_card(.Spades, .Four),
+			make_card(.Spades, .Three),
+			make_card(.Spades, .Two),
+			make_card(.Hearts, .Five),
+			make_card(.Hearts, .Four),
+			make_card(.Hearts, .Three),
+			make_card(.Hearts, .Two),
+			make_card(.Diamonds, .Three),
+			make_card(.Diamonds, .Two),
 			make_card(.Clubs, .Two),
 		},
 	)
@@ -206,11 +230,19 @@ test_opc_mirror_penalty :: proc(t: ^testing.T) {
 combined_opener_akqjt :: proc() -> Hand_Summary {
 	return summarize(
 		Hand {
-			make_card(.Spades, .Ace), make_card(.Spades, .King), make_card(.Spades, .Queen),
-			make_card(.Spades, .Jack), make_card(.Spades, .Ten),
-			make_card(.Hearts, .Four), make_card(.Hearts, .Three), make_card(.Hearts, .Two),
-			make_card(.Diamonds, .Four), make_card(.Diamonds, .Three), make_card(.Diamonds, .Two),
-			make_card(.Clubs, .Three), make_card(.Clubs, .Two),
+			make_card(.Spades, .Ace),
+			make_card(.Spades, .King),
+			make_card(.Spades, .Queen),
+			make_card(.Spades, .Jack),
+			make_card(.Spades, .Ten),
+			make_card(.Hearts, .Four),
+			make_card(.Hearts, .Three),
+			make_card(.Hearts, .Two),
+			make_card(.Diamonds, .Four),
+			make_card(.Diamonds, .Three),
+			make_card(.Diamonds, .Two),
+			make_card(.Clubs, .Three),
+			make_card(.Clubs, .Two),
 		},
 	)
 }
@@ -220,10 +252,19 @@ combined_opener_akqjt :: proc() -> Hand_Summary {
 combined_responder_flat :: proc() -> Hand_Summary {
 	return summarize(
 		Hand {
-			make_card(.Spades, .Five), make_card(.Spades, .Four), make_card(.Spades, .Three),
-			make_card(.Hearts, .Seven), make_card(.Hearts, .Six), make_card(.Hearts, .Five),
-			make_card(.Diamonds, .Seven), make_card(.Diamonds, .Six), make_card(.Diamonds, .Five),
-			make_card(.Clubs, .Seven), make_card(.Clubs, .Six), make_card(.Clubs, .Five), make_card(.Clubs, .Four),
+			make_card(.Spades, .Five),
+			make_card(.Spades, .Four),
+			make_card(.Spades, .Three),
+			make_card(.Hearts, .Seven),
+			make_card(.Hearts, .Six),
+			make_card(.Hearts, .Five),
+			make_card(.Diamonds, .Seven),
+			make_card(.Diamonds, .Six),
+			make_card(.Diamonds, .Five),
+			make_card(.Clubs, .Seven),
+			make_card(.Clubs, .Six),
+			make_card(.Clubs, .Five),
+			make_card(.Clubs, .Four),
 		},
 	)
 }
@@ -248,10 +289,10 @@ test_combined_opc_compose :: proc(t: ^testing.T) {
 // order of the args is spades, hearts, diamonds, clubs; they must total 13.
 hand_from_lengths :: proc(sp, he, di, cl: int) -> Hand_Summary {
 	s: Hand_Summary
-	for i in 0 ..< sp {s.suits[.Spades] |= u16(1) << u16(i)}
-	for i in 0 ..< he {s.suits[.Hearts] |= u16(1) << u16(i)}
-	for i in 0 ..< di {s.suits[.Diamonds] |= u16(1) << u16(i)}
-	for i in 0 ..< cl {s.suits[.Clubs] |= u16(1) << u16(i)}
+	for i in 0 ..< sp {s.suits[.Spades] += {Rank(i)}}
+	for i in 0 ..< he {s.suits[.Hearts] += {Rank(i)}}
+	for i in 0 ..< di {s.suits[.Diamonds] += {Rank(i)}}
+	for i in 0 ..< cl {s.suits[.Clubs] += {Rank(i)}}
 	return s
 }
 
@@ -260,17 +301,17 @@ hand_from_lengths :: proc(sp, he, di, cl: int) -> Hand_Summary {
 @(test)
 test_opc_support_ruffing :: proc(t: ^testing.T) {
 	// 2-4 card support: rt - shortest side suit.
-	testing.expect_value(t, opc_support_ruffing(hand_from_lengths(4, 1, 4, 4), .Spades), f32(3.0)) // 4 trumps, singleton
-	testing.expect_value(t, opc_support_ruffing(hand_from_lengths(3, 2, 4, 4), .Spades), f32(1.0)) // 3 trumps, doubleton
-	testing.expect_value(t, opc_support_ruffing(hand_from_lengths(3, 3, 3, 4), .Spades), f32(0.0)) // no side shortage
-	testing.expect_value(t, opc_support_ruffing(hand_from_lengths(4, 0, 4, 5), .Spades), f32(4.0)) // 4 trumps, void
+	testing.expect_value(t, opc_support_ruffing(Responder(hand_from_lengths(4, 1, 4, 4)), .Spades), f32(3.0)) // 4 trumps, singleton
+	testing.expect_value(t, opc_support_ruffing(Responder(hand_from_lengths(3, 2, 4, 4)), .Spades), f32(1.0)) // 3 trumps, doubleton
+	testing.expect_value(t, opc_support_ruffing(Responder(hand_from_lengths(3, 3, 3, 4)), .Spades), f32(0.0)) // no side shortage
+	testing.expect_value(t, opc_support_ruffing(Responder(hand_from_lengths(4, 0, 4, 5)), .Spades), f32(4.0)) // 4 trumps, void
 
 	// 5+ trumps: full opening-style suit distribution (singleton +2 / void +4).
-	testing.expect_value(t, opc_support_ruffing(hand_from_lengths(5, 1, 4, 3), .Spades), f32(2.0)) // singleton side
-	testing.expect_value(t, opc_support_ruffing(hand_from_lengths(5, 0, 4, 4), .Spades), f32(4.0)) // void side
+	testing.expect_value(t, opc_support_ruffing(Responder(hand_from_lengths(5, 1, 4, 3)), .Spades), f32(2.0)) // singleton side
+	testing.expect_value(t, opc_support_ruffing(Responder(hand_from_lengths(5, 0, 4, 4)), .Spades), f32(4.0)) // void side
 
 	// Under two trumps: not a support hand.
-	testing.expect_value(t, opc_support_ruffing(hand_from_lengths(1, 4, 4, 4), .Spades), f32(0.0))
+	testing.expect_value(t, opc_support_ruffing(Responder(hand_from_lengths(1, 4, 4, 4)), .Spades), f32(0.0))
 }
 
 // Responder with 4-card trump support and a side singleton, opposite the AKQJT opener: a 9-card spade
@@ -281,10 +322,19 @@ test_combined_opc_ruffing :: proc(t: ^testing.T) {
 	o := combined_opener_akqjt() // 5-3-3-2, opening_suit 13.5
 	r := summarize(
 		Hand {
-			make_card(.Spades, .Five), make_card(.Spades, .Four), make_card(.Spades, .Three), make_card(.Spades, .Two),
+			make_card(.Spades, .Five),
+			make_card(.Spades, .Four),
+			make_card(.Spades, .Three),
+			make_card(.Spades, .Two),
 			make_card(.Hearts, .Two),
-			make_card(.Diamonds, .Five), make_card(.Diamonds, .Four), make_card(.Diamonds, .Three), make_card(.Diamonds, .Two),
-			make_card(.Clubs, .Five), make_card(.Clubs, .Four), make_card(.Clubs, .Three), make_card(.Clubs, .Two),
+			make_card(.Diamonds, .Five),
+			make_card(.Diamonds, .Four),
+			make_card(.Diamonds, .Three),
+			make_card(.Diamonds, .Two),
+			make_card(.Clubs, .Five),
+			make_card(.Clubs, .Four),
+			make_card(.Clubs, .Three),
+			make_card(.Clubs, .Two),
 		},
 	) // 4-1-4-4, no honours
 
@@ -298,19 +348,39 @@ test_combined_opc_ruffing :: proc(t: ^testing.T) {
 test_opc_per_suit_mirror_penalty :: proc(t: ^testing.T) {
 	// A mirror suit = both hands equal length AND non-fit (equal length <= 3), gated on a 5+ suit.
 	// 5-3-3-2 vs 5-4-2-2: only clubs (2 == 2) mirrors; spades 5==5 is a FIT (excluded), hearts/diamonds differ.
-	testing.expect_value(t, opc_per_suit_mirror_penalty(hand_from_lengths(5, 3, 3, 2), hand_from_lengths(5, 4, 2, 2)), f32(-1.0))
+	testing.expect_value(
+		t,
+		opc_per_suit_mirror_penalty(hand_from_lengths(5, 3, 3, 2), hand_from_lengths(5, 4, 2, 2)),
+		f32(-1.0),
+	)
 
 	// 6-5-2-0 mirrored exactly: spades/hearts are fits (6,5 excluded); diamonds (2==2) and clubs (0==0) -> -2.
-	testing.expect_value(t, opc_per_suit_mirror_penalty(hand_from_lengths(6, 5, 2, 0), hand_from_lengths(6, 5, 2, 0)), f32(-2.0))
+	testing.expect_value(
+		t,
+		opc_per_suit_mirror_penalty(hand_from_lengths(6, 5, 2, 0), hand_from_lengths(6, 5, 2, 0)),
+		f32(-2.0),
+	)
 
 	// A mirrored 3-card SIDE suit now counts (equal, non-fit): hearts 3==3 -> -1.
-	testing.expect_value(t, opc_per_suit_mirror_penalty(hand_from_lengths(5, 3, 2, 3), hand_from_lengths(5, 3, 3, 2)), f32(-1.0))
+	testing.expect_value(
+		t,
+		opc_per_suit_mirror_penalty(hand_from_lengths(5, 3, 2, 3), hand_from_lengths(5, 3, 3, 2)),
+		f32(-1.0),
+	)
 
 	// An equal 4-4 is a FIT, not a mirror: 5-4-2-2 twice -> only diamonds + clubs mirror -> -2.
-	testing.expect_value(t, opc_per_suit_mirror_penalty(hand_from_lengths(5, 4, 2, 2), hand_from_lengths(5, 4, 2, 2)), f32(-2.0))
+	testing.expect_value(
+		t,
+		opc_per_suit_mirror_penalty(hand_from_lengths(5, 4, 2, 2), hand_from_lengths(5, 4, 2, 2)),
+		f32(-2.0),
+	)
 
 	// No 5+ suit anywhere: the gate blocks the penalty even for an exact mirror.
-	testing.expect_value(t, opc_per_suit_mirror_penalty(hand_from_lengths(4, 3, 3, 3), hand_from_lengths(4, 3, 3, 3)), f32(0.0))
+	testing.expect_value(
+		t,
+		opc_per_suit_mirror_penalty(hand_from_lengths(4, 3, 3, 3), hand_from_lengths(4, 3, 3, 3)),
+		f32(0.0),
+	)
 }
 
 // combined_opc_breakdown: the component fields sum to the total combined_opc returns, and each names the
@@ -352,10 +422,19 @@ test_combined_opc_breakdown_detail :: proc(t: ^testing.T) {
 	o := combined_opener_akqjt() // 5-3-3-2 AKQJT
 	r := summarize(
 		Hand {
-			make_card(.Spades, .Five), make_card(.Spades, .Four), make_card(.Spades, .Three), make_card(.Spades, .Two),
+			make_card(.Spades, .Five),
+			make_card(.Spades, .Four),
+			make_card(.Spades, .Three),
+			make_card(.Spades, .Two),
 			make_card(.Hearts, .Two),
-			make_card(.Diamonds, .Five), make_card(.Diamonds, .Four), make_card(.Diamonds, .Three), make_card(.Diamonds, .Two),
-			make_card(.Clubs, .Five), make_card(.Clubs, .Four), make_card(.Clubs, .Three), make_card(.Clubs, .Two),
+			make_card(.Diamonds, .Five),
+			make_card(.Diamonds, .Four),
+			make_card(.Diamonds, .Three),
+			make_card(.Diamonds, .Two),
+			make_card(.Clubs, .Five),
+			make_card(.Clubs, .Four),
+			make_card(.Clubs, .Three),
+			make_card(.Clubs, .Two),
 		},
 	) // 4-1-4-4 unbalanced
 
@@ -384,18 +463,36 @@ test_combined_opc_breakdown_detail :: proc(t: ^testing.T) {
 test_combined_opc_breakdown_split_signs :: proc(t: ^testing.T) {
 	o := summarize(
 		Hand {
-			make_card(.Spades, .Ace), make_card(.Spades, .King), make_card(.Spades, .Queen), make_card(.Spades, .Jack), make_card(.Spades, .Ten),
-			make_card(.Hearts, .Four), make_card(.Hearts, .Three), make_card(.Hearts, .Two),
-			make_card(.Diamonds, .Four), make_card(.Diamonds, .Three),
-			make_card(.Clubs, .Four), make_card(.Clubs, .Three), make_card(.Clubs, .Two),
+			make_card(.Spades, .Ace),
+			make_card(.Spades, .King),
+			make_card(.Spades, .Queen),
+			make_card(.Spades, .Jack),
+			make_card(.Spades, .Ten),
+			make_card(.Hearts, .Four),
+			make_card(.Hearts, .Three),
+			make_card(.Hearts, .Two),
+			make_card(.Diamonds, .Four),
+			make_card(.Diamonds, .Three),
+			make_card(.Clubs, .Four),
+			make_card(.Clubs, .Three),
+			make_card(.Clubs, .Two),
 		},
 	) // 5-3-2-3 long spades
 	r := summarize(
 		Hand {
-			make_card(.Spades, .Nine), make_card(.Spades, .Eight),
-			make_card(.Hearts, .King), make_card(.Hearts, .Seven), make_card(.Hearts, .Six), make_card(.Hearts, .Five), make_card(.Hearts, .Nine),
-			make_card(.Diamonds, .King), make_card(.Diamonds, .Two),
-			make_card(.Clubs, .Ten), make_card(.Clubs, .Nine), make_card(.Clubs, .Eight), make_card(.Clubs, .Seven),
+			make_card(.Spades, .Nine),
+			make_card(.Spades, .Eight),
+			make_card(.Hearts, .King),
+			make_card(.Hearts, .Seven),
+			make_card(.Hearts, .Six),
+			make_card(.Hearts, .Five),
+			make_card(.Hearts, .Nine),
+			make_card(.Diamonds, .King),
+			make_card(.Diamonds, .Two),
+			make_card(.Clubs, .Ten),
+			make_card(.Clubs, .Nine),
+			make_card(.Clubs, .Eight),
+			make_card(.Clubs, .Seven),
 		},
 	) // 2-5-2-4: long hearts, doubletons
 
@@ -421,10 +518,19 @@ test_combined_opc_distribution_fit_present :: proc(t: ^testing.T) {
 	o := combined_opener_akqjt() // 5-3-3-2
 	r := summarize(
 		Hand {
-			make_card(.Spades, .Five), make_card(.Spades, .Four), make_card(.Spades, .Three), make_card(.Spades, .Two),
+			make_card(.Spades, .Five),
+			make_card(.Spades, .Four),
+			make_card(.Spades, .Three),
+			make_card(.Spades, .Two),
 			make_card(.Hearts, .Two),
-			make_card(.Diamonds, .Five), make_card(.Diamonds, .Four), make_card(.Diamonds, .Three), make_card(.Diamonds, .Two),
-			make_card(.Clubs, .Five), make_card(.Clubs, .Four), make_card(.Clubs, .Three), make_card(.Clubs, .Two),
+			make_card(.Diamonds, .Five),
+			make_card(.Diamonds, .Four),
+			make_card(.Diamonds, .Three),
+			make_card(.Diamonds, .Two),
+			make_card(.Clubs, .Five),
+			make_card(.Clubs, .Four),
+			make_card(.Clubs, .Three),
+			make_card(.Clubs, .Two),
 		},
 	) // 4-1-4-4, unbalanced (singleton heart)
 

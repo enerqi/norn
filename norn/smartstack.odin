@@ -263,26 +263,27 @@ smartstack_make_filtered :: proc(
 	return smartstack_make(seat, chosen[:chosen_count], hcp_min, hcp_max)
 }
 
-// Pick an index into `weights` with probability proportional to its weight. Returns -1 if every
-// weight is zero. Drives every random choice in the sampler.
+// Pick an index into `weights` with probability proportional to its weight. Drives every random choice
+// in the sampler. `ok` is false when every weight is zero — there is no index to return, so it is a
+// second return value rather than a -1 that would silently index backwards from the caller's array.
 @(private = "file")
-weighted_pick :: proc(weights: []i64) -> int {
+weighted_pick :: proc(weights: []i64) -> (index: int, ok: bool) {
 	total: i64
 	for w in weights {
 		total += w
 	}
 	if total <= 0 {
-		return -1
+		return 0, false
 	}
 	target := rand.float64() * f64(total)
 	acc: i64
 	for w, i in weights {
 		acc += w
 		if target < f64(acc) {
-			return i
+			return i, true
 		}
 	}
-	return len(weights) - 1 // float rounding fell off the end; the last positive bucket
+	return len(weights) - 1, true // float rounding fell off the end; the last positive bucket
 }
 
 // Append a single suit's holding — `length` cards worth `points` hcp — into `hand` at `n`, advancing
@@ -313,7 +314,9 @@ sample_suit_holding :: proc(suit: Suit, length, points: int, hand: ^Hand, n: ^in
 		}
 	}
 
-	mask := masks[weighted_pick(weights[:choices])]
+	choice, choice_ok := weighted_pick(weights[:choices])
+	assert(choice_ok, "sample_suit_holding: no honour subset of this length makes the requested points")
+	mask := masks[choice]
 	honors := 0
 	for bit in 0 ..< HONORS_PER_SUIT {
 		if (mask & (1 << uint(bit))) != 0 {
@@ -337,8 +340,12 @@ sample_suit_holding :: proc(suit: Suit, length, points: int, hand: ^Hand, n: ^in
 // Sample one hand satisfying the SmartStack constraint, uniformly over all such hands (see the file
 // header for why the four weighted picks compose into a uniform draw). Assumes `ss.ok` was true.
 smartstack_hand :: proc(ss: ^Smart_Stack) -> Hand {
-	// 1. shape, weighted by its count of in-range hands.
-	shape := ss.shapes[weighted_pick(ss.weights[:ss.shape_count])]
+	// 1. shape, weighted by its count of in-range hands. Every pick below is total by construction —
+	// smartstack_make only reports ok with a positive total weight, and each conditional distribution is
+	// derived from that same table — so an empty pick is a broken spec, not a runtime case to handle.
+	shape_index, shape_ok := weighted_pick(ss.weights[:ss.shape_count])
+	assert(shape_ok, "smartstack_hand: no admitted shape (was smartstack_make's ok checked?)")
+	shape := ss.shapes[shape_index]
 
 	// 2. total hcp t in [lo, hi], weighted by how many hands of this shape have t points.
 	dist := shape_distribution(&ss.table, shape)
@@ -346,7 +353,8 @@ smartstack_hand :: proc(ss: ^Smart_Stack) -> Hand {
 	for t in ss.hcp_min ..= ss.hcp_max {
 		t_weights[t] = dist[t]
 	}
-	t := weighted_pick(t_weights[:]) // the chosen index IS the hcp value
+	t, t_ok := weighted_pick(t_weights[:]) // the chosen index IS the hcp value
+	assert(t_ok, "smartstack_hand: no hcp total in range for the chosen shape")
 
 	// 3. split t across the suits. Sample each suit's points in turn, weighted by its own count
 	//    times the count of all ways the remaining suits can make up the rest (suffix convolutions).
@@ -391,7 +399,9 @@ pick_suit_points :: proc(row, rest: []i64, rem: int) -> int {
 			weights[p] = row[p] * rest[need]
 		}
 	}
-	return weighted_pick(weights[:])
+	p, ok := weighted_pick(weights[:])
+	assert(ok, "pick_suit_points: no way to split the remaining hcp across the remaining suits")
+	return p
 }
 
 // Deal one board with `ss`'s seat stacked to its constraint and the remaining 39 cards dealt at

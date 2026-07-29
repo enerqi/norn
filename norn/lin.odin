@@ -110,14 +110,11 @@ parse_lin_deal :: proc(text: string) -> (board: Parsed_Board, err: Lin_Parse_Err
 	}
 	// The contract, when the record carried an auction (`mb|` tokens): derive its final bid + rule-correct
 	// declarer, keyed off the BBO dealer digit (value[0], already validated 1..4 above). No auction — a
-	// bare `md` deal, or an all-pass auction — leaves has_contract false.
+	// bare `md` deal, or an all-pass auction — leaves `contract` nil.
 	if dealer, dok := lin_dealer_seat(value[0]); dok {
 		calls := lin_auction_calls(text, context.temp_allocator)
-		if lvl, strain, declarer, cok := derive_contract(dealer, calls[:]); cok {
-			board.contract_level = lvl
-			board.contract_strain = strain
-			board.declarer = declarer
-			board.has_contract = true
+		if contract, cok := derive_contract(dealer, calls[:]); cok {
+			board.contract = contract
 		}
 	}
 	return board, .None

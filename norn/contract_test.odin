@@ -10,11 +10,11 @@ import "core:testing"
 @(test)
 test_derive_contract_first_namer :: proc(t: ^testing.T) {
 	calls := []string{"1D", "p", "1H", "p", "2H", "p", "p", "p"}
-	level, strain, declarer, ok := derive_contract(.North, calls)
+	contract, ok := derive_contract(.North, calls)
 	testing.expect(t, ok)
-	testing.expect_value(t, level, 2)
-	testing.expect_value(t, strain, Contract_Strain.Hearts)
-	testing.expect_value(t, declarer, Seat.South)
+	testing.expect_value(t, contract.level, 2)
+	testing.expect_value(t, contract.strain, Contract_Strain.Hearts)
+	testing.expect_value(t, contract.declarer, Seat.South)
 }
 
 // A simple uncontested auction: dealer North opens 1S, South raises to 2S, passed out. North named spades
@@ -22,11 +22,11 @@ test_derive_contract_first_namer :: proc(t: ^testing.T) {
 @(test)
 test_derive_contract_opener_declares :: proc(t: ^testing.T) {
 	calls := []string{"1S", "p", "2S", "p", "p", "p"}
-	level, strain, declarer, ok := derive_contract(.North, calls)
+	contract, ok := derive_contract(.North, calls)
 	testing.expect(t, ok)
-	testing.expect_value(t, level, 2)
-	testing.expect_value(t, strain, Contract_Strain.Spades)
-	testing.expect_value(t, declarer, Seat.North)
+	testing.expect_value(t, contract.level, 2)
+	testing.expect_value(t, contract.strain, Contract_Strain.Spades)
+	testing.expect_value(t, contract.declarer, Seat.North)
 }
 
 // Notrump and doubles: dealer East opens 1NT, South overcalls 2C, West doubles, North bids 3NT, passed
@@ -35,18 +35,18 @@ test_derive_contract_opener_declares :: proc(t: ^testing.T) {
 @(test)
 test_derive_contract_notrump_and_double :: proc(t: ^testing.T) {
 	calls := []string{"1N", "2C", "d", "3NT", "p", "p", "p"}
-	level, strain, declarer, ok := derive_contract(.East, calls)
+	contract, ok := derive_contract(.East, calls)
 	testing.expect(t, ok)
-	testing.expect_value(t, level, 3)
-	testing.expect_value(t, strain, Contract_Strain.NoTrump)
-	testing.expect_value(t, declarer, Seat.North)
+	testing.expect_value(t, contract.level, 3)
+	testing.expect_value(t, contract.strain, Contract_Strain.NoTrumps)
+	testing.expect_value(t, contract.declarer, Seat.North)
 }
 
 // A passed-out auction (all passes) names no contract.
 @(test)
 test_derive_contract_passed_out :: proc(t: ^testing.T) {
 	calls := []string{"p", "p", "p", "p"}
-	_, _, _, ok := derive_contract(.North, calls)
+	_, ok := derive_contract(.North, calls)
 	testing.expect(t, !ok)
 }
 
@@ -57,10 +57,11 @@ test_parse_lin_contract_from_auction :: proc(t: ^testing.T) {
 	rec := "md|3SAKTHK96DKT65C973,SQ875HAQT4D97CKT5,S962H8752DQJ83CA6,SJ43HJ3DA42CQJ842|mb|1S|mb|p|mb|2S|mb|p|mb|p|mb|p|"
 	board, err := parse_lin_deal(rec)
 	testing.expect_value(t, err, Lin_Parse_Error.None)
-	testing.expect(t, board.has_contract)
-	testing.expect_value(t, board.contract_level, 2)
-	testing.expect_value(t, board.contract_strain, Contract_Strain.Spades)
-	testing.expect_value(t, board.declarer, Seat.North)
+	contract, has := board.contract.?
+	testing.expect(t, has)
+	testing.expect_value(t, contract.level, 2)
+	testing.expect_value(t, contract.strain, Contract_Strain.Spades)
+	testing.expect_value(t, contract.declarer, Seat.North)
 }
 
 // No `mb|` auction -> no contract recorded (the deal still parses).
@@ -69,7 +70,8 @@ test_parse_lin_no_auction :: proc(t: ^testing.T) {
 	rec := "md|3SAKTHK96DKT65C973,SQ875HAQT4D97CKT5,S962H8752DQJ83CA6,SJ43HJ3DA42CQJ842|sv|o|"
 	board, err := parse_lin_deal(rec)
 	testing.expect_value(t, err, Lin_Parse_Error.None)
-	testing.expect(t, !board.has_contract)
+	_, has := board.contract.?
+	testing.expect(t, !has)
 }
 
 // PBN `[Contract]` + `[Declarer]` tags fill in the contract; a trailing doubling marker is ignored.
@@ -83,10 +85,11 @@ test_parse_pbn_contract_tags :: proc(t: ^testing.T) {
 
 	board, err := parse_pbn_deal(strings.to_string(b))
 	testing.expect_value(t, err, Pbn_Parse_Error.None)
-	testing.expect(t, board.has_contract)
-	testing.expect_value(t, board.contract_level, 4)
-	testing.expect_value(t, board.contract_strain, Contract_Strain.Hearts)
-	testing.expect_value(t, board.declarer, Seat.South)
+	contract, has := board.contract.?
+	testing.expect(t, has)
+	testing.expect_value(t, contract.level, 4)
+	testing.expect_value(t, contract.strain, Contract_Strain.Hearts)
+	testing.expect_value(t, contract.declarer, Seat.South)
 }
 
 // `[Contract]` without a `[Declarer]` tag leaves the contract unset — the declaring side is unknown.
@@ -99,5 +102,6 @@ test_parse_pbn_contract_needs_declarer :: proc(t: ^testing.T) {
 
 	board, err := parse_pbn_deal(strings.to_string(b))
 	testing.expect_value(t, err, Pbn_Parse_Error.None)
-	testing.expect(t, !board.has_contract)
+	_, has := board.contract.?
+	testing.expect(t, !has)
 }

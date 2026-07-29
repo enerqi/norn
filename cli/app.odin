@@ -55,41 +55,38 @@ main_program :: proc(registry: []Scenario, hooks := Gen_Hooks{}) -> int {
 		opts.dd_annotators = hooks.dd_annotators
 	}
 
-	if opts.help {
+	// The two print-and-exit modes come first, so they stay usable even with a broken hook table.
+	switch mode in opts.mode {
+	case Show_Usage:
 		write_usage(os.stdout)
 		return EXIT_OK
-	}
-
-	if opts.list {
+	case List_Scenarios:
 		write_scenario_list(os.stdout, registry)
 		return EXIT_OK
+	case Generate, Export_Html, Measure_Frequency:
+	// The working modes, handled below — after the hook check.
 	}
 
 	// Before doing any work, fail fast on a mistyped hook key — an unknown name would silently never
-	// fire. (After --help/--list so those stay usable, but before every real action.)
+	// fire.
 	if hooks_ok, hooks_msg := validate_gen_hooks(registry, hooks); !hooks_ok {
 		fmt.eprintfln("norn: %s", hooks_msg)
 		return EXIT_USAGE_ERROR
 	}
 
-	if opts.frequency {
-		if measured, measure_message := measure_frequencies(registry, opts); !measured {
-			fmt.eprintfln("norn: %s", measure_message)
-			return EXIT_RUNTIME_ERROR
-		}
-		return EXIT_OK
+	acted, action_message := true, ""
+	switch mode in opts.mode {
+	case Measure_Frequency:
+		acted, action_message = measure_frequencies(registry, opts, mode)
+	case Export_Html:
+		acted, action_message = export_all_html(registry, opts, mode)
+	case Generate:
+		acted, action_message = run(registry, opts)
+	case Show_Usage, List_Scenarios:
+		unreachable() // returned above
 	}
-
-	if opts.html_dir != "" {
-		if exported, export_message := export_all_html(registry, opts); !exported {
-			fmt.eprintfln("norn: %s", export_message)
-			return EXIT_RUNTIME_ERROR
-		}
-		return EXIT_OK
-	}
-
-	if generated, gen_message := run(registry, opts); !generated {
-		fmt.eprintfln("norn: %s", gen_message)
+	if !acted {
+		fmt.eprintfln("norn: %s", action_message)
 		return EXIT_RUNTIME_ERROR
 	}
 

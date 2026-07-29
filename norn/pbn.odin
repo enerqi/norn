@@ -30,34 +30,36 @@ import "core:strings"
 // written `-` (unknown) are left unspecified and excluded from `known`. A standard 4-hand tag yields
 // `known == {.North, .East, .South, .West}`; a 2-hand declarer+dummy tag yields just those two seats.
 Parsed_Board :: struct {
-	deal:             Deal,
-	known:            bit_set[Seat],
+	deal:         Deal,
+	known:        bit_set[Seat],
 	// The recorded opening lead, when the source carried a play sequence (LIN `pc|`, PBN `[Play]`) AND the
 	// led card sits in a KNOWN hand (so its leader is identifiable — always true for a full deal, never for
-	// a 2-hand board whose lead belongs to an unspecified defender). `opening_leader` is the seat holding it.
-	opening_lead:     Card,
-	opening_leader:   Seat,
-	has_opening_lead: bool,
-	// The contract the record names, when present. LIN: derived from the `mb|` auction (final bid + the
-	// rule-correct declarer). PBN: from `[Contract]` + `[Declarer]` tags. All three fields are meaningful
-	// only when has_contract is set — false for a bare `[Deal]` tag, a passed-out auction, or a 2-hand OCR
-	// board with no metadata. `declarer` is the seat that first named the final denomination for its side.
-	contract_level:   int, // 1..7
-	contract_strain:  Contract_Strain,
-	declarer:         Seat,
-	has_contract:     bool,
+	// a 2-hand board whose lead belongs to an unspecified defender); nil otherwise.
+	opening_lead: Maybe(Opening_Lead),
+	// The contract the record names, or nil when it names none — a bare `[Deal]` tag, a passed-out auction,
+	// or a 2-hand OCR board with no metadata. LIN: derived from the `mb|` auction (final bid + the
+	// rule-correct declarer). PBN: from `[Contract]` + `[Declarer]` tags.
+	contract:     Maybe(Contract),
+}
+
+// An opening lead: the card led and the seat that led it. One value rather than two loose fields because
+// neither half means anything without the other.
+Opening_Lead :: struct {
+	card:   Card,
+	leader: Seat,
 }
 
 // Record `card` as the board's opening lead: find the KNOWN seat that holds it and mark it the leader. A
-// no-op (has_opening_lead stays false) when the card is in no known hand — e.g. a 2-hand board whose lead
+// no-op (`opening_lead` stays nil) when the card is in no known hand — e.g. a 2-hand board whose lead
 // belongs to an unspecified defender. Called by the LIN / PBN readers once the deal is built.
 set_opening_lead :: proc(board: ^Parsed_Board, card: Card) {
 	for seat in board.known {
 		for c in board.deal[seat] {
 			if c == card {
-				board.opening_lead = card
-				board.opening_leader = seat
-				board.has_opening_lead = true
+				board.opening_lead = Opening_Lead {
+					card   = card,
+					leader = seat,
+				}
 				return
 			}
 		}
@@ -136,13 +138,14 @@ parse_pbn_deal :: proc(text: string) -> (board: Parsed_Board, err: Pbn_Parse_Err
 	}
 	// The contract, when the record carried both `[Contract]` and `[Declarer]` (a full PBN record, or the
 	// hand-ocr replay metadata). Both are required: the declarer fixes the declaring side. Absent or a
-	// passed-out `[Contract "Pass"]` leaves has_contract false.
+	// passed-out `[Contract "Pass"]` leaves `contract` nil.
 	if lvl, strain, cok := pbn_contract(text); cok {
 		if declarer, dok := pbn_declarer(text); dok {
-			board.contract_level = lvl
-			board.contract_strain = strain
-			board.declarer = declarer
-			board.has_contract = true
+			board.contract = Contract {
+				level    = lvl,
+				strain   = strain,
+				declarer = declarer,
+			}
 		}
 	}
 	return board, .None
@@ -155,10 +158,10 @@ parse_pbn_deal :: proc(text: string) -> (board: Parsed_Board, err: Pbn_Parse_Err
 pbn_contract :: proc(text: string) -> (level: int, strain: Contract_Strain, ok: bool) {
 	val, found := pbn_tag_value(text, "Contract")
 	if !found || len(val) < 2 {
-		return 0, .NoTrump, false
+		return 0, .NoTrumps, false
 	}
 	if val[0] < '1' || val[0] > '7' {
-		return 0, .NoTrump, false
+		return 0, .NoTrumps, false
 	}
 	denom := val[1:]
 	for len(denom) > 0 && (denom[len(denom) - 1] == 'X' || denom[len(denom) - 1] == 'x') {
@@ -166,7 +169,7 @@ pbn_contract :: proc(text: string) -> (level: int, strain: Contract_Strain, ok: 
 	}
 	s, sok := contract_strain_from_token(denom)
 	if !sok {
-		return 0, .NoTrump, false
+		return 0, .NoTrumps, false
 	}
 	return int(val[0] - '0'), s, true
 }

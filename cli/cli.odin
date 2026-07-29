@@ -28,34 +28,57 @@ import "core:strings"
 
 import "../norn"
 
-// Parsed program options. `has_seed` distinguishes "user gave a seed" from "use a fresh one",
-// which a plain `seed: u64` cannot express (0 is a perfectly valid seed).
+// What this invocation DOES. The four non-default actions are mutually exclusive and each carries
+// only its own data, so they are variants rather than a bag of booleans with fields that matter for
+// exactly one of them (a `trials` that means nothing unless `frequency`, an `html_dir` that means
+// nothing unless exporting). `main_program` switches on this once; nothing downstream re-derives it.
+Mode :: union {
+	Generate,
+	Export_Html,
+	Measure_Frequency,
+	List_Scenarios,
+	Show_Usage,
+}
+
+// The default: emit `count` deals in `format` to `output`, optionally filtered by `scenario`.
+Generate :: struct {}
+
+// `--html-dir DIR`: batch-export scenarios to `<dir>/<name>.html` and exit (the equivalent of the
+// regen-html-deals.py helper). Ignores --output. By default every scenario is exported; --scenario
+// narrows it to a comma-separated subset.
+Export_Html :: struct {
+	dir: string,
+}
+
+// `--frequency N`: emit no deals; instead measure each selected scenario's acceptance rate over
+// `trials` random deals, one line per scenario. --scenario narrows the selection as with --html-dir.
+Measure_Frequency :: struct {
+	trials: int,
+}
+
+// `--list`: print the scenario catalogue and exit.
+List_Scenarios :: struct {}
+
+// `--help`: print usage and exit.
+Show_Usage :: struct {}
+
+// Parsed program options: the settings common to every mode, plus the `mode` that says what to do
+// with them.
 Options :: struct {
+	mode:            Mode,
 	count:           int,
 	format:          norn.Output_Format,
 	output:          string,
-	seed:            u64,
-	has_seed:        bool,
-	help:            bool,
+	// The PRNG seed, or nil for "pick a fresh one and report it". A plain `u64` cannot express that
+	// distinction — 0 is a perfectly valid seed.
+	seed:            Maybe(u64),
 	// When non-empty, only deals satisfying the named scenario's condition are kept (reject
-	// sampling). Empty means the default "accept every deal" behaviour.
+	// sampling). Empty means the default "accept every deal" behaviour. In the batch modes it is
+	// instead a comma-separated subset of the registry.
 	scenario:        string,
-	// `list` requests the catalogue of scenario names and exits without generating anything.
-	list:            bool,
-	// When non-empty, batch-export scenarios to `<html_dir>/<name>.html` and exit (the equivalent of
-	// the regen-html-deals.py helper). Forces the html format and ignores --output. By default every
-	// scenario is exported; if --scenario is also given it is treated as a comma-separated subset to
-	// restrict the export to.
-	html_dir:        string,
 	// For the handviewer/html formats: randomise each deal's vulnerability and dealer (the default,
 	// for practice variety). `--fixed-table` clears this for deterministic output.
 	randomize_table: bool,
-	// When true, no deals are emitted: instead each selected scenario's acceptance frequency is
-	// measured over `trials` random deals and reported, one line per scenario. By default every
-	// scenario is measured; --scenario restricts it to a comma-separated subset (as with --html-dir).
-	frequency:       bool,
-	// Number of deals to sample per scenario in frequency mode (set by --frequency N).
-	trials:          int,
 	// Cards fixed to seats before dealing (set by --predeal); nil means a fully random deal. Applies
 	// to every generation path (plain, html export, frequency).
 	predeal:         Maybe(norn.Predeal),
@@ -81,18 +104,13 @@ Options :: struct {
 // The defaults applied before any flags are read.
 default_options :: proc() -> Options {
 	return Options {
+		mode = Generate{},
 		count = 1,
 		format = .Line,
 		output = "-",
-		seed = 0,
-		has_seed = false,
-		help = false,
+		seed = nil,
 		scenario = "",
-		list = false,
-		html_dir = "",
 		randomize_table = true,
-		frequency = false,
-		trials = 0,
 		predeal = nil,
 		smartstack = nil,
 		dd = false,
@@ -100,8 +118,8 @@ default_options :: proc() -> Options {
 }
 
 // Parse `args` (the argument list WITHOUT the program name). On success returns the options and
-// `ok = true`; on a usage error returns `ok = false` and a human-readable `message`. Encountering
-// `--help` returns `ok = true` with `opts.help = true` so the caller can show usage and stop.
+// `ok = true`; on a usage error returns `ok = false` and a human-readable `message`. `--help` and
+// `--list` return immediately with `ok = true` and their own `mode`, for the caller to act on.
 parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string) {
 	opts = default_options()
 
@@ -122,11 +140,11 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 
 		switch flag {
 		case "-h", "--help":
-			opts.help = true
+			opts.mode = Show_Usage{}
 			return opts, true, ""
 
 		case "--list":
-			opts.list = true
+			opts.mode = List_Scenarios{}
 			return opts, true, ""
 
 		case "--fixed-table":
@@ -147,7 +165,9 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 			if !got {
 				return opts, false, why
 			}
-			opts.html_dir = value
+			opts.mode = Export_Html {
+				dir = value,
+			}
 
 		case "--frequency", "--freq":
 			value, got, why := take_value(has_inline, inline_value, args, &i, flag)
@@ -161,8 +181,9 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 			if n <= 0 {
 				return opts, false, fmt.tprintf("invalid value for %s: trials must be positive", flag)
 			}
-			opts.frequency = true
-			opts.trials = n
+			opts.mode = Measure_Frequency {
+				trials = n,
+			}
 
 		case "--predeal":
 			value, got, why := take_value(has_inline, inline_value, args, &i, flag)
@@ -232,7 +253,6 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 				return opts, false, fmt.tprintf("invalid value for %s: %q is not a non-negative integer", flag, value)
 			}
 			opts.seed = seed
-			opts.has_seed = true
 
 		case:
 			return opts, false, fmt.tprintf("unknown option: %s", flag)
