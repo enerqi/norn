@@ -24,6 +24,12 @@ bidding-system scenarios live in a separate consumer project that supplies its r
 hand-generation engine with their own conditions -
 [examples](https://github.com/enerqi/bridge-bidding-systems/tree/master/deal-simulations/odin-sims).
 
+**The `norn` binary built from this repo ships no scenarios.** It is the pure generator — `--count`, `--format`,
+`--output`, `--seed`, `--predeal`, `--smartstack`. The scenario-dependent flags (`--scenario`, `--list`, `--html-dir`,
+`--frequency`) are part of the shared CLI framework and only do something in a program that passes its own scenario
+registry to `cli.main_program`, such as the consumer linked above. The `examples/` programs here are library demos with
+a hardcoded condition; they do not use the CLI at all.
+
 Planned: optional double-dummy analysis (makeable tricks / par scoring). See [DESIGN.md](DESIGN.md).
 
 ## Building from source

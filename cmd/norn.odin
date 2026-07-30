@@ -13,10 +13,24 @@ import "../cli"
 
 
 // The program's semantic entry point is the reusable `cli.main_program`; this file is operational
-// setup only. This bare `norn` binary is the pure deal generator — it ships no scenario registry
-// (passing `nil`), so it serves `--count`/`--format`/`--seed`. Named bidding scenarios live in a
-// consumer project that supplies its own registry to `cli.main_program` (see the norn-as-library
-// docs); the generic driver is shared.
+// setup only.
+//
+// This bare `norn` binary is the pure deal generator: it passes a NIL scenario registry, so it serves
+// `--count` / `--format` / `--output` / `--seed` / `--predeal` / `--smartstack` / `--fixed-table` and
+// nothing else. The scenario-dependent flags parse fine but have nothing to act on:
+//
+//	--scenario NAME   -> "unknown scenario" (no catalogue to look it up in)
+//	--list            -> the empty-registry notice (see cli/write_scenario_list)
+//	--html-dir DIR    -> "no scenarios to export (registry is empty)"
+//	--frequency N     -> "no scenarios to measure (registry is empty)"
+//	--dd              -> parses, but there are no per-scenario hooks to key on
+//
+// That is deliberate, not a gap: named bidding scenarios are the CONSUMER's policy, and keeping them
+// out is the library boundary (see AGENTS.md). To exercise those flags, run a consumer that supplies
+// its own `[]cli.Scenario` — `~/docs/bridge/bridge-bidding-system/deal-simulations/odin-sims` — or a
+// throwaway `main` that hands `cli.main_program` a registry. Nothing in THIS repo has one: the
+// `examples/` programs call `norn.generate_accepted` with a hardcoded predicate and never touch the
+// CLI framework at all.
 
 
 main :: proc() { 	// Operational setup before calling `main_program`

@@ -4,6 +4,13 @@ set unstable  # [script("python")] feature - https://github.com/casey/just/issue
 
 # The CLI binary is a single-file program (cmd/norn.odin, built with -file); the library lives in
 # the norn package. The `-file` is baked in here so every recipe that builds it stays in sync.
+#
+# SCOPE OF THE `run*` RECIPES: they build cmd/norn.odin, which passes a NIL scenario registry, so they
+# are the PURE GENERATOR — --count/--format/--output/--seed/--predeal/--smartstack/--fixed-table. The
+# scenario flags (--scenario, --list, --html-dir, --frequency) parse but have nothing to act on; each
+# reports an empty registry. Nothing in this repo supplies one — `example`/`example2` bypass the CLI
+# entirely, calling norn.generate_accepted with a hardcoded predicate. To exercise the scenario flags,
+# run a consumer that owns a registry (deal-simulations/odin-sims in the bridge-bidding-system repo).
 cli_pkg := "cmd/norn.odin -file"
 main_name := "norn.exe"
 test_main_name := "test-main.exe"
@@ -44,9 +51,9 @@ lint *args:
 
 # run the CLI with a debug build. `--` separates the program's args from odin's own flags.
 # `-keep-executable` leaves the built binary in place (odin run deletes it by default) so `rerun_debug`
-# can execute it again without recompiling.
+# can execute it again without recompiling. Nil registry: generator flags only (see the header note).
 # ---
-# run the CLI (debug build)
+# run the CLI, generator flags only - no scenarios in this build (debug build)
 run_debug *args: mktarget_dirs
 	odin run {{cli_pkg}} -debug -microarch:native -show-timings -keep-executable -out:target/debug/{{main_name}} -- {{args}}
 
@@ -74,11 +81,14 @@ rerun_fastdebug *args:
 rerun_release *args:
 	./target/release/{{main_name}} {{args}}
 
-# run the example single-condition generator program (single-file, built with -file)
+# run the example single-condition generator program (single-file, built with -file). NOT a CLI
+# consumer: it hardcodes one predicate and calls norn.generate_accepted directly, so it takes no
+# --scenario/--count flags - edit the source to change what it generates.
 example *args: mktarget_dirs
 	odin run examples/strong-1c.odin -file -o:speed -show-timings -microarch:native -out:target/debug/strong-1c.exe {{args}}
 
-# run the multi-seat opener+responder example generator program (single-file, built with -file)
+# run the multi-seat opener+responder example generator program (single-file, built with -file).
+# Like `example`, it bypasses the CLI framework entirely (hardcoded predicate, no flags).
 example2 *args: mktarget_dirs
 	odin run examples/1major-gf-support.odin -file -o:speed -show-timings -microarch:native -out:target/debug/1major-gf.exe {{args}}
 

@@ -181,8 +181,19 @@ Examples:
 	os.write_string(handle, usage)
 }
 
-// Print the scenario catalogue (name + description) from `registry`, one per line, aligned.
+// Print the scenario catalogue (name + description) from `registry`, one per line, aligned. An EMPTY
+// registry is not an error — the bare `norn` binary ships one deliberately (see cmd/norn.odin) — but
+// silence would read as a bug, so say so and name the scenario-dependent flags it makes inert.
 write_scenario_list :: proc(handle: ^os.File, registry: []Scenario) {
+	if len(registry) == 0 {
+		fmt.fprintln(
+			handle,
+			`this build ships no scenarios, so --scenario, --list, --html-dir and --frequency have nothing to act on.
+Scenario registries live in consumer programs that pass their own []Scenario to cli.main_program;
+the bare norn binary is the pure generator (--count / --format / --seed / --predeal / --smartstack).`,
+		)
+		return
+	}
 	width := 0
 	for s in registry {
 		if len(s.name) > width {

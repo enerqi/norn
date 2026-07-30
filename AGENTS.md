@@ -62,7 +62,19 @@ just diagnose       # verbose build of the CLI
 - Build artifacts go under `target/{debug,fastdebug,release}/` (like Cargo's `target/`). `mktarget_dirs` auto-runs before builds.
 - Always run `just lint`, `just format`, and `just test` before considering a change done — these are the quality gate. `lint` is the type-check + vet + strict-style check across all packages, `format` applies `odinfmt`, and `test` runs the package tests.
 
-**Scenario flags need a registry.** `--scenario`, `--list`, `--html-dir`, and `--frequency` operate on the scenario registry. The bare `cmd/norn` binary ships a nil registry, so those flags have nothing to act on — exercise them from a consumer (`odin-sims`) or a throwaway program that passes its own `[]cli.Scenario` to `cli.main_program`. `--frequency N` measures each scenario's acceptance rate over N deals (no deals emitted) and parallelises across physical cores.
+**Scenario flags need a registry — nothing in THIS repo has one.** `cmd/norn.odin` passes `nil` to `cli.main_program`, so `just run` / `run_fastdebug` / `run_release` / `rerun*` are the PURE GENERATOR: `--count`, `--format`, `--output`, `--seed`, `--predeal`, `--smartstack`, `--fixed-table`. The scenario-dependent flags parse but have nothing to act on:
+
+| Flag | On the bare binary |
+|------|--------------------|
+| `--scenario NAME` | "unknown scenario" — there is no catalogue to look it up in |
+| `--list` | prints the empty-registry notice (`write_scenario_list`) |
+| `--html-dir DIR` | "no scenarios to export (registry is empty)" |
+| `--frequency N` | "no scenarios to measure (registry is empty)" |
+| `--dd` | parses, but the hooks are keyed by scenario name, so none can fire |
+
+This is the library boundary working as intended, not a gap: the registry is the consumer's bidding policy. `examples/strong-1c.odin` and `examples/1major-gf-support.odin` do NOT fill the hole — they bypass the CLI framework entirely, calling `norn.generate_accepted` with a hardcoded predicate and taking no flags.
+
+**So: any change to the scenario paths must be smoke-tested from a consumer**, not from `just run`. Use `~/docs/bridge/bridge-bidding-system/deal-simulations/odin-sims` (`just build` there, then `./target/release/sim.exe --list` / `--frequency 2000 -S <name>` / `--html-dir <dir> -S <name>`), or a throwaway `main` that hands `cli.main_program` its own `[]cli.Scenario`. `--frequency N` measures each scenario's acceptance rate over N deals (no deals emitted) and parallelises across physical cores.
 
 ## cmd/norn.odin — operational scaffold (don't bury domain logic here)
 
