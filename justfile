@@ -27,6 +27,7 @@ format:
 lint *args:
 	odin check norn -vet -vet-cast -strict-style -no-entry-point {{args}}
 	odin check cli -vet -vet-cast -strict-style -no-entry-point {{args}}
+	odin check combo -vet -vet-cast -strict-style -no-entry-point {{args}}
 	odin check {{cli_pkg}} -vet -vet-cast -strict-style {{args}}
 	odin check cmd/bench.odin -file -vet -vet-cast -strict-style {{args}}
 	odin check examples/strong-1c.odin -file -vet -vet-cast -strict-style {{args}}
@@ -100,6 +101,11 @@ bench *args: mktarget_dirs
 test *args: mktarget_dirs
 	odin test norn -debug -file -microarch:native -show-timings -out:target/debug/test-norn.exe {{args}}
 	odin test cli -debug -file -microarch:native -show-timings -out:target/debug/test-cli.exe {{args}}
+	odin test combo -debug -microarch:native -show-timings -out:target/debug/test-combo.exe {{args}}
+
+# run only the card-combination analyser's tests (the `combo` package)
+test-combo *args: mktarget_dirs
+	odin test combo -debug -microarch:native -show-timings -out:target/debug/test-combo.exe {{args}}
 
 # run one named test in the library package (where most unit tests live)
 test1 name *args: mktarget_dirs

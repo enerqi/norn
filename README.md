@@ -18,6 +18,11 @@ written in code instead of an interpreted scripting language.
 - Biases one seat to a shape-set + hcp window (`--smartstack "N 20-21 balanced"`) so rare hand types
   still generate fast, building that hand directly instead of reject-sampling for it.
 - Reproducible runs via `--seed`.
+- Analyses **card combinations** (the `combo` package): per-suit trick-chance tables for a partnership's known
+  holdings, the named line to play with its odds, and the combined chance of reaching a trick target — the
+  numbers behind the offline card-page's per-suit tables. Entry-free and suit-isolated by design, so it explains
+  a holding rather than solving a whole deal; no double-dummy solver is involved. A program may register its own
+  published suit-combination table through the `combo.Suit_Book` hook; norn ships none.
 
 Conditions are organised as named **scenarios**. Norn itself is the generic engine + CLI framework; the concrete
 bidding-system scenarios live in a separate consumer project that supplies its registry — so anyone can reuse Norn as a
@@ -30,7 +35,10 @@ hand-generation engine with their own conditions -
 registry to `cli.main_program`, such as the consumer linked above. The `examples/` programs here are library demos with
 a hardcoded condition; they do not use the CLI at all.
 
-Planned: optional double-dummy analysis (makeable tricks / par scoring). See [DESIGN.md](DESIGN.md).
+Double-dummy analysis (makeable tricks / par scoring) is deliberately NOT here: it needs a solver
+(DDS), and norn stays solver-free. The consumer linked above owns that boundary in its `dealsolve`
+package, and norn's generation core takes engine-agnostic `Deal_Filter` / `Deal_Annotator` hooks so a
+solver-backed filter or caption can be plugged in from outside. See [DESIGN.md](DESIGN.md).
 
 ## Building from source
 

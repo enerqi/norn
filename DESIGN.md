@@ -82,6 +82,13 @@ assumptions so it can be embedded and called repeatedly:
   is the `norn` package; a generic CLI + scenario framework is the `cli` package; the bidding policy
   (predicates + the scenario registry) lives in a separate consumer program that wires its registry
   into `cli.main_program`. See `AGENTS.md` for the package layout.
+- **Card-combination analysis** is the `combo` package (added 2026-07-30, moved in from the bidding-system
+  consumer where it was written). It answers "how do I play this suit, and what are the odds" for a
+  partnership's known holdings, and feeds the per-suit tables on the `Html_Cards` page — whose JS lives here
+  too, which is the main reason the producer belongs here rather than in the consumer. Generic card-play
+  mathematics, entry-free and suit-isolated, and solver-free like the rest of norn. Published
+  suit-combination TABLES are not shipped: `combo/book.odin` defines a `Suit_Book` hook (plus the engine-side
+  `book_key` / `book_line_applies` a provider needs) and the consumer registers its own corpus.
 - **Many generators in one binary.** The scenario registry is exactly this: one program holds many
   conditions and runs the generator (or HTML export, or frequency measurement) per scenario. This is
   why generation is a plain reusable proc — no `os.exit`, no global one-shot state.
@@ -158,7 +165,9 @@ forgotten):
 ## Integration with bridge-bidding-system
 
 The bridge repo (`~/docs/bridge/bridge-bidding-system`) now consumes Norn as its **default** deal
-engine via the Odin project `deal-simulations/odin-sims/` (driven by `just regen-norn` / `run-norn`).
+engine via the Odin project `deal-simulations/odin-sims/` (driven by `just sims regen` / `sims deal`).
+That consumer owns what norn deliberately excludes: the bidding policy (`bidding`), the DDS solver boundary
+(`dealsolve`), and the published suit-combination table it plugs into `norn:combo`'s book hook (`suitbook`).
 The old `deal.exe` + Tcl path (`deal-simulations/tcl-sims/`, plus `run-deal.py` /
 `regen-html-deals.py`) is retained only as the parity cross-check ground truth. Norn keeps its line
 output format compatible with `deal.exe`'s `-l` so the two corpora stay diff-able. Full picture:

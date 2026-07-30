@@ -17,6 +17,7 @@ One Odin package per directory; the single-file programs are built with `-file`.
 |------|---------|------|
 | `norn/` | `norn` | the library: engine (cards, deal, shuffle, predeal, smartstack, render, generate) + generic bridge evaluation over the `Hand_Summary` index (`summary.odin`). No `main` — imported by everything else. |
 | `cli/` | `cli` | the reusable CLI framework: argument parsing (`cli.odin`), the `Scenario` registry type + lookup (`scenario.odin`), and the drivers (`run.odin`) for plain generation, HTML batch export, and frequency measurement. Entry point `main_program` is in `app.odin`. No `main`. Imports `norn`. |
+| `combo/` | `combo` | the **card-combination analyser**: per-suit trick-chance distributions, named single-dummy lines with their odds, the convolution to a combined P(>= target), and the `Html_Cards` `.combo` blob the card page renders. Entry-free, suit-isolated model — solver-free by construction (no DDS anywhere) and the explanatory counterpart to a double-dummy solve. Ships **no** published suit-combination table: a consumer registers one through the `Suit_Book` hook (`book.odin`). Imports `norn`. |
 | `cmd/norn.odin` | `main` | the CLI executable — operational scaffold only. Ships a **nil** scenario registry, so it is the pure deal generator (`--count`/`--format`/`--seed`). |
 | `cmd/bench.odin` | `main` | scan-vs-bitmask hand-evaluation micro-benchmark. |
 | `examples/strong-1c.odin`, `examples/1major-gf-support.odin` | `main` | self-contained single-condition demo programs — the shape a consumer takes; `norn` primitives only. |
@@ -32,6 +33,13 @@ import "norn:cli"
 ```
 
 Layering rule: `norn` is system-agnostic (knows `hcp`/`pattern`/`is_balanced`, not "strong 1C"); `cli` is the generic scenario + argument framework; the bidding policy (predicates + the `[]cli.Scenario` registry) lives in the consumer, whose `main` calls `cli.main_program(registry)`.
+
+Same rule for `combo`: it is generic card-play mathematics (a holding is two `u16` masks; nothing in it
+knows a bidding system), so it belongs here even though its output is consumed by the bidding-system card
+pages — whose JS already lives here, in `norn/html_cards_*.tmpl`. What it deliberately does NOT carry is a
+published suit-combination corpus: those tables are somebody's editorial work, so `combo/book.odin` defines
+only the mechanism (`Suit_Book`, `set_suit_book`, `book_key`, `book_line_applies`) and the consumer supplies
+the data (see the bidding system's `suitbook` package). Unregistered, combo reports its own engine line.
 
 ## Toolchain (must be installed)
 
@@ -52,7 +60,8 @@ just example2       # build + run examples/1major-gf-support.odin
 just bench          # hand-evaluation micro-benchmark (cmd/bench.odin)
 just lint           # odin check every package + single-file program (-vet -strict-style); the gate
 just format         # odinfmt -w every *.odin under the tree
-just test [args]    # odin test the packages with tests (norn, cli)
+just test [args]    # odin test the packages with tests (norn, cli, combo)
+just test-combo     # only the card-combination analyser's tests
 just test1 NAME     # run one named test in the norn library package
 just clean          # rm -rf target, then recreate the dir tree
 just diagnose       # verbose build of the CLI
