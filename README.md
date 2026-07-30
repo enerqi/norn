@@ -36,7 +36,7 @@ registry to `cli.main_program`, such as the consumer linked above. The `examples
 a hardcoded condition; they do not use the CLI at all.
 
 Double-dummy analysis (makeable tricks / par scoring) is deliberately NOT here: it needs a solver
-(DDS), and norn stays solver-free. The consumer linked above owns that boundary in its `dealsolve`
+(DDS), and norn stays solver-free. The consumer linked above owns that boundary in its `deal_solve`
 package, and norn's generation core takes engine-agnostic `Deal_Filter` / `Deal_Annotator` hooks so a
 solver-backed filter or caption can be plugged in from outside. See [DESIGN.md](DESIGN.md).
 

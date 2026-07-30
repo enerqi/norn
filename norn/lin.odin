@@ -8,7 +8,7 @@ import "core:strings"
 	LIN is the play-record format used by Bridge Base Online, IntoBridge, RealBridge and friends. A
 	full LIN record is a run of `key|value|` tokens carrying player names (`pn|`), the deal (`md|`),
 	vulnerability (`sv|`), the auction (`mb|`) and the played cards (`pc|`). This reader consumes only
-	the `md|` token — the deal — and turns it into the same `Parsed_Board` that `parse_pbn_deal`
+	the `md|` token — the deal — and turns it into the same `Board` that `parse_pbn_deal`
 	yields, so a hand pasted from one of those sites can be fed into norn/odin-sims exactly like a PBN
 	`[Deal]` tag. The auction and play are ignored.
 
@@ -46,17 +46,17 @@ Lin_Parse_Error :: enum {
 	Duplicate_Card, // the same card appears twice
 }
 
-// Parse a LIN `md|` deal into a `Parsed_Board`. `text` may be a whole LIN record (any run of
+// Parse a LIN `md|` deal into a `Board`. `text` may be a whole LIN record (any run of
 // `key|value|` tokens — the `md|` token is located and everything else ignored) or the bare `md`
 // value on its own (`1S...,...,...` with or without a trailing `|`). On failure the board is zero and
 // `err` says why. All four seats are `known` on success (LIN always records a whole board).
-parse_lin_deal :: proc(text: string) -> (board: Parsed_Board, err: Lin_Parse_Error) {
+parse_lin_deal :: proc(text: string) -> (board: Board, err: Lin_Parse_Error) {
 	value := lin_md_value(text)
 	if value == "" {
 		return {}, .Missing_Md_Tag
 	}
 
-	// Strip the leading dealer digit (1..4). We don't retain the dealer — Parsed_Board has no such
+	// Strip the leading dealer digit (1..4). We don't retain the dealer — Board has no such
 	// field — but a non-digit here means the value isn't a real `md` payload.
 	if value[0] < '1' || value[0] > '4' {
 		return {}, .Bad_Dealer

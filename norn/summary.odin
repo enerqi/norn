@@ -22,7 +22,7 @@ package norn
 	(irrelevant) and can't represent duplicates (impossible in bridge) — so every evaluator a
 	predicate needs lives here, over `Hand_Summary`. `Hand` survives only where the actual cards
 	matter: predeal/SmartStack construction and rendering. The generation core builds one
-	`Deal_Summary` per board and hands it to the `Predicate` (see generate.odin), so a condition
+	`Deal_Summary` per deal and hands it to the `Predicate` (see generate.odin), so a condition
 	pays the 13-op build once per deal, not once per query.
 
 	These evaluators mirror the vocabulary of the `deal` engine's Tcl library (`hcp`, `controls`,
@@ -82,10 +82,10 @@ summarize :: proc(hand: Hand) -> Hand_Summary {
 }
 
 // Build summaries for all four seats of a deal.
-summarize_deal :: proc(board: Deal) -> Deal_Summary {
+summarize_deal :: proc(deal: Deal) -> Deal_Summary {
 	ds: Deal_Summary
 	for seat in Seat {
-		ds[seat] = summarize(board[seat])
+		ds[seat] = summarize(deal[seat])
 	}
 	return ds
 }

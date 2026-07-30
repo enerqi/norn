@@ -1,7 +1,7 @@
 package norn
 
 /*
-	deal_test.odin — unit tests for dealing a board.
+	deal_test.odin — unit tests for dealing a deal.
 
 	Each test installs its own seeded xoshiro256** generator into the context so dealing is
 	independent and reproducible.
@@ -10,19 +10,19 @@ package norn
 import "core:math/rand"
 import "core:testing"
 
-// A dealt board must use all 52 cards: every card appears exactly once across the four hands,
+// A dealt deal must use all 52 cards: every card appears exactly once across the four hands,
 // and each hand holds exactly 13.
 @(test)
-test_deal_board_is_complete_partition :: proc(t: ^testing.T) {
+test_deal_hands_is_complete_partition :: proc(t: ^testing.T) {
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = seeded_xoshiro(&state, 42)
 
-	board := deal_board()
+	deal := deal_hands()
 
 	seen: [DECK_SIZE]bool
 	total := 0
 	for seat_index in 0 ..< SEAT_COUNT {
-		hand := board[Seat(seat_index)]
+		hand := deal[Seat(seat_index)]
 		testing.expect_value(t, len(hand), HAND_SIZE)
 		for card in hand {
 			idx := int(card)
@@ -38,33 +38,33 @@ test_deal_board_is_complete_partition :: proc(t: ^testing.T) {
 	}
 }
 
-// The same seed must produce the same board, card for card and seat for seat.
+// The same seed must produce the same deal, card for card and seat for seat.
 @(test)
-test_deal_board_is_deterministic :: proc(t: ^testing.T) {
+test_deal_hands_is_deterministic :: proc(t: ^testing.T) {
 	state_a: rand.Xoshiro256_Random_State
 	context.random_generator = seeded_xoshiro(&state_a, 2026)
-	board_a := deal_board()
+	deal_a := deal_hands()
 
 	state_b: rand.Xoshiro256_Random_State
 	context.random_generator = seeded_xoshiro(&state_b, 2026)
-	board_b := deal_board()
+	deal_b := deal_hands()
 
 	for seat_index in 0 ..< SEAT_COUNT {
 		seat := Seat(seat_index)
 		for card_index in 0 ..< HAND_SIZE {
-			testing.expect_value(t, board_a[seat][card_index], board_b[seat][card_index])
+			testing.expect_value(t, deal_a[seat][card_index], deal_b[seat][card_index])
 		}
 	}
 }
 
-// Drawing two boards from one generator should advance the stream, giving different boards.
+// Drawing two deals from one generator should advance the stream, giving different deals.
 @(test)
-test_consecutive_boards_differ :: proc(t: ^testing.T) {
+test_consecutive_deals_differ :: proc(t: ^testing.T) {
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = seeded_xoshiro(&state, 1)
 
-	first := deal_board()
-	second := deal_board()
+	first := deal_hands()
+	second := deal_hands()
 
 	identical := true
 	for seat_index in 0 ..< SEAT_COUNT {
@@ -76,5 +76,5 @@ test_consecutive_boards_differ :: proc(t: ^testing.T) {
 			}
 		}
 	}
-	testing.expect(t, !identical, "two consecutive boards were identical")
+	testing.expect(t, !identical, "two consecutive deals were identical")
 }

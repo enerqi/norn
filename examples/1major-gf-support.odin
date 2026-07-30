@@ -5,7 +5,7 @@ package main
 
 	A multi-seat demo: North opens a 1-major and South holds a game-forcing 13+ with at least three-
 	card support. Unlike `strong-1c` (a single seat), this condition reads TWO hands of the deal, so
-	the `norn.Predicate` reaches into both `board[.North]` and `board[.South]`.
+	the `norn.Predicate` reaches into both `deal[.North]` and `deal[.South]`.
 
 	The predicate is SELF-CONTAINED (norn primitives only) — a simplified stand-in for the real
 	`is_1major_opener` / `has_major_support` predicates, which live in the consumer project that

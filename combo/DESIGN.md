@@ -3,7 +3,7 @@
 > moved here with the code. Two companions stayed in that consumer, because they are about the card PAGE and
 > the published-table data rather than this engine: `COMBO_ANALYSER.md` (the implementation/handoff narrative
 > for the analyser + the 2-hand advisor — source comments citing it mean that file) and
-> `SUIT_COMBINATION_ENCYCLOPEDIA_HANDOFF.md` (the `suitbook` corpus registered through `book.odin`).
+> `SUIT_COMBINATION_ENCYCLOPEDIA_HANDOFF.md` (the `suit_book` corpus registered through `book.odin`).
 
 Naive card combination analyser
 

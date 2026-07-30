@@ -56,9 +56,9 @@ test_predeal_add_overfull :: proc(t: ^testing.T) {
 	testing.expect_value(t, pd.counts[.North], HAND_SIZE)
 }
 
-// deal_board_predealt places the fixed cards exactly, deals the rest, and never duplicates a card.
+// deal_hands_predealt places the fixed cards exactly, deals the rest, and never duplicates a card.
 @(test)
-test_deal_board_predealt :: proc(t: ^testing.T) {
+test_deal_hands_predealt :: proc(t: ^testing.T) {
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = seeded_xoshiro(&state, 2026)
 
@@ -71,7 +71,7 @@ test_deal_board_predealt :: proc(t: ^testing.T) {
 	predeal_add(&pd, .South, sq)
 
 	for _ in 0 ..< 200 {
-		board := deal_board_predealt(pd)
+		board := deal_hands_predealt(pd)
 
 		// Fixed cards sit in their seats' leading slots.
 		testing.expect_value(t, board[.North][0], ns)

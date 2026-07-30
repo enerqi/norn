@@ -1,9 +1,9 @@
 package norn
 
 /*
-	deal.odin — hands, seats, and dealing a full board.
+	deal.odin — hands, seats, and dealing a full deal.
 
-	A "deal" (or "board") is one complete distribution of all 52 cards to the four players. Each
+	A "deal" (or "deal") is one complete distribution of all 52 cards to the four players. Each
 	player ("seat") receives a 13-card "hand".
 
 	The seats are named by compass direction. We declare them in the order North, East, South,
@@ -47,11 +47,11 @@ Hand :: [HAND_SIZE]Card
 // `Seat` value (e.g. `deal[.North]`), so the seat and its hand can never get out of step.
 Deal :: [Seat]Hand
 
-// Deal one random board, drawing randomness from `context.random_generator`. We take a fresh
+// Deal one random deal, drawing randomness from `context.random_generator`. We take a fresh
 // ordered deck, shuffle it into a uniformly random permutation, then hand it out. Because the
 // permutation is already uniform, the contiguous split done by `deal_from_deck` is itself a
 // uniform deal — no further randomisation is needed.
-deal_board :: proc() -> Deal {
+deal_hands :: proc() -> Deal {
 	deck := full_deck()
 	shuffle(deck[:])
 	return deal_from_deck(deck)
@@ -62,13 +62,13 @@ deal_board :: proc() -> Deal {
 // and directly testable, and is where predeal (fixing specific cards to specific seats) will hook
 // in later — it would arrange `deck` before this split.
 deal_from_deck :: proc(deck: [DECK_SIZE]Card) -> Deal {
-	board: Deal
+	deal: Deal
 	for seat_index in 0 ..< SEAT_COUNT {
 		seat := Seat(seat_index)
 		start := seat_index * HAND_SIZE
 		for card_index in 0 ..< HAND_SIZE {
-			board[seat][card_index] = deck[start + card_index]
+			deal[seat][card_index] = deck[start + card_index]
 		}
 	}
-	return board
+	return deal
 }

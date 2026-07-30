@@ -36,7 +36,7 @@ Current sims don't need it. If makeable-tricks analysis is added later, the DDS 
 - Use **Bo Haglund's DDS**. It is C++ internally but exposes a **C ABI** (`dll.h`, `extern "C"` + `DLLEXPORT`), so Odin can `foreign import` `dds.dll` / `libdds.so` and redeclare the POD structs.
 - Entry points: `SolveBoard`, `SolveAllBoards`, `CalcDDtable` (20-cell table), `CalcAllTables`, `Par`/`DealerPar`, `SetMaxThreads`.
 - Structs: `deal`, `ddTableDeal`, `futureTricks`, `ddTableResults`, `parResults` (cards as suit/rank bitfields).
-- Gotchas: call `SetMaxThreads(0)` once at startup (auto-detect cores); reuse the transposition-table cache across boards (don't re-init per deal); Windows ships `dds.dll`, Linux/Mac build `libdds` from source.
+- Gotchas: call `SetMaxThreads(0)` once at startup (auto-detect cores); reuse the transposition-table cache across deals (don't re-init per deal); Windows ships `dds.dll`, Linux/Mac build `libdds` from source.
 - Mirror the structs from `dll.h` exactly (field order + padding). Functions return `RETURN_NO_FAULT` (1) on success, negative error codes otherwise (header lists them).
 - Odin FFI sketch:
 
@@ -68,7 +68,7 @@ A condition is Odin code, not an interpreted script. `Predicate :: proc(summary:
 is the equivalent of a `deal` Tcl `main { accept/reject }` body; it reads one or more seats (multi-seat
 conditions are common — opener + responder) using the `summary.odin` primitives (`hcp`,
 `suit_length`, `pattern`/`shape`, `top_count`, `is_balanced`, losers, …) over the per-seat
-`Hand_Summary` bitmask index (built once per board, see `summary.odin`). `generate_accepted` runs
+`Hand_Summary` bitmask index (built once per deal, see `summary.odin`). `generate_accepted` runs
 the reject-sampling loop over a predicate. The `deal-utils.tcl` predicates port on top of these
 primitives — that port (and the named-scenario registry built from it) lives in the *consumer*
 bidding-system project, keeping `norn` itself system-agnostic.
@@ -167,7 +167,7 @@ forgotten):
 The bridge repo (`~/docs/bridge/bridge-bidding-system`) now consumes Norn as its **default** deal
 engine via the Odin project `deal-simulations/odin-sims/` (driven by `just sims regen` / `sims deal`).
 That consumer owns what norn deliberately excludes: the bidding policy (`bidding`), the DDS solver boundary
-(`dealsolve`), and the published suit-combination table it plugs into `norn:combo`'s book hook (`suitbook`).
+(`deal_solve`), and the published suit-combination table it plugs into `norn:combo`'s book hook (`suit_book`).
 The old `deal.exe` + Tcl path (`deal-simulations/tcl-sims/`, plus `run-deal.py` /
 `regen-html-deals.py`) is retained only as the parity cross-check ground truth. Norn keeps its line
 output format compatible with `deal.exe`'s `-l` so the two corpora stay diff-able. Full picture:

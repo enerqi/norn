@@ -1,7 +1,7 @@
 package norn
 
 /*
-	render.odin — turning a dealt board into text.
+	render.odin — turning a dealt deal into text.
 
 	This is the presentation layer: a pure transform from a `Deal` to its textual form. It does NOT
 	send anything anywhere — choosing a destination (stdout, a file) is the driver's job in
@@ -11,7 +11,7 @@ package norn
 	nothing else changes.
 
 	All renderers write into a `strings.Builder` supplied by the caller. Keeping the string-building
-	pure (board in, text in a builder, no I/O) is what makes these functions exhaustively testable
+	pure (deal in, text in a builder, no I/O) is what makes these functions exhaustively testable
 	against exact "golden" output.
 
 	OUTPUT ORDERING
@@ -31,9 +31,9 @@ SEAT_OUTPUT_ORDER :: [SEAT_COUNT]Seat{.North, .East, .South, .West}
 // Suits in the order they are written within a hand (spades first).
 SUIT_OUTPUT_ORDER :: [SUIT_COUNT]Suit{.Spades, .Hearts, .Diamonds, .Clubs}
 
-// The available text renderings of a board.
+// The available text renderings of a deal.
 Output_Format :: enum {
-	// `Line` is the one-board-per-line format this program exists to produce — the same shape as
+	// `Line` is the one-deal-per-line format this program exists to produce — the same shape as
 	// `deal`'s `-l` output, which downstream tooling already parses:
 	//
 	//	KQT874 K74  8743|A65 T32 AT96 J62|932 QJ65 Q42 AKQ|J A98 KJ8753 T95
@@ -55,30 +55,30 @@ Output_Format :: enum {
 	Handviewer,
 	// `Html_Handviewer` wraps each deal as a BBO handviewer `<iframe>` inside a standalone HTML page (a
 	// page header is emitted once before the deals and a footer once after — see the generation
-	// driver). This is the Odin equivalent of the `run-deal.py --html-output-path` export. Every board
+	// driver). This is the Odin equivalent of the `run-deal.py --html-output-path` export. Every deal
 	// is a live handviewer that loads from bridgebase.com; for an offline, self-rendered page see
 	// `Html_Cards`.
 	Html_Handviewer,
 	// `Html_Cards` is a self-contained, offline HTML page: every deal is drawn as a text compass
 	// diagram (four hands, suit glyph + ranks) inside a client-side carousel — no BBO iframe, no remote
 	// load. The page header (emitted once) carries the carousel shell, CSS, and a static `<script>`
-	// that groups each rendered board (+ its optional par caption) into a slide and wires the nav
+	// that groups each rendered deal (+ its optional par caption) into a slide and wires the nav
 	// (prev/next, ←/→ keys, scroll wheel, deal counter), a seat toggle (show all / just one seat across
-	// every board), and a par toggle. Per deal this renderer emits only the compass `<div>`; the par
+	// every deal), and a par toggle. Per deal this renderer emits only the compass `<div>`; the par
 	// caption is appended by the consumer's annotator as a following `.par` sibling (the script pairs
 	// them). Unlike `Html` it never contacts the network, so nav is instant and it works offline.
 	Html_Cards,
-	// `Pbn` is the Portable Bridge Notation deal tag, one board per line:
+	// `Pbn` is the Portable Bridge Notation deal tag, one deal per line:
 	//
 	//	[Deal "N:T84.QJ.KQ976.A52 Q9.AK87.J8.KQ964 KJ32.T96.AT.J873 A765.5432.543.T"]
 	//
 	// One hand per seat in clockwise order from the prefix seat (N E S W), each hand's four suits in
 	// S.H.D.C order separated by '.', ranks high-to-low, a void written as the empty string (adjacent
-	// dots). This is the `[Deal]` tag every PBN importer reads; the surrounding per-board tags of a
+	// dots). This is the `[Deal]` tag every PBN importer reads; the surrounding per-deal tags of a
 	// full PBN export (Event, Board, Dealer, …) are intentionally omitted — add them only if a strict
 	// importer needs them. Matches deal's `pbn` formatter for the deal field itself.
 	Pbn,
-	// `Numeric` is deal's compact `numeric` format: a 52-character digit string per board, one digit
+	// `Numeric` is deal's compact `numeric` format: a 52-character digit string per deal, one digit
 	// per card giving its owner seat (North 0, East 1, South 2, West 3). The cards are walked in a
 	// fixed order — suits S H D C, and within each suit ranks high-to-low A K Q J T 9 .. 2 — so the
 	// position encodes the card and the digit encodes who holds it. No separators; reversible back to
@@ -86,36 +86,36 @@ Output_Format :: enum {
 	Numeric,
 }
 
-// Render `board` into `builder` using the chosen `format`. `randomize_table` only affects the
+// Render `deal` into `builder` using the chosen `format`. `randomize_table` only affects the
 // handviewer-based formats: when true the vulnerability and dealer are drawn from
 // `context.random_generator`; when false they are fixed (`v=-`, `d=n`) so output stays deterministic.
-render_deal :: proc(builder: ^strings.Builder, board: Deal, format: Output_Format, randomize_table := false) {
+render_deal :: proc(builder: ^strings.Builder, deal: Deal, format: Output_Format, randomize_table := false) {
 	switch format {
 	case .Line:
-		render_deal_line(builder, board)
+		render_deal_line(builder, deal)
 	case .Pretty:
-		render_deal_pretty(builder, board)
+		render_deal_pretty(builder, deal)
 	case .Handviewer:
-		render_deal_handviewer(builder, board, randomize_table)
+		render_deal_handviewer(builder, deal, randomize_table)
 	case .Html_Handviewer:
-		render_deal_html_iframe(builder, board, randomize_table)
+		render_deal_html_iframe(builder, deal, randomize_table)
 	case .Html_Cards:
-		render_deal_html_cards(builder, board, randomize_table)
+		render_deal_html_cards(builder, deal, randomize_table)
 	case .Pbn:
-		render_deal_pbn(builder, board)
+		render_deal_pbn(builder, deal)
 	case .Numeric:
-		render_deal_numeric(builder, board)
+		render_deal_numeric(builder, deal)
 	}
 }
 
-// Write `board` as a single line: `north|east|south|west`, no trailing newline (the caller decides
-// how to separate consecutive boards).
-render_deal_line :: proc(builder: ^strings.Builder, board: Deal) {
+// Write `deal` as a single line: `north|east|south|west`, no trailing newline (the caller decides
+// how to separate consecutive deals).
+render_deal_line :: proc(builder: ^strings.Builder, deal: Deal) {
 	for seat, seat_index in SEAT_OUTPUT_ORDER {
 		if seat_index > 0 {
 			strings.write_byte(builder, '|')
 		}
-		write_hand_line(builder, board[seat])
+		write_hand_line(builder, deal[seat])
 	}
 }
 
@@ -153,12 +153,12 @@ write_suit_ranks :: proc(builder: ^strings.Builder, hand: Hand, suit: Suit) -> (
 	return
 }
 
-// Write `board` as four labelled lines, one per seat, e.g.:
+// Write `deal` as four labelled lines, one per seat, e.g.:
 //
 //	North S:KQT874 H:K74 D:- C:8743
 //
 // A void suit is shown as '-' so every line has all four suits visible.
-render_deal_pretty :: proc(builder: ^strings.Builder, board: Deal) {
+render_deal_pretty :: proc(builder: ^strings.Builder, deal: Deal) {
 	for seat in SEAT_OUTPUT_ORDER {
 		name := seat_name(seat)
 		strings.write_string(builder, name)
@@ -169,7 +169,7 @@ render_deal_pretty :: proc(builder: ^strings.Builder, board: Deal) {
 		for suit in SUIT_OUTPUT_ORDER {
 			strings.write_rune(builder, suit_letter(suit))
 			strings.write_byte(builder, ':')
-			count := write_suit_ranks(builder, board[seat], suit)
+			count := write_suit_ranks(builder, deal[seat], suit)
 			if count == 0 {
 				strings.write_byte(builder, '-') // void
 			}
@@ -179,16 +179,16 @@ render_deal_pretty :: proc(builder: ^strings.Builder, board: Deal) {
 	}
 }
 
-// Write `board` as a PBN `[Deal]` tag (see the `Pbn` doc on `Output_Format`), no trailing newline.
+// Write `deal` as a PBN `[Deal]` tag (see the `Pbn` doc on `Output_Format`), no trailing newline.
 // The prefix seat is North, so the four hands follow in clockwise N E S W order — exactly
 // `SEAT_OUTPUT_ORDER`.
-render_deal_pbn :: proc(builder: ^strings.Builder, board: Deal) {
+render_deal_pbn :: proc(builder: ^strings.Builder, deal: Deal) {
 	strings.write_string(builder, `[Deal "N:`)
 	for seat, seat_index in SEAT_OUTPUT_ORDER {
 		if seat_index > 0 {
 			strings.write_byte(builder, ' ')
 		}
-		write_hand_pbn(builder, board[seat])
+		write_hand_pbn(builder, deal[seat])
 	}
 	strings.write_string(builder, `"]`)
 }
@@ -205,14 +205,14 @@ write_hand_pbn :: proc(builder: ^strings.Builder, hand: Hand) {
 	}
 }
 
-// Write `board` as deal's compact `numeric` string (see the `Numeric` doc on `Output_Format`), no
+// Write `deal` as deal's compact `numeric` string (see the `Numeric` doc on `Output_Format`), no
 // trailing newline: 52 owner-seat digits, the cards walked in S H D C order and, within each suit,
 // ranks high-to-low.
-render_deal_numeric :: proc(builder: ^strings.Builder, board: Deal) {
+render_deal_numeric :: proc(builder: ^strings.Builder, deal: Deal) {
 	// Owner seat of each card, indexed by the card's value, so the walk below is a plain lookup.
 	owner: [DECK_SIZE]Seat
 	for seat in Seat {
-		for card in board[seat] {
+		for card in deal[seat] {
 			owner[int(card)] = seat
 		}
 	}
@@ -256,7 +256,7 @@ vulnerable :: proc "contextless" (v: Vulnerability, seat: Seat) -> bool {
 
 // The order the table randomisers draw a dealer in — N S E W (the handviewer's own dealer-code order),
 // NOT `Seat`'s clockwise N E S W backing order. Kept explicit so a random draw reproduces the same
-// board for a given seed as it did when this was a parallel array of code strings.
+// deal for a given seed as it did when this was a parallel array of code strings.
 @(private = "file")
 DEALER_DRAW_ORDER := [SEAT_COUNT]Seat{.North, .South, .East, .West}
 
@@ -277,17 +277,17 @@ HANDVIEWER_VULNERABILITY_CODES := [Vulnerability]string {
 	.Both        = "b",
 }
 
-// Write `board` as a BBO handviewer query string (see the `Handviewer` doc on `Output_Format`):
+// Write `deal` as a BBO handviewer query string (see the `Handviewer` doc on `Output_Format`):
 // `n=s..h..d..c..&s=...&e=...&w=...&a=_&v=..&d=..`, no trailing newline. With `randomize_table` the
 // vulnerability and dealer are drawn from `context.random_generator` (matching the Python tool's
 // practice-variety randomisation); otherwise they are fixed to `v=-`, `d=n` for deterministic output.
-render_deal_handviewer :: proc(builder: ^strings.Builder, board: Deal, randomize_table := false) {
+render_deal_handviewer :: proc(builder: ^strings.Builder, deal: Deal, randomize_table := false) {
 	for seat in HANDVIEWER_SEAT_ORDER {
 		strings.write_rune(builder, handviewer_seat_letter(seat))
 		strings.write_byte(builder, '=')
 		for suit in SUIT_OUTPUT_ORDER {
 			strings.write_rune(builder, handviewer_suit_letter(suit))
-			write_suit_ranks(builder, board[seat], suit)
+			write_suit_ranks(builder, deal[seat], suit)
 		}
 		strings.write_byte(builder, '&')
 	}
@@ -317,32 +317,32 @@ HTML_IFRAME_SUFFIX :: `"
         id="hand_frame"></iframe>
     </div>`
 
-// Write `board` as a handviewer `<iframe>` div (one deal of an `Html`-format page). The page header
+// Write `deal` as a handviewer `<iframe>` div (one deal of an `Html`-format page). The page header
 // and footer that surround a run of these are emitted by the generation driver, not here.
 // `randomize_table` is forwarded to the handviewer params in the iframe URL.
-render_deal_html_iframe :: proc(builder: ^strings.Builder, board: Deal, randomize_table := false) {
+render_deal_html_iframe :: proc(builder: ^strings.Builder, deal: Deal, randomize_table := false) {
 	strings.write_string(builder, HTML_IFRAME_PREFIX)
-	render_deal_handviewer(builder, board, randomize_table)
+	render_deal_handviewer(builder, deal, randomize_table)
 	strings.write_string(builder, HTML_IFRAME_SUFFIX)
 }
 
-// Write `board` as a text compass diagram (one deal of an `Html_Cards` page): North on top, then a
+// Write `deal` as a text compass diagram (one deal of an `Html_Cards` page): North on top, then a
 // middle row of West / centre table / East, then South. Each hand lists its four suits (S H D C) as
 // a suit glyph plus ranks, a void shown as an em-dash. The centre table shows dealer and
 // vulnerability. `randomize_table` draws those from `context.random_generator` (matching the
 // handviewer formats); otherwise they are the fixed defaults. No page chrome here — the carousel
 // shell and script are emitted once by the page prologue/epilogue.
-// `known` says which seats hold specified cards. The default (all four) is the normal full board; a
-// SUBSET renders a 2-hand (declarer + dummy) board — the missing seats draw face-down (see
+// `known` says which seats hold specified cards. The default (all four) is the normal full deal; a
+// SUBSET renders a 2-hand (declarer + dummy) deal — the missing seats draw face-down (see
 // `write_compass_seat`) and the stats box drops the unknown side. Used by the `pbn_analyse` driver.
 render_deal_html_cards :: proc(
 	builder: ^strings.Builder,
-	board: Deal,
+	deal: Deal,
 	randomize_table := false,
 	known := bit_set[Seat]{.North, .East, .South, .West},
 ) {
 	full := known == bit_set[Seat]{.North, .East, .South, .West}
-	// The seat labels are coloured by vulnerability. A 2-hand board has no auction context, so it stays
+	// The seat labels are coloured by vulnerability. A 2-hand deal has no auction context, so it stays
 	// neutral: no vulnerability, and NO dealer at all — hence `Maybe(Seat)` rather than an empty string.
 	vulnerability := Vulnerability.None
 	dealer: Maybe(Seat)
@@ -359,7 +359,7 @@ render_deal_html_cards :: proc(
 
 	// Per-seat summary (hcp + suit-length pattern). Unknown seats summarise a zeroed hand, but the
 	// compass never reads those (they render face-down) and the stats box below skips them.
-	ds := summarize_deal(board)
+	ds := summarize_deal(deal)
 
 	strings.write_string(builder, `<div class="compass">`)
 
@@ -378,7 +378,7 @@ render_deal_html_cards :: proc(
 		}
 		strings.write_string(builder, `</div>`)
 	} else {
-		// 2-hand board: only the known partnership's combined HCP. The opponents' cards — and hence the
+		// 2-hand deal: only the known partnership's combined HCP. The opponents' cards — and hence the
 		// E–W splits — are unknown, which is precisely what the combo analyser reasons over.
 		side_lbl := "Known"
 		ns_side := bit_set[Seat]{.North, .South}
@@ -408,16 +408,16 @@ render_deal_html_cards :: proc(
 	}
 	strings.write_string(builder, `</div>`)
 
-	write_compass_seat(builder, board, ds, .North, "N", "n", ns_vulnerable, is_dealer(dealer, .North), .North in known)
+	write_compass_seat(builder, deal, ds, .North, "N", "n", ns_vulnerable, is_dealer(dealer, .North), .North in known)
 	strings.write_string(builder, `<div class="mid">`)
-	write_compass_seat(builder, board, ds, .West, "W", "w", ew_vulnerable, is_dealer(dealer, .West), .West in known)
-	// Centre marker: the script fills it per slide — the board number in the 4-hand view, a
+	write_compass_seat(builder, deal, ds, .West, "W", "w", ew_vulnerable, is_dealer(dealer, .West), .West in known)
+	// Centre marker: the script fills it per slide — the deal number in the 4-hand view, a
 	// "Reveal all" button when a single hand is focused. Vulnerability is shown by the seat-pill
 	// colours, so it is no longer spelled out here.
 	strings.write_string(builder, `<div class="table"></div>`)
-	write_compass_seat(builder, board, ds, .East, "E", "e", ew_vulnerable, is_dealer(dealer, .East), .East in known)
+	write_compass_seat(builder, deal, ds, .East, "E", "e", ew_vulnerable, is_dealer(dealer, .East), .East in known)
 	strings.write_string(builder, `</div>`) // .mid
-	write_compass_seat(builder, board, ds, .South, "S", "s", ns_vulnerable, is_dealer(dealer, .South), .South in known)
+	write_compass_seat(builder, deal, ds, .South, "S", "s", ns_vulnerable, is_dealer(dealer, .South), .South in known)
 	strings.write_string(builder, `</div>`) // .compass
 }
 
@@ -429,7 +429,7 @@ render_deal_html_cards :: proc(
 @(private = "file")
 write_compass_seat :: proc(
 	builder: ^strings.Builder,
-	board: Deal,
+	deal: Deal,
 	ds: Deal_Summary,
 	seat: Seat,
 	label: string,
@@ -438,7 +438,7 @@ write_compass_seat :: proc(
 	dealer: bool,
 	is_known := true,
 ) {
-	// A face-down defender on a 2-hand (declarer + dummy) board: show the position pill but no cards or
+	// A face-down defender on a 2-hand (declarer + dummy) deal: show the position pill but no cards or
 	// hand stats (they are unknown — the combo analyser treats them as every possible split).
 	if !is_known {
 		fmt.sbprintf(
@@ -467,7 +467,7 @@ write_compass_seat :: proc(
 		strings.write_string(builder, `"><span class="sym">`)
 		strings.write_string(builder, suit_glyph(suit))
 		strings.write_string(builder, `</span>`)
-		count := write_suit_ranks(builder, board[seat], suit)
+		count := write_suit_ranks(builder, deal[seat], suit)
 		if count == 0 {
 			strings.write_string(builder, "&mdash;") // void
 		}

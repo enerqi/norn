@@ -4,14 +4,14 @@ package norn
 	predeal.odin — fixing specific cards to specific seats before the random deal.
 
 	"Predeal" nails chosen cards to chosen seats; the rest of the deck is shuffled and dealt around
-	them. The board stays uniformly random over the FREE cards — it is just a deal conditioned on the
+	them. The deal stays uniformly random over the FREE cards — it is just a deal conditioned on the
 	fixed holdings. Two uses: studying a fixed motif, and speeding up rare conditions (express the
 	exact-card part of a condition as a predeal and drop it from the predicate, so reject sampling
 	runs far fewer iterations).
 
 	The spec is a plain value (no heap), so it is cheap to copy and safe to share across the worker
 	threads that drive frequency measurement. Build it with `predeal_add`, check it with
-	`predeal_validate`, then deal with `deal_board_predealt`.
+	`predeal_validate`, then deal with `deal_hands_predealt`.
 */
 
 import "core:fmt"
@@ -63,11 +63,11 @@ predeal_validate :: proc(pd: Predeal) -> (ok: bool, message: string) {
 	return true, ""
 }
 
-// Deal one board with `pd`'s cards fixed to their seats and the remaining cards dealt at random.
-// Drawing randomness from `context.random_generator` (as `deal_board` does). The free cards are a
+// Deal one deal with `pd`'s cards fixed to their seats and the remaining cards dealt at random.
+// Drawing randomness from `context.random_generator` (as `deal_hands` does). The free cards are a
 // uniformly shuffled pool handed out to fill each seat up to 13, so the result is a uniform deal
 // conditioned on the predeal. Assumes `pd` has passed `predeal_validate`.
-deal_board_predealt :: proc(pd: Predeal) -> Deal {
+deal_hands_predealt :: proc(pd: Predeal) -> Deal {
 	// Mark fixed cards, then collect the rest into a pool (no heap: fixed-size arrays).
 	used: [DECK_SIZE]bool
 	for seat in Seat {
@@ -85,18 +85,18 @@ deal_board_predealt :: proc(pd: Predeal) -> Deal {
 	}
 	shuffle(pool[:pool_len])
 
-	board: Deal
+	deal: Deal
 	pi := 0
 	for seat_index in 0 ..< SEAT_COUNT {
 		seat := Seat(seat_index)
 		n := pd.counts[seat]
 		for k in 0 ..< n {
-			board[seat][k] = pd.cards[seat][k]
+			deal[seat][k] = pd.cards[seat][k]
 		}
 		for k in n ..< HAND_SIZE {
-			board[seat][k] = pool[pi]
+			deal[seat][k] = pool[pi]
 			pi += 1
 		}
 	}
-	return board
+	return deal
 }

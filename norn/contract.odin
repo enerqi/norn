@@ -8,7 +8,7 @@ import "core:strings"
 	The deal readers (pbn.odin, lin.odin) parse the four hands; this file is the shared machinery for the
 	OTHER thing a record often carries: which contract was actually reached. A LIN record carries an
 	`mb|` auction, a full PBN record carries `[Contract]` / `[Declarer]` tags. Both feed the same
-	`Contract` value on `Parsed_Board` (as a `Maybe(Contract)` — a record need not name one), so
+	`Contract` value on `Board` (as a `Maybe(Contract)` — a record need not name one), so
 	downstream code can default its analysis to the contract that happened at the table rather than
 	guessing one.
 
@@ -29,7 +29,7 @@ Contract_Strain :: enum {
 
 // A contract reached at the table: its level and denomination, plus the seat that plays it. The three are
 // meaningful only together — a record either names a contract or it does not — so they travel as one
-// value, held as `Maybe(Contract)` by `Parsed_Board` rather than as loose fields behind a bool flag.
+// value, held as `Maybe(Contract)` by `Board` rather than as loose fields behind a bool flag.
 // `declarer` is the seat that FIRST named the final denomination for its side (bridge's rule), not merely
 // whoever made the last bid.
 Contract :: struct {

@@ -76,7 +76,7 @@ package combo
 	tricks" can really be fewer once the opponents grab the lead and cash. This is a property of the
 	MODEL (entries + independence), NOT of the vacant-space weighting — the joint-convolution fix
 	(COMBO_ANALYSER.md) does not address it; only whole-deal play with entries and a contract does, i.e.
-	`dealsolve` par. When combo and par disagree on the total, PAR is the honest number; combo answers the
+	`deal_solve` par. When combo and par disagree on the total, PAR is the honest number; combo answers the
 	narrower "what tricks are even available in each suit", not "who wins the race for them".
 
 	================================================================================================
@@ -154,7 +154,7 @@ package combo
 	"convolution": P(total = t) = sum over (i+j+k+l = t) of the product of the four per-suit
 	probabilities. `convolve` does this two-at-a-time. Then P(total >= target) is just the tail sum
 	(`p_at_least`). The natural default `target` is the double-dummy par trick count from package
-	`dealsolve`, but any 1..13 can be asked.
+	`deal_solve`, but any 1..13 can be asked.
 
 	NOTE: because there is only ONE candidate line per suit in this Phase-1 tool (the double-dummy
 	maximum), the "pick the best combination of lines" optimisation degenerates into this plain
@@ -757,9 +757,9 @@ sd_joint_total :: proc(north, south: norn.Hand_Summary) -> [RANKS + 1]f64 {
 	return joint_total(tables)
 }
 
-// Convenience wrapper: analyse the North-South pair of a whole dealt board.
-analyse_deal_ns :: proc(board: norn.Deal) -> Deal_Analysis {
-	ds := norn.summarize_deal(board)
+// Convenience wrapper: analyse the North-South pair of a whole dealt deal (all four hands known).
+analyse_deal_ns :: proc(deal: norn.Deal) -> Deal_Analysis {
+	ds := norn.summarize_deal(deal)
 	return analyse_ns(ds[.North], ds[.South])
 }
 
@@ -768,15 +768,15 @@ analyse_deal_ns :: proc(board: norn.Deal) -> Deal_Analysis {
 NS_SIDE :: bit_set[norn.Seat]{.North, .South}
 EW_SIDE :: bit_set[norn.Seat]{.East, .West}
 
-// Resolve the two `Hand_Summary`s of a `Parsed_Board`'s fully-known partnership — the shared front
+// Resolve the two `Hand_Summary`s of a `Board`'s fully-known partnership — the shared front
 // end for the 2-hand (declarer + dummy) entry points below. `ok` is false unless EXACTLY one
 // partnership is known: `known == {N,S}` or `{E,W}`. A 4-hand board (both sides known) is rejected on
 // purpose — route those through `analyse_deal_ns`, which fixes the declaring side as N/S; these procs
 // exist for the ambiguous 2-hand case where the known pair IS the side to analyse. A lone hand or a
 // non-partnership pair is also false.
 @(private)
-parsed_board_partnership :: proc(
-	board: norn.Parsed_Board,
+board_partnership :: proc(
+	board: norn.Board,
 ) -> (
 	a, b: norn.Hand_Summary,
 	side: bit_set[norn.Seat],
@@ -791,27 +791,27 @@ parsed_board_partnership :: proc(
 	return {}, {}, {}, false
 }
 
-// Analyse the known partnership of a `Parsed_Board` — the DOUBLE-DUMMY census entry point for the
+// Analyse the known partnership of a `Board` — the DOUBLE-DUMMY census entry point for the
 // 2-hand (declarer + dummy) flow, where a PBN tag (from `norn.parse_pbn_deal`) specifies exactly two
 // hands. The combo model needs only the two partners' holdings (the defenders' 26 cards stay unknown,
 // split over every E/W layout), so no full deal is required. Returns the census analysis (the per-suit
-// / combined trick CEILING), the side analysed, and `ok` (see `parsed_board_partnership`).
-analyse_parsed_board :: proc(board: norn.Parsed_Board) -> (a: Deal_Analysis, side: bit_set[norn.Seat], ok: bool) {
-	n, s, resolved, k := parsed_board_partnership(board)
+// / combined trick CEILING), the side analysed, and `ok` (see `board_partnership`).
+analyse_board :: proc(board: norn.Board) -> (a: Deal_Analysis, side: bit_set[norn.Seat], ok: bool) {
+	n, s, resolved, k := board_partnership(board)
 	if !k {
 		return {}, {}, false
 	}
 	return analyse_ns(n, s), resolved, true
 }
 
-// The SINGLE-DUMMY companion to `analyse_parsed_board`: the achievable-play bundle for the known
+// The SINGLE-DUMMY companion to `analyse_board`: the achievable-play bundle for the known
 // partnership (per-suit best-line marginals, recommended line names, the SD combined total, and the
 // adaptive P(>= t) make curve — everything the card page's blue `sd`/`>=sd` rows show). Same known-side
 // resolution and `ok` contract. Together the two give the DD ceiling vs SD achievable for a 2-hand
 // board with no full deal / no DDS par. Uses `context.temp_allocator` internally (result copies out by
 // value, so the caller may reset that arena afterwards — see `sd_bundle`).
-sd_bundle_parsed_board :: proc(board: norn.Parsed_Board) -> (sd: Sd_Bundle, side: bit_set[norn.Seat], ok: bool) {
-	n, s, resolved, k := parsed_board_partnership(board)
+sd_bundle_board :: proc(board: norn.Board) -> (sd: Sd_Bundle, side: bit_set[norn.Seat], ok: bool) {
+	n, s, resolved, k := board_partnership(board)
 	if !k {
 		return {}, {}, false
 	}
@@ -859,18 +859,18 @@ suit_line_summaries :: proc(north, south: norn.Hand_Summary, allocator := contex
 	return out
 }
 
-// Parsed-board wrapper for `suit_line_summaries` — same known-side resolution and `ok` contract as
-// `sd_bundle_parsed_board` (exactly one fully-known partnership). The G1 entry point for the 2-hand text
+// Board wrapper for `suit_line_summaries` — same known-side resolution and `ok` contract as
+// `sd_bundle_board` (exactly one fully-known partnership). The G1 entry point for the 2-hand text
 // advisor.
-line_summaries_parsed_board :: proc(
-	board: norn.Parsed_Board,
+line_summaries_board :: proc(
+	board: norn.Board,
 	allocator := context.allocator,
 ) -> (
 	cands: [4][]Line_Summary,
 	side: bit_set[norn.Seat],
 	ok: bool,
 ) {
-	n, s, resolved, k := parsed_board_partnership(board)
+	n, s, resolved, k := board_partnership(board)
 	if !k {
 		return {}, {}, false
 	}
@@ -1307,7 +1307,7 @@ worker_scratch :: proc() -> (census: ^map[Suit_Layout]int, sd: ^map[u64]int, all
 
 // Everything the card page's single-dummy blobs need for ONE partnership, all by value (no pointers into
 // the transient joint tables the worker allocated and freed). Public: it is the return type of the
-// 2-hand entry point `sd_bundle_parsed_board`, consumed by the `pbn_analyse` driver.
+// 2-hand entry point `sd_bundle_board`, consumed by the `pbn_analyse` driver.
 Sd_Bundle :: struct {
 	best_marg: [4]Suit_Trick_Dist, // per-suit best-line marginal → data-*-sd
 	best_name: [4]string, // per-suit recommended line name → data-*-lines / -tips
@@ -1925,11 +1925,11 @@ cell :: proc(b: ^strings.Builder, s: string) {
 
 // --- Deal annotator (norn.Deal_Annotator) -----------------------------------------------------
 
-// A `norn.Deal_Annotator`: append the naive combined-holding trick table after a rendered board.
+// A `norn.Deal_Annotator`: append the naive combined-holding trick table after a rendered deal.
 // Deliberately INDEPENDENT of the DDS `dd` package — no solver, no par — so it can run without `--dd`.
-// Pair it with `dealsolve.annotate` in the consumer (see sim.odin) to show BOTH the double-dummy par caption
+// Pair it with `deal_solve.annotate` in the consumer (see sim.odin) to show BOTH the double-dummy par caption
 // and this make-chance guide. It emits only for the human-facing formats:
-//   - Html_Handviewer : the static text table in a <pre> block beneath the board
+//   - Html_Handviewer : the static text table in a <pre> block beneath the deal
 //   - Html_Cards      : ONLY the raw per-suit distributions, as a `data-suits` JSON blob on a `.combo`
 //                       sibling of the compass; the norn card page's script convolves them client-side
 //                       and renders an interactive table with an adjustable P(>= target) (the carousel
@@ -1939,8 +1939,8 @@ cell :: proc(b: ^strings.Builder, s: string) {
 //
 // For the text formats `target = 0` is passed to `format_analysis` so no single make-chance line is
 // highlighted — the >=k row lets the reader read off any level; the card page makes that interactive.
-annotate :: proc(builder: ^strings.Builder, board: norn.Deal, format: norn.Output_Format) {
-	// Full switch (no #partial), like dealsolve.annotate: a newly added Output_Format must be classified
+annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output_Format) {
+	// Full switch (no #partial), like deal_solve.annotate: a newly added Output_Format must be classified
 	// here rather than silently skipped or corrupted.
 	switch format {
 	case .Line, .Numeric, .Handviewer, .Pbn:
@@ -1949,7 +1949,7 @@ annotate :: proc(builder: ^strings.Builder, board: norn.Deal, format: norn.Outpu
 	// emitted below
 	}
 
-	ds := norn.summarize_deal(board)
+	ds := norn.summarize_deal(deal)
 
 	switch format {
 	case .Html_Handviewer:
@@ -1965,8 +1965,8 @@ annotate :: proc(builder: ^strings.Builder, board: norn.Deal, format: norn.Outpu
 		write_suit_lines_text(builder, ds[.North], ds[.South], &sd, &ov)
 		strings.write_string(builder, "</pre></div>")
 	case .Html_Cards:
-		// A `.combo` sibling after the `.compass` (and the dealsolve `.par`). The card page's carousel script
-		// pulls every sibling up to the next board into the slide. We emit, for BOTH partnerships
+		// A `.combo` sibling after the `.compass` (and the deal_solve `.par`). The card page's carousel script
+		// pulls every sibling up to the next deal into the slide. We emit, for BOTH partnerships
 		// (the page can flip N/S <-> E/W), three JSON blobs each:
 		//   data-{ns,ew}      = per-suit double-dummy CENSUS p[k]     (the ceiling / hindsight)
 		//   data-{ns,ew}-sd   = per-suit achievable single-dummy line p[k]  (a real blind line)

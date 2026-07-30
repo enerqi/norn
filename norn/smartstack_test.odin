@@ -152,10 +152,10 @@ test_smartstack_long_suit :: proc(t: ^testing.T) {
 	}
 }
 
-// deal_board_smartstack must yield a legal full deal: 52 distinct cards, the stacked seat meeting
+// deal_hands_smartstack must yield a legal full deal: 52 distinct cards, the stacked seat meeting
 // its constraint, the others holding the rest.
 @(test)
-test_deal_board_smartstack_valid :: proc(t: ^testing.T) {
+test_deal_hands_smartstack_valid :: proc(t: ^testing.T) {
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = seeded_xoshiro(&state, 99)
 
@@ -163,7 +163,7 @@ test_deal_board_smartstack_valid :: proc(t: ^testing.T) {
 	testing.expect(t, ok, "balanced 20-21 must admit hands")
 
 	for _ in 0 ..< 500 {
-		board := deal_board_smartstack(&ss)
+		board := deal_hands_smartstack(&ss)
 		seen: [DECK_SIZE]bool
 		for seat in Seat {
 			for card in board[seat] {

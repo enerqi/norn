@@ -7,7 +7,7 @@ package norn
 	---
 	Reject sampling (see generate.odin) is fine until a condition is rare. A seat that must be, say,
 	balanced AND 20-21 hcp is accepted on well under 1% of random deals, so the loop throws away
-	hundreds of boards per keeper. SmartStack instead builds that ONE seat's hand DIRECTLY from the
+	hundreds of deals per keeper. SmartStack instead builds that ONE seat's hand DIRECTLY from the
 	constraint — never dealing a hand that fails it — while keeping the hand uniformly distributed
 	over all hands that satisfy it. (redeal calls this SmartStack; dealer calls the cruder version
 	"predeal". DESIGN.md notes this is the real lever for rare hands, not raw speed.)
@@ -45,7 +45,7 @@ package norn
 
 	The spec is heap-free (fixed arrays, like Predeal), so it is cheap to copy and safe to share
 	across the worker threads that drive frequency measurement. Build it once with `smartstack_make`
-	(or `smartstack_make_filtered`), then deal repeatedly with `deal_board_smartstack`. Drawing always
+	(or `smartstack_make_filtered`), then deal repeatedly with `deal_hands_smartstack`. Drawing always
 	uses `context.random_generator`, like the rest of the engine.
 */
 
@@ -404,10 +404,10 @@ pick_suit_points :: proc(row, rest: []i64, rem: int) -> int {
 	return p
 }
 
-// Deal one board with `ss`'s seat stacked to its constraint and the remaining 39 cards dealt at
+// Deal one deal with `ss`'s seat stacked to its constraint and the remaining 39 cards dealt at
 // random to the other three seats. The stacked hand is uniform over the admitted hands; the rest is
 // a uniform deal of what's left (exactly as predeal does). Drawing from `context.random_generator`.
-deal_board_smartstack :: proc(ss: ^Smart_Stack) -> Deal {
+deal_hands_smartstack :: proc(ss: ^Smart_Stack) -> Deal {
 	hand := smartstack_hand(ss)
 
 	used: [DECK_SIZE]bool
@@ -424,8 +424,8 @@ deal_board_smartstack :: proc(ss: ^Smart_Stack) -> Deal {
 	}
 	shuffle(pool[:pool_len])
 
-	board: Deal
-	board[ss.seat] = hand
+	deal: Deal
+	deal[ss.seat] = hand
 	pi := 0
 	for seat_index in 0 ..< SEAT_COUNT {
 		seat := Seat(seat_index)
@@ -433,9 +433,9 @@ deal_board_smartstack :: proc(ss: ^Smart_Stack) -> Deal {
 			continue
 		}
 		for k in 0 ..< HAND_SIZE {
-			board[seat][k] = pool[pi]
+			deal[seat][k] = pool[pi]
 			pi += 1
 		}
 	}
-	return board
+	return deal
 }

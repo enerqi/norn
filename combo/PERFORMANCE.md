@@ -414,14 +414,14 @@ bench_candidate_lines_4_suits :: proc() {
 }
 
 bench_annotate_html_cards :: proc() {
-    // Use a real board from the sim corpus
-    board := /* ... real norn.Deal ... */
+    // Use a real deal from the sim corpus
+    deal := /* ... real norn.Deal ... */
     b := strings.builder_make()
     start := time.tick_now()
     N :: 10
     for _ in 0..<N {
         strings.builder_reset(&b)
-        annotate(&b, board, .Html_Cards)
+        annotate(&b, deal, .Html_Cards)
     }
     elapsed := time.tick_diff(start, time.tick_now())
     fmt.printf("annotate Html_Cards end-to-end: %.1f ms/deal\n",
@@ -547,7 +547,7 @@ Option A's benefit is mainly avoiding repeated backing-array reallocation as the
 the allocator call overhead itself.
 
 For a future scenario where `combo.annotate` is called from multiple threads (norn supports
-parallel board generation), each thread must have its own `context.temp_allocator` (standard
+parallel deal generation), each thread must have its own `context.temp_allocator` (standard
 Odin threading practice) and its own memo map. The memo is already private to the call stack;
 thread safety requires no changes to combo itself.
 
@@ -620,7 +620,7 @@ to its thread-local BSS arena (via `worker_scratch`) before calling combo procs.
 
 ### 9.3 Level 1 — decouple combo from the DD serialization gate
 
-The simplest win: register a **combo-only** annotator separately from `dealsolve.annotate`:
+The simplest win: register a **combo-only** annotator separately from `deal_solve.annotate`:
 
 ```odin
 // In sim.odin, instead of only registering dd_and_combo_annotate:
@@ -631,7 +631,7 @@ dd_annotators["1major-game-force"]    = dd_and_combo_annotate // DD + combo, sta
 // plain_annotators["some-scenario"]  = combo.annotate // no DD → pool-eligible
 ```
 
-For the current two annotated scenarios both invoke `dealsolve.annotate` → they will always serialize
+For the current two annotated scenarios both invoke `deal_solve.annotate` → they will always serialize
 due to DDS global state. The level-1 opportunity only unlocks when a scenario uses combo without
 DD (e.g. a future scenario whose annotation is the combo table only, with no DD filter). Worth
 keeping in mind as scenarios are added: a combo-only annotator is pool-safe, a dd+combo

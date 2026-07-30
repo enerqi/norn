@@ -42,11 +42,11 @@ holding :: proc(ranks: ..norn.Rank) -> norn.Rank_Set {
 // all 13 spades and S all 13 hearts — a degenerate but valid board — so each of those suits is 13
 // certain tricks and the combined total caps at 13.
 @(test)
-test_analyse_parsed_board_two_hand :: proc(t: ^testing.T) {
+test_analyse_board_two_hand :: proc(t: ^testing.T) {
 	board, perr := norn.parse_pbn_deal(`N:AKQJT98765432... - .AKQJT98765432.. -`)
 	testing.expect_value(t, perr, norn.Pbn_Parse_Error.None)
 
-	a, side, ok := analyse_parsed_board(board)
+	a, side, ok := analyse_board(board)
 	testing.expect(t, ok, "known N/S partnership should analyse")
 	testing.expect_value(t, side, NS_SIDE)
 
@@ -63,9 +63,9 @@ test_analyse_parsed_board_two_hand :: proc(t: ^testing.T) {
 
 // A board with only one known hand is not a full partnership, so the analysis is refused.
 @(test)
-test_analyse_parsed_board_rejects_non_partnership :: proc(t: ^testing.T) {
+test_analyse_board_rejects_non_partnership :: proc(t: ^testing.T) {
 	board, _ := norn.parse_pbn_deal(`N:AKQJT98765432... - - -`)
-	_, _, ok := analyse_parsed_board(board)
+	_, _, ok := analyse_board(board)
 	testing.expect(t, !ok, "single known hand is not a full partnership")
 }
 
@@ -73,11 +73,11 @@ test_analyse_parsed_board_rejects_non_partnership :: proc(t: ^testing.T) {
 // all spades and S all hearts (both solid running suits), the achievable SD total also caps at 13 —
 // no finesse needed, so SD matches the census ceiling here.
 @(test)
-test_sd_bundle_parsed_board_two_hand :: proc(t: ^testing.T) {
+test_sd_bundle_board_two_hand :: proc(t: ^testing.T) {
 	board, perr := norn.parse_pbn_deal(`N:AKQJT98765432... - .AKQJT98765432.. -`)
 	testing.expect_value(t, perr, norn.Pbn_Parse_Error.None)
 
-	sd, side, ok := sd_bundle_parsed_board(board)
+	sd, side, ok := sd_bundle_board(board)
 	testing.expect(t, ok, "known N/S partnership should produce an SD bundle")
 	testing.expect_value(t, side, NS_SIDE)
 	testing.expect(t, sd.totsd[RANKS] > 0.999, "solid suits -> achievable SD total caps at 13")

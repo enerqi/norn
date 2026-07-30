@@ -29,7 +29,7 @@ import "core:strings"
 // A board parsed from a PBN `[Deal]` tag. `deal` holds every SPECIFIED hand as a full 13 cards; seats
 // written `-` (unknown) are left unspecified and excluded from `known`. A standard 4-hand tag yields
 // `known == {.North, .East, .South, .West}`; a 2-hand declarer+dummy tag yields just those two seats.
-Parsed_Board :: struct {
+Board :: struct {
 	deal:         Deal,
 	known:        bit_set[Seat],
 	// The recorded opening lead, when the source carried a play sequence (LIN `pc|`, PBN `[Play]`) AND the
@@ -52,7 +52,7 @@ Opening_Lead :: struct {
 // Record `card` as the board's opening lead: find the KNOWN seat that holds it and mark it the leader. A
 // no-op (`opening_lead` stays nil) when the card is in no known hand — e.g. a 2-hand board whose lead
 // belongs to an unspecified defender. Called by the LIN / PBN readers once the deal is built.
-set_opening_lead :: proc(board: ^Parsed_Board, card: Card) {
+set_opening_lead :: proc(board: ^Board, card: Card) {
 	for seat in board.known {
 		for c in board.deal[seat] {
 			if c == card {
@@ -79,11 +79,11 @@ Pbn_Parse_Error :: enum {
 	No_Hands, // every hand was `-` (nothing to analyse)
 }
 
-// Parse a PBN `[Deal]` tag into a `Parsed_Board`. `text` may be a whole line containing the tag
+// Parse a PBN `[Deal]` tag into a `Board`. `text` may be a whole line containing the tag
 // (`[Deal "N:..."]`, with any surrounding text ignored) or the bare deal value (`N:...`). On failure
 // the returned board is zero and `err` says why. The parse is strict: exactly four hand fields, each
 // either `-` (unknown) or a full 13-card `S.H.D.C` hand, all cards across the board distinct.
-parse_pbn_deal :: proc(text: string) -> (board: Parsed_Board, err: Pbn_Parse_Error) {
+parse_pbn_deal :: proc(text: string) -> (board: Board, err: Pbn_Parse_Error) {
 	value := pbn_deal_value(text)
 	if value == "" {
 		return {}, .Missing_Deal_Tag

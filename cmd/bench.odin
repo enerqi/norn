@@ -12,7 +12,7 @@ package main
 	fixed pool of pre-generated random deals so predicate cost is isolated from RNG/shuffle. Three
 	benches:
 
-	  deal         — deal_board() only (shuffle baseline, for the predicate-vs-deal ratio)
+	  deal         — deal_hands() only (shuffle baseline, for the predicate-vs-deal ratio)
 	  summary      — predicate with the index built fresh inside the loop (what generation does today)
 	  summary_pre  — predicate over a pre-built index (analyse only — the ceiling if the build were
 	                 hoisted/cached)
@@ -82,9 +82,9 @@ any_seat_summary_pre :: proc(ds: norn.Deal_Summary) -> bool {
 	return false
 }
 
-any_seat_summary :: proc(board: norn.Deal) -> bool {
+any_seat_summary :: proc(deal: norn.Deal) -> bool {
 	for seat in norn.Seat {
-		if qualifies(norn.summarize(board[seat])) {
+		if qualifies(norn.summarize(deal[seat])) {
 			return true
 		}
 	}
@@ -98,8 +98,8 @@ bench_deal :: proc(options: ^time.Benchmark_Options, allocator := context.alloca
 	context.random_generator = norn.seeded_xoshiro(&state, 99)
 	local := 0
 	for _ in 0 ..< COUNT_ITERATIONS {
-		board := norn.deal_board()
-		local += int(board[.North][0]) // touch the result
+		deal := norn.deal_hands()
+		local += int(deal[.North][0]) // touch the result
 	}
 	sink += local
 	options.count = COUNT_ITERATIONS
@@ -140,7 +140,7 @@ main :: proc() {
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = norn.seeded_xoshiro(&state, 1234)
 	for i in 0 ..< POOL {
-		deals[i] = norn.deal_board()
+		deals[i] = norn.deal_hands()
 		summaries[i] = norn.summarize_deal(deals[i])
 	}
 

@@ -10,8 +10,8 @@ package combo
 	  * the best line BY MEAN vs the best line BY FLOOR (the safety trade C teaches).
 
 	`Suit_Combo_Advice` bundles both onto the G1 candidate slice so the text advisor builds B and C from
-	one call. Everything here is solver-free (combo has no `dealsolve`/DDS dependency); the pattern geometry
-	deliberately MIRRORS `dealsolve/tax.odin`'s `two_way_guess_pivots` so the note a suit shows lines up with the
+	one call. Everything here is solver-free (combo has no `deal_solve`/DDS dependency); the pattern geometry
+	deliberately MIRRORS `deal_solve/tax.odin`'s `two_way_guess_pivots` so the note a suit shows lines up with the
 	blind two-way guess the misguess-tax estimator prices (aids plan B3 cross-link).
 */
 
@@ -40,7 +40,7 @@ has_rank_above :: proc "contextless" (m: u16, r: int) -> bool {
 // Name the standard suit-combination PATTERN in the two known holdings, or "" when none applies. Read
 // purely from card geometry (no distribution, no solving). Priority: two-way finesse (the costliest blind
 // guess) → 8-ever/9-never (a length-decided hook) → one-way finesse. The two-way test mirrors
-// `dealsolve/tax.odin` exactly, so the phrase aligns with the priced misguess tax.
+// `deal_solve/tax.odin` exactly, so the phrase aligns with the priced misguess tax.
 combination_note :: proc(north, south: u16) -> string {
 	ns := north | south
 	ns_len := card_count(ns)
@@ -50,7 +50,7 @@ combination_note :: proc(north, south: u16) -> string {
 
 	// Two-way finesse: a missing honour C (Ten..King) trapped by a tight tenace (C+1 AND C-1 both held)
 	// that declarer can attack from EITHER hand (a card above C in each). Name the top such guess. Same
-	// geometry as dealsolve/tax.odin `two_way_guess_pivots`.
+	// geometry as deal_solve/tax.odin `two_way_guess_pivots`.
 	for r := RANK_KING; r >= RANK_TEN; r -= 1 {
 		if ns & rank_bit(r) != 0 {
 			continue // we hold C — not a defender card, no guess
@@ -189,17 +189,17 @@ sure_side_entries :: proc(suits: [4]u16, exclude: int) -> int {
 	return total
 }
 
-// Parsed-board wrapper for `suit_combo_advice` — same known-side resolution and `ok` contract as
-// `sd_bundle_parsed_board`. The B/C entry point for the 2-hand text advisor.
-suit_combo_advice_parsed_board :: proc(
-	board: norn.Parsed_Board,
+// Board wrapper for `suit_combo_advice` — same known-side resolution and `ok` contract as
+// `sd_bundle_board`. The B/C entry point for the 2-hand text advisor.
+suit_combo_advice_board :: proc(
+	board: norn.Board,
 	allocator := context.allocator,
 ) -> (
 	advice: [4]Suit_Combo_Advice,
 	side: bit_set[norn.Seat],
 	ok: bool,
 ) {
-	n, s, resolved, k := parsed_board_partnership(board)
+	n, s, resolved, k := board_partnership(board)
 	if !k {
 		return {}, {}, false
 	}

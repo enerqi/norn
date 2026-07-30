@@ -39,7 +39,7 @@ knows a bidding system), so it belongs here even though its output is consumed b
 pages — whose JS already lives here, in `norn/html_cards_*.tmpl`. What it deliberately does NOT carry is a
 published suit-combination corpus: those tables are somebody's editorial work, so `combo/book.odin` defines
 only the mechanism (`Suit_Book`, `set_suit_book`, `book_key`, `book_line_applies`) and the consumer supplies
-the data (see the bidding system's `suitbook` package). Unregistered, combo reports its own engine line.
+the data (see the bidding system's `suit_book` package). Unregistered, combo reports its own engine line.
 
 ## Toolchain (must be installed)
 
@@ -113,7 +113,7 @@ reader must remember the gating rule. Pull the correlated fields into their own 
 
 ```odin
 // NO — three fields silently garbage unless the flag is set.
-Parsed_Board :: struct {
+Board :: struct {
 	contract_level:  int,
 	contract_strain: Contract_Strain,
 	declarer:        Seat,
@@ -126,7 +126,7 @@ Contract :: struct {
 	strain:   Contract_Strain,
 	declarer: Seat,
 }
-Parsed_Board :: struct {
+Board :: struct {
 	contract: Maybe(Contract),
 }
 
