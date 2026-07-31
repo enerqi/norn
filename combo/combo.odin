@@ -775,13 +775,7 @@ EW_SIDE :: bit_set[norn.Seat]{.East, .West}
 // exist for the ambiguous 2-hand case where the known pair IS the side to analyse. A lone hand or a
 // non-partnership pair is also false.
 @(private)
-board_partnership :: proc(
-	board: norn.Board,
-) -> (
-	a, b: norn.Hand_Summary,
-	side: bit_set[norn.Seat],
-	ok: bool,
-) {
+board_partnership :: proc(board: norn.Board) -> (a, b: norn.Hand_Summary, side: bit_set[norn.Seat], ok: bool) {
 	switch board.known {
 	case NS_SIDE:
 		return norn.summarize(board.deal[.North]), norn.summarize(board.deal[.South]), NS_SIDE, true

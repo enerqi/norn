@@ -74,6 +74,16 @@ main_program :: proc(registry: []Scenario, hooks := Gen_Hooks{}) -> int {
 		return EXIT_USAGE_ERROR
 	}
 
+	// --dd on a scenario with no hooks registered is silently inert: the run costs the same and the
+	// page comes out with no DD filter and no caption, which reads as a bug in the annotator. Not an
+	// error (a batch over the whole registry legitimately covers hookless scenarios), so warn and
+	// carry on.
+	if opts.dd {
+		if warn, has_warning := dd_hooks_warning(registry, opts); has_warning {
+			fmt.eprintfln("norn: warning: %s", warn)
+		}
+	}
+
 	acted, action_message := true, ""
 	switch mode in opts.mode {
 	case Measure_Frequency:
@@ -117,6 +127,73 @@ validate_gen_hooks :: proc(registry: []Scenario, hooks: Gen_Hooks) -> (ok: bool,
 	return false, fmt.tprintf(
 		"double-dummy hook(s) reference unknown scenario(s): %s (run --list for valid names)",
 		strings.join(unknown[:], ", ", context.temp_allocator),
+	)
+}
+
+// Does `--dd` actually reach a hook this run? Returns the warning text (allocated in the temp
+// allocator) and has_warning=true when it does not, i.e. when the flag is inert for some or all of
+// the selected scenarios. Two ways that happens:
+//
+//   - plain generation with no --scenario: both hooks are keyed by scenario name, so there is
+//     nothing to look them up with (see run.odin) and --dd can never fire;
+//   - a selected scenario that appears in NEITHER hook map.
+//
+// An unresolvable --scenario is not this proc's business — the real path reports it — so a selector
+// that fails to resolve is reported as no warning.
+@(private)
+dd_hooks_warning :: proc(registry: []Scenario, opts: Options) -> (message: string, has_warning: bool) {
+	if _, plain := opts.mode.(Generate); plain && opts.scenario == "" {
+		return "--dd has no effect without --scenario: the double-dummy filter and annotator are per-scenario hooks",
+			true
+	}
+
+	selected, filter, ok, _ := select_scenarios(registry, opts.scenario)
+	defer delete(filter)
+	if !ok {
+		return "", false
+	}
+
+	hookless: [dynamic]string
+	defer delete(hookless)
+	for s in selected {
+		_, has_filter := opts.dd_filters[s.name]
+		_, has_annotator := opts.dd_annotators[s.name]
+		if !has_filter && !has_annotator {
+			append(&hookless, s.name)
+		}
+	}
+	if len(hookless) == 0 {
+		return "", false
+	}
+	named := name_list(hookless[:])
+	if len(hookless) == len(selected) {
+		return fmt.tprintf(
+				"--dd is inert here: no double-dummy filter or annotator is registered for %s (deals are generated without a DD filter or par caption)",
+				named,
+			),
+			true
+	}
+	return fmt.tprintf(
+			"--dd: no double-dummy hooks registered for %s — those scenarios get no DD filter or par caption",
+			named,
+		),
+		true
+}
+
+// How many scenario names a warning spells out before summarising the rest. A whole-registry batch
+// export is a routine command, so its warning must stay one readable line rather than a roll-call.
+DD_WARNING_NAME_LIMIT :: 5
+
+// `a, b, c` — or `a, b, c, d, e and 7 more` past DD_WARNING_NAME_LIMIT. Temp-allocated.
+@(private)
+name_list :: proc(names: []string) -> string {
+	if len(names) <= DD_WARNING_NAME_LIMIT {
+		return strings.join(names, ", ", context.temp_allocator)
+	}
+	return fmt.tprintf(
+		"%s and %d more",
+		strings.join(names[:DD_WARNING_NAME_LIMIT], ", ", context.temp_allocator),
+		len(names) - DD_WARNING_NAME_LIMIT,
 	)
 }
 
