@@ -20,6 +20,33 @@ package cli
 		    --frequency    N       measure each scenario's acceptance rate over N deals (no deals emitted)
 		    --list                 list the available scenarios
 		-h, --help                 show usage
+
+	WHY THIS IS HAND-WRITTEN AND NOT `core:flags`
+	---------------------------------------------
+	`core:flags` (struct tags + RTTI, with generated usage) is the right default for a program whose
+	flags are a flat bag of scalars — the odin-sims consumer `analyse_deal.odin` was converted to it and
+	came out shorter, with usage text that cannot drift. It was weighed for this parser too and
+	rejected, for four reasons specific to THIS command line:
+
+	  1. No flag ALIASES. `core:flags` takes one name per struct field (`args:"name=..."`), but half the
+	     flags above carry a short form (`-n`/`--count`, `-S`/`--scenario`, ...) plus two long synonyms
+	     (`--freq`, `--stack`). Each alias would need a shadow field marked `args:"hidden"` and a merge
+	     pass — more lines than the `switch` case it replaces.
+	  2. Enum values are matched by their EXACT Odin name (`reflect.enum_from_name_any`), so a
+	     `norn.Output_Format` field would demand `--format Html_Cards`. `parse_format` below is
+	     case-insensitive and accepts `hv`/`bbo`/`cards`/`num`; keeping that means keeping `format` a
+	     string and parsing it here anyway — `core:flags` would do nothing for that flag.
+	  3. `Mode` is a union and `core:flags` can only fill a flat struct. The mutually-exclusive actions
+	     would arrive as the bag of booleans the `Mode` comment below deliberately rejects, and would
+	     then need re-deriving into the union — a mapping layer, not a saving.
+	  4. `register_type_setter` (the hook that would parse `--predeal` / `--smartstack` into their norn
+	     types) is a package-level GLOBAL. `cli` is a LIBRARY: every consumer linking it would share and
+	     fight over that one setter. Consumers must take such flags as strings and post-parse them —
+	     which is what `parse_predeal` / `parse_smartstack` already do.
+
+	What `core:flags` would genuinely buy — generated usage, and errors written for you — is already
+	covered here: app.odin owns the usage text, and this proc's `ok`/`message` contract is what keeps it
+	pure and exhaustively unit-testable in cli_test.odin. Revisit if `core:flags` grows alias support.
 */
 
 import "core:fmt"
