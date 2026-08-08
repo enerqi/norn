@@ -44,34 +44,40 @@ the data (see the bidding system's `suit_book` package). Unregistered, combo rep
 ## Toolchain (must be installed)
 
 - **Odin** compiler on `PATH`.
-- **just** (>= 1.32) — task runner; all workflows go through the `justfile`.
-- **nushell** (`nu`) — the Windows `just` shell (`set windows-shell := ["nu", "-c"]`); non-Windows uses `bash`.
+- **just** (>= 1.49) — task runner; all workflows go through the `justfile`, which pins `set minimum-version := "1.49.0"` so an older just says so instead of reporting a bogus syntax error.
+- No extra shell to install — the Windows `just` shell is `cmd.exe` (`set windows-shell := ["cmd.exe", "/c"]`), which is on every Windows and starts in ~9ms against nushell's ~41ms; non-Windows uses `bash`.
 - **python** on `PATH` — used by `just`'s `[script("python")]` (e.g. the consumer's `ols-config`).
 - **odinfmt** on `PATH` — built from the [OLS](https://github.com/DanielGavin/ols) source (`odinfmt.bat`/`.sh`). OLS is the recommended editor language server (`ols.json` holds project collections).
 
 ## Commands
 
 ```shell
-just run            # build + run the CLI (cmd/norn.odin, debug)  -> target/debug/norn.exe
-just run_fastdebug  # -debug -o:speed                              -> target/fastdebug/
-just run_release    # -o:speed                                     -> target/release/
-just example        # build + run examples/strong-1c.odin
-just example2       # build + run examples/1major-gf-support.odin
-just bench          # hand-evaluation micro-benchmark (cmd/bench.odin)
-just lint           # odin check every package + single-file program (-vet -strict-style); the gate
-just format         # odinfmt -w every *.odin under the tree
-just test [args]    # odin test the packages with tests (norn, cli, combo)
-just test-combo     # only the card-combination analyser's tests
-just test1 NAME     # run one named test in the norn library package
-just clean          # rm -rf target, then recreate the dir tree
-just diagnose       # verbose build of the CLI
+just run                   # build + run the CLI (cmd/norn.odin, debug)  -> target/debug/norn.exe
+just run_fast_debug        # -debug -o:minimal                            -> target/fast_debug/
+just run_release_debug     # -debug -o:speed  (profiling, opt-only bugs)  -> target/release_debug/
+just run_release           # -o:speed                                     -> target/release/
+just run_release_nochecks  # -o:speed, bounds/assert/type-assert removed  -> target/release_nochecks/
+just rerun[_PROFILE]       # re-run a built binary WITHOUT recompiling (Odin has no build cache)
+just sanitize [KIND]       # run under a sanitizer (address | memory | thread)
+just test_sanitize [KIND]  # run the library tests under a sanitizer
+just example               # build + run examples/strong-1c.odin
+just example2              # build + run examples/1major-gf-support.odin
+just bench                 # hand-evaluation micro-benchmark (cmd/bench.odin)
+just lint                  # odin check every package + single-file program (-vet -strict-style); the gate
+just format                # odinfmt -w every *.odin under the tree
+just test [args]           # odin test the packages with tests (norn, cli, combo)
+just test-combo            # only the card-combination analyser's tests
+just test1 NAME[,NAME]     # run only the named test(s) in the norn library package
+just clean                 # delete target, then recreate the dir tree
+just diagnose              # verbose build of the CLI
 ```
 
 - Pass program args after `--` (e.g. `just run -- --count 48 --seed 1234`).
-- Build artifacts go under `target/{debug,fastdebug,release}/` (like Cargo's `target/`). `mktarget_dirs` auto-runs before builds.
+- Build artifacts go under `target/{debug,fast_debug,release_debug,release,release_nochecks}/` (like Cargo's `target/`), one directory per build profile so the profiles never clobber each other. `mktarget_dirs` auto-runs before builds.
+- `just --time <recipe>` reports a recipe's wall clock; pair it with `rerun*` when you want the figure to exclude the compile.
 - Always run `just lint`, `just format`, and `just test` before considering a change done — these are the quality gate. `lint` is the type-check + vet + strict-style check across all packages, `format` applies `odinfmt`, and `test` runs the package tests.
 
-**Scenario flags need a registry — nothing in THIS repo has one.** `cmd/norn.odin` passes `nil` to `cli.main_program`, so `just run` / `run_fastdebug` / `run_release` / `rerun*` are the PURE GENERATOR: `--count`, `--format`, `--output`, `--seed`, `--predeal`, `--smartstack`, `--fixed-table`. The scenario-dependent flags parse but have nothing to act on:
+**Scenario flags need a registry — nothing in THIS repo has one.** `cmd/norn.odin` passes `nil` to `cli.main_program`, so every `just run*` / `rerun*` recipe is the PURE GENERATOR: `--count`, `--format`, `--output`, `--seed`, `--predeal`, `--smartstack`, `--fixed-table`. The scenario-dependent flags parse but have nothing to act on:
 
 | Flag | On the bare binary |
 |------|--------------------|
@@ -89,19 +95,26 @@ This is the library boundary working as intended, not a gap: the registry is the
 
 `main()` (in `cmd/norn.odin`) is **operational setup only** (profiling, allocators, logging, telemetry, backtraces); it then calls `cli.main_program(nil)` (the entry point lives in `cli/app.odin`). `main_program` returns an exit code — it must NOT call `os.exit`, which would skip `main`'s deferred teardown (leak tracking, profiler flush, logger); `main` exits once, after cleanup. Keep deal-generation logic out of the CLI entirely — it lives in the `norn` library, driven by `cli`.
 
-Compile-time switches via `-define:NAME=true` (Odin `#config`):
+Compile-time switches via `-define:NAME=VALUE` (Odin `#config`):
 
 | Define | Default | Effect |
 |--------|---------|--------|
-| `TRACKING_ALLOCATOR_ENABLE` | **true** | tracks leaks / bad frees, reports on exit |
-| `TIME_PROGRAM_DURATION_ENABLE` | false | logs total runtime on shutdown |
+| `TRACKING_ALLOCATOR` | `basic` under `-debug`, else `off` | `off` \| `basic` \| `backtrace` — how allocations are tracked; leaks / bad frees reported on exit |
 | `SPALL_ENABLE` | false | emit `trace.spall` profile (adds ~2s); spall-web viewer |
-| `MIMALLOC_ENABLE` | false | swap global allocator to mimalloc (needs `mi` import wired up) |
-| `BACKTRACE_ENABLE` | false | better backtraces + segfault handler (needs `back` import) |
 
-Runtime: `LOG_LEVEL` env var sets the console logger level (enum name, e.g. `Debug`/`Info`/`Warning`/`Error`; defaults to `Info`).
+`TRACKING_ALLOCATOR` is one three-state setting rather than the two booleans it replaced, because two booleans described four combinations of which only three meant anything ("no tracking, but with backtraces" compiled silently and did nothing). A misspelled value fails at compile time with a `#panic` instead of quietly selecting `off`. Cost per allocation: `off` ~44ns, `basic` ~599ns (+72 bytes per live allocation), `backtrace` ~1385ns (+208 bytes) — hence the default following `-debug`, so the recipes whose purpose is measuring do not carry a 13.6x allocation tax and a mutex.
 
-Note: `mimalloc` and `back` imports are commented out in `cmd/norn.odin` — wire them in before enabling those defines. The default tracking allocator is **not thread-safe**, so a thread-using path (e.g. `--frequency`) requires a thread-safe allocator; the bare CLI is safe only because its nil registry makes those paths a no-op.
+Runtime env vars:
+
+| Env var | Default | Effect |
+|---------|---------|--------|
+| `LOG_LEVEL` | `Info` | console logger level, as an enum name (`Debug`/`Info`/`Warning`/`Error`) |
+| `ODIN_BACKTRACE` | on | set to `0` / `false` / `off` to suppress backtraces on asserts and segfaults |
+| `ODIN_LINKER` | `radlink` on Windows, else `default` | which linker `-linker:` pins for one command |
+
+Backtraces come from `core:debug/trace` (the standard library's upstreamed `laytan/back` — no sibling checkout needed) and are **on by default with no define**, since nothing is captured until the program is already dying. `cmd/norn.odin` supplies the one piece `core:debug/trace` does not: `register_segfault_handler`, which covers the faults that otherwise print nothing at all (nil deref, divide by zero). Symbol names and line numbers need `-debug`; without it the trace still prints, as bare `0x...` addresses.
+
+The `basic` tracking allocator is **not thread-safe**, so a thread-using path (e.g. `--frequency`) requires a thread-safe allocator; the bare CLI is safe only because its nil registry makes those paths a no-op.
 
 ## Odin style conventions
 

@@ -130,9 +130,9 @@ parallelism, emit more tasks into the same pool — never spawn a pool inside a 
 would give N×N OS threads (each `pool_init` spawns `thread_count` threads that are then reused across
 tasks). Real cross-thread cost here is not the pool's queue mutex (negligible at this coarse task
 granularity) but the shared heap allocator on builder growth — mitigated by presizing builders
-(`output_size_hint`); if it ever shows under profiling, switch to mimalloc (per-thread heaps,
-`MIMALLOC_ENABLE`) and drop the tracking allocator (`-define:TRACKING_ALLOCATOR_ENABLE=false`), not
-the pool.
+(`output_size_hint`); if it ever shows under profiling, switch to an allocator with per-thread heaps
+(mimalloc, or whatever `base:runtime` ships as the default heap) and check the tracking allocator is
+off (`-define:TRACKING_ALLOCATOR=off`, already the default outside `-debug`), not the pool.
 
 **Single-scenario generation is left serial, deliberately.** A lone scenario in `run` has no
 cross-scenario axis; the only speedup would be a fine within-scenario axis (probe the accept rate,

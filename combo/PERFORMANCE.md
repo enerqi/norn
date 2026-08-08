@@ -541,8 +541,8 @@ The norn pipeline drives `annotate` serially (one deal at a time for scenarios w
 `annotate` is the reset. No additional arena is needed for the temp side.
 
 The default allocator sees 8 map alloc+frees per deal = 384 per 48-deal batch. With Option A
-(§8.2) this collapses to 2 per deal (one for NS, one for EW) = 96 per batch. If mimalloc is
-enabled (`MIMALLOC_ENABLE` in sim.odin), the cost of small map allocs is already very low —
+(§8.2) this collapses to 2 per deal (one for NS, one for EW) = 96 per batch. Under an allocator
+with per-thread heaps (mimalloc), the cost of small map allocs is already very low —
 Option A's benefit is mainly avoiding repeated backing-array reallocation as the map grows, not
 the allocator call overhead itself.
 
