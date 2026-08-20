@@ -166,6 +166,167 @@
 	 <div class="cca-tip" id="nc-cca-tip" hidden></div>
 	 <script>
 	 (function () {
+		  // ---------------------------------------------------------------------------------------------
+		  // This page also runs OUTSIDE a browser: the bidding-system desktop workbench loads it into a
+		  // Sciter <frame> (the `@media sciter` block in the stylesheet is the layout half of that). Sciter
+		  // runs QuickJS with a W3C-shaped DOM, and almost everything below is shared unchanged —
+		  // `getBoundingClientRect`, `offsetWidth`, `classList.toggle(name, on)`, `closest`, `querySelectorAll`
+		  // (a real Array), `tagName`, `element.click()`, delegated `mouseover`/`mouseout`/`keydown`, and
+		  // DOM0 `onclick`/`oninput` handlers are all present and were measured working there.
+		  //
+		  // Three differences, each wrapped here rather than branched on at the call sites:
+		  //
+		  //   * `element.hidden` is not implemented as a PROPERTY. Assigning it is silent and inert: the
+		  //     element stays visible, because it is the `[hidden]` ATTRIBUTE that the engine styles. Going
+		  //     through the attribute is correct in a browser too, so there is no host test here.
+		  //   * `window.innerWidth` / `innerHeight` do not exist. `document.documentElement.clientWidth` is
+		  //     the viewport in both (in a browser it excludes the scrollbar, which is what this code wants
+		  //     anyway — it is clamping a tooltip inside the visible area).
+		  //   * `localStorage` does not exist (Sciter's store is the `@storage` MODULE, which a classic
+		  //     script cannot import). The two view preferences below are read and written inside
+		  //     try/catch, so on the desktop they simply do not persist between runs. Nothing to shim.
+		  function setHidden(el, on) {
+				if (!el) return;
+				if (on) el.setAttribute('hidden', ''); else el.removeAttribute('hidden');
+		  }
+		  function isHidden(el) { return !el || el.hasAttribute('hidden'); }
+		  // Which engine this document is running in. `Window.this` is Sciter's own global and a browser has
+		  // no such thing (`Window` there is the interface object, whose `.this` is undefined), so this is a
+		  // one-expression test with nothing to keep in step. Used for the two places where the desktop needs
+		  // a DIFFERENT ELEMENT or a DIFFERENT NUMBER, not merely different CSS — everything expressible in
+		  // CSS lives in the `@media sciter` block instead.
+		  var DESKTOP = !!(typeof Window !== 'undefined' && Window.this);
+		  function viewW() { return document.documentElement.clientWidth; }
+		  function viewH() { return document.documentElement.clientHeight; }
+		  // Which event a control raises for "the user changed me" is the one place the two engines were
+		  // not measurably identical (a slider drag cannot be synthesised in a test), so the handlers that
+		  // matter are registered for both names. Every one of them re-renders from the control's CURRENT
+		  // value, so a browser firing `input` and then `change` runs the same work twice and lands in the
+		  // same place.
+		  function onEdit(el, fn) {
+				if (!el) return;
+				el.addEventListener('input', fn);
+				el.addEventListener('change', fn);
+		  }
+		  // MOVING THE CAROUSEL. The viewport is a scroll container and a step is one `scrollTo` — the
+		  // ANIMATION IS DECLARED IN CSS on both engines (`scroll-behavior: smooth` in a browser,
+		  // `overflow-x: ... scroll-manner(animation: true)` in the `@media sciter` block), so nothing here
+		  // drives a tween frame by frame. `behavior: 'instant'` is the documented override for a move that
+		  // must not animate.
+		  //
+		  // This replaced a hand-written `morphContent` tween on the track's `transform`, and the reason is
+		  // worth keeping: a transform is PAINT-TIME and unreadable. No geometry API reports it, so the
+		  // position had to be re-derived from the inline style, the compensation for parking's layout change
+		  // compounded into it, a superseded tween could win the last write, and nothing clamped the result —
+		  // between them those produced boards flush left, boards half a screen off, boards off the end
+		  // entirely, and a viewport showing the gap between two boards while the engine caught up. A scroll
+		  // offset is a number the engine clamps and hands back, which is why this version can be checked
+		  // arithmetically instead of by sampling pixels.
+		  //
+		  // Measured on 6.0.4.9 (docs: `DOM/Element/README.md` for `scrollTo`, `css/properties.md` +
+		  // `samples.css/scrollbars-n-scrolling/` for `scroll-manner`): `scrollLeft` and
+		  // `scrollTo({left, behavior: 'instant'})` take effect immediately and read back exactly;
+		  // `scrollTo({left})` with no behavior is animated by the CSS; an in-flight animated scroll RE-TARGETS
+		  // when a new one is issued (which is what a burst of clicks needs, and what the old tween could not
+		  // do without falling behind); and parking a board shifts `offsetLeft` while `scrollLeft` stays, both
+		  // of them readable, so the compensation is arithmetic rather than guesswork.
+		  var viewport = document.querySelector('.viewport');
+		  var wantedScroll = 0;
+
+		  // Side padding, in pixels, so the FIRST and LAST boards can reach the middle of the viewport: a scroll
+		  // stops at 0 and at the end, so without it they sit against the edges (measured 430px off centre).
+		  // Exactly `(viewport - board) / 2` and no more — half a viewport (the usual `padding: 0 50%` trick)
+		  // adds a whole viewport of scroll range that contains nothing, which is visible and wrong: with a bar
+		  // on screen it can be dragged into that emptiness, and the range reads as if the boards were only the
+		  // first half of the strip. Not in the stylesheet at all, because a PERCENTAGE padding on a
+		  // `max-content` box is circular and the desktop engine drops it (measured: board 1 stayed 430px off).
+		  function padTrack() {
+				if (viewport.clientWidth <= 0) { return; }   // see refit(): nothing to divide yet
+				var w = 0;
+				for (var j = 0; j < slides.length; j++) { w = Math.max(w, slides[j].offsetWidth); }
+				var pad = Math.max(0, Math.round((viewport.clientWidth - w) / 2));
+				track.style.setProperty('padding-left', pad + 'px');
+				track.style.setProperty('padding-right', pad + 'px');
+		  }
+
+		  // Pad, then put the current board back on the middle. Deferred as well as immediate, because the
+		  // script does NOT always run against a laid-out document: hosted in the workbench's Sciter <frame>
+		  // the frame had no size yet when this ran, so `clientWidth` was 0, the padding came out 0 and the
+		  // ONE board of an analysed deal sat flush against the left edge for the life of the window — a
+		  // resize is what fixed it, and a desktop window nobody resizes never got one. A board is centred by
+		  // the padding alone when there is only one of it (there is nothing to scroll), which is why this is
+		  // not merely cosmetic. Cheap either way: two extra measurements on a laid-out page, and the second
+		  // one is what a late layout needs.
+		  function refit() {
+				padTrack();
+				var s = slides[idx];
+				if (s) scrollToPx(centreScrollFor(s), true);
+		  }
+
+		  // How far the viewport would have to scroll to put an element's middle on its own middle.
+		  //
+		  // Measured with RECT CENTRES, and both halves of that matter. `offsetLeft` cannot be used because the
+		  // two engines disagree about it: in the desktop engine it is relative to the SCROLLED viewport (board
+		  // 1 read 179 with `scrollLeft` at 461, and boards scrolled off the left read NEGATIVE), while a
+		  // browser gives the unscrolled offset parent — the same expression then centres in one engine and
+		  // misses by a scroll offset in the other, which is exactly what it did. A
+		  // `getBoundingClientRect` is viewport-relative in both. And the CENTRE rather than the left edge,
+		  // because the board's zoom is a `scale()` about its middle: a browser's rect includes that transform,
+		  // so an edge moves while the tween runs and the middle does not.
+		  function centreScrollFor(el) {
+				if (!el) return viewport.scrollLeft;
+				var r = el.getBoundingClientRect(), v = viewport.getBoundingClientRect();
+				var want = viewport.scrollLeft + (r.left + r.right) / 2 - (v.left + v.right) / 2;
+				var most = Math.max(0, viewport.scrollWidth - viewport.clientWidth);
+				return Math.max(0, Math.min(most, Math.round(want)));
+		  }
+
+		  // An element's middle, relative to the viewport's middle: the one measurement parking has to preserve.
+		  function offCentre(el) {
+				var r = el.getBoundingClientRect(), v = viewport.getBoundingClientRect();
+				return (r.left + r.right) / 2 - (v.left + v.right) / 2;
+		  }
+
+		  function scrollToPx(px, immediately) {
+				// This is OUR move: remember where it is going, and drop any standing claim that the user is
+				// scrolling. Without the second half, a click on the page (which sets that claim) left it set for
+				// good, and then the settle handler below would read our own animated scroll as a user scroll —
+				// firing 140ms in, while the board is still travelling, finding the board we came FROM as the
+				// nearest, and putting it back. The arrow key then does nothing at all, which is what it did.
+				userScrolled = false;
+				wantedScroll = px;
+				if (px === viewport.scrollLeft) return;
+				if (immediately) {
+					 // `scrollLeft =` is the one both engines apply synchronously; the option form is the
+					 // documented way to say "not animated" where a stylesheet says otherwise.
+					 viewport.scrollLeft = px;
+					 if (viewport.scrollLeft !== px && viewport.scrollTo) viewport.scrollTo({ left: px, behavior: 'instant' });
+					 return;
+				}
+				if (viewport.scrollTo) { viewport.scrollTo({ left: px }); return; }
+				viewport.scrollLeft = px;
+		  }
+
+		  // Only a few boards stay IN THE LAYOUT. A 48-deal page is 48 boards of ~60 elements each, and every
+		  // one of them is re-laid-out on every window resize step whether or not it can be seen: measured in
+		  // the desktop host at 48 boards, 124ms PER RESIZE STEP, which is a window edge nobody can drag.
+		  // `display: none` on the boards outside a small window round the active one takes that to 6ms, and it
+		  // is work a browser was doing for nothing too. `visibility: hidden` does NOT help (measured: 119ms) —
+		  // the boards still take part in layout, which is the whole cost.
+		  //
+		  // The window keeps the neighbour either side laid out, so a step never waits for layout.
+		  // Measured in the window: 3 laid-out boards feel exactly like 5, and a narrow window feels like a wide
+		  // one. So this is a LAYOUT budget (the 48-board resize cost it was introduced for), not a smoothness
+		  // one — per-frame cost in this engine does not scale with what is on screen.
+		  var LAYOUT_WINDOW = 2;
+		  function parkFarSlides(i) {
+				for (var j = 0; j < slides.length; j++) {
+					 var wanted = Math.abs(j - i) <= LAYOUT_WINDOW;
+					 var parked = slides[j].style.getPropertyValue('display') === 'none';
+					 if (wanted === parked) slides[j].style.setProperty('display', wanted ? '' : 'none');
+				}
+		  }
+
 		  var track = document.getElementById('nc-track');
 		  // Each accepted deal wrote a .compass and (with --dd) one or more following caption siblings
 		  // (a .par par-summary, a .combo trick table, ...). Group each compass with every sibling up to
@@ -210,17 +371,28 @@
 		  }
 		  function applyAll() { for (var i = 0; i < total; i++) applySeat(i); }
 		  // A focus/reveal reflows the felt (font-size transition): re-centre now and after it settles.
-		  function recentre() { show(idx); setTimeout(function () { show(idx); }, 280); }
+		  function recentre() { show(idx, true); setTimeout(function () { show(idx, true); }, 280); }
 
-		  function show(i) {
+		  function show(i, immediately) {
 				idx = Math.max(0, Math.min(total - 1, i));
 				for (var j = 0; j < slides.length; j++) slides[j].classList.toggle('active', j === idx);
 				var s = slides[idx];
 				if (s) {
-					 // Centre the active slide in the viewport; measuring the live DOM makes this responsive
-					 // (1-up on narrow screens, 3-up on wide) with no width maths here.
-					 var off = s.offsetLeft + s.offsetWidth / 2 - track.parentNode.clientWidth / 2;
-					 track.style.transform = 'translateX(' + (-off) + 'px)';
+					 // Parking changes the layout under the move — the boards dropped from the LEFT take their width
+					 // with them, so everything after them slides left by that much while `scrollLeft` stays where it
+					 // was, and the content under the viewport jumps. Both halves of that are readable here (unlike
+					 // a transform, which reports nothing), so the compensation is just arithmetic: note where the
+					 // board was, park, and move `scrollLeft` by the difference WITHOUT animating. The real move
+					 // then starts from the right place.
+					 var was = offCentre(s);
+					 parkFarSlides(idx);
+					 var shift = offCentre(s) - was;
+					 if (Math.abs(shift) >= 1) scrollToPx(Math.max(0, Math.round(viewport.scrollLeft + shift)), true);
+
+					 // And the step itself: one call, animated by the stylesheet unless told otherwise. An animated
+					 // scroll already in flight RE-TARGETS to the new position (measured), so a burst of clicks needs
+					 // no special case — no token, no snap rule, no duration to tune.
+					 scrollToPx(centreScrollFor(s), immediately);
 				}
 				document.getElementById('nc-idx').textContent = idx + 1;
 				// Rebuild the overlay for the new board now, but place it only AFTER the slide's
@@ -233,16 +405,28 @@
 
 		  document.getElementById('nc-prev').onclick = function () { show(idx - 1); };
 		  document.getElementById('nc-next').onclick = function () { show(idx + 1); };
+		  // WHICH KEY, in a way both engines answer. A browser fills in `event.key` ("ArrowRight", "n"); the
+		  // desktop engine leaves it undefined and fills in `event.code` instead ("ArrowRight", "KeyN") —
+		  // measured, and the reason the arrows and the seat letters did nothing there while working in a
+		  // browser. `code` is physical, so `KeyN` becomes `n` here rather than whatever the layout would type.
+		  function keyOf(e) {
+				if (e.key) return e.key;
+				var code = e.code || '';
+				if (code.length === 4 && code.slice(0, 3) === 'Key') return code.charAt(3).toLowerCase();
+				return code;
+		  }
+
 		  document.addEventListener('keydown', function (e) {
 				// When a form control is focused (the target slider), let it handle keys natively — arrows
 				// then nudge the slider one trick, and the carousel shortcuts below are suppressed.
 				var t = e.target;
 				if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
-				if (e.key === 'ArrowLeft') { show(idx - 1); return; }
-				if (e.key === 'ArrowRight') { show(idx + 1); return; }
+				var pressed = keyOf(e);
+				if (pressed === 'ArrowLeft') { show(idx - 1); return; }
+				if (pressed === 'ArrowRight') { show(idx + 1); return; }
 				// a = all seats, n/e/s/w = just that seat — press the matching toolbar button so the
 				// click handler (class + highlight) runs, keeping keyboard and buttons in lockstep.
-				var k = e.key.toLowerCase();
+				var k = pressed.toLowerCase();
 				var seat = (k === 'a') ? '' : ((k === 'n' || k === 'e' || k === 's' || k === 'w') ? k : null);
 				if (seat === null) return;
 				var btn = document.querySelector('[data-seat="' + seat + '"]');
@@ -251,11 +435,65 @@
 
 		  // Scroll wheel: down/right = next, up/left = prev (like the arrow keys). preventDefault so the
 		  // page doesn't also scroll while navigating deals.
+		  // The delta is read defensively because this page also runs outside a browser (see the shims at
+		  // the top): with no direction to read, do nothing rather than treat NaN as "backwards".
 		  document.querySelector('.viewport').addEventListener('wheel', function (e) {
 				if (e.ctrlKey) return; // let Ctrl+wheel zoom the page as usual
-				e.preventDefault();
-				show(idx + ((e.deltaY + e.deltaX) > 0 ? 1 : -1));
+				if (e.preventDefault) e.preventDefault();
+				var d = (e.deltaY || 0) + (e.deltaX || 0);
+				if (!d && e.wheelDelta) d = -e.wheelDelta;
+				if (!d) return;
+				show(idx + (d > 0 ? 1 : -1));
 		  }, { passive: false });
+
+		  // THE PAGE CAN NOW BE SCROLLED BY THE USER, so it has to be able to LEARN which board that landed on
+		  // instead of only dictating it. Making the viewport a scroll container is what buys touch swipe and a
+		  // drag of the overlay indicator for free, and both of those leave `idx` stale unless something reads
+		  // the position back. Snapping happens once the scrolling SETTLES: adopt the nearest laid-out board
+		  // (which re-renders the overlay for it) or, if that is the board we are already on, tidy the offset
+		  // to dead centre. Our own moves never qualify, or the two would chase each other.
+		  // Gated on a real INPUT, not on a timer: an animated scroll raises `scroll` events for as long as it
+		  // runs, and any time-based guard is a guess about how long the engine's animation takes (measured
+		  // wrong — a windowless check paints slowly enough that a 500ms guard expired mid-flight and the page
+		  // adopted a board it was still travelling towards, which is a bug a real window could hit too on a
+		  // slow frame). So a scroll is only ever read back as the user's when a wheel, a touch or a pointer
+		  // press inside the viewport set this flag.
+		  var userScrolled = false;
+		  var settleT = null;
+		  function nearestSlide() {
+				var best = idx, bestD = -1;
+				for (var j = 0; j < slides.length; j++) {
+					 if (slides[j].style.getPropertyValue('display') === 'none') continue;
+					 var d = Math.abs(offCentre(slides[j]));
+					 if (bestD < 0 || d < bestD) { bestD = d; best = j; }
+				}
+				return best;
+		  }
+		  function markUserScroll() { userScrolled = true; }
+		  // A click on the page takes the KEYBOARD back. In a browser the page is the window and this is a
+		  // no-op; in a desktop host the page is a `<frame>` inside another document, a key only reaches a
+		  // document once something IN it holds the focus, and pressing any control in the host's own UI takes
+		  // that focus away — after which the arrow keys silently do nothing until the page is re-shown.
+		  viewport.addEventListener('pointerdown', function () {
+				try { if (document.body && document.body.focus) document.body.focus(); } catch (e) {}
+		  });
+		  viewport.addEventListener('wheel', markUserScroll);
+		  viewport.addEventListener('touchstart', markUserScroll);
+		  viewport.addEventListener('pointerdown', markUserScroll);
+		  viewport.addEventListener('scroll', function () {
+				if (!userScrolled) return;
+				clearTimeout(settleT);
+				settleT = setTimeout(function () {
+					 userScrolled = false;
+					 // Second guard, belt to the flag's braces: if the position is the one we last ASKED for, this
+					 // is our own move arriving, not somewhere the user went, and adopting a board from it would
+					 // undo a step that was already correct.
+					 if (Math.abs(viewport.scrollLeft - wantedScroll) <= 2) return;
+					 var n = nearestSlide();
+					 if (n !== idx) show(n);
+					 else scrollToPx(centreScrollFor(slides[idx]));
+				}, 140);
+		  });
 
 		  // Toolbar seat buttons set the GLOBAL default (empty data-seat = all four hands). Per-board
 		  // overrides are kept — the default only moves boards you haven't focused individually.
@@ -642,6 +880,106 @@
 		  var ccaBtn = document.getElementById('nc-cca-toggle');
 		  var ccaHead = document.getElementById('nc-cca-headline');
 		  var ccaSlider = document.getElementById('nc-cca-target');
+		  // THE DESKTOP SLIDER: THE ENGINE'S CONTROL, THE PAGE'S KNOB. Measured, in this order:
+		  //
+		  //   * `<input type=range>` is not a Sciter type (odin-sciter `docs/BEHAVIORS.md`). CSS
+		  //     `behavior: slider` attaches, but the widget paints at its own intrinsic size inside the box — a
+		  //     27px control in a 147px box — while the invisible 120px still took clicks.
+		  //   * `<input type=hslider>` sizes and hit-tests correctly, but the engine walks its KNOB'S LEFT EDGE
+		  //     from the track's left edge to its right, so at the top of the range the knob is entirely past
+		  //     the track. Padding reserves no room (three spellings, identical overhang); a wrapper drawing a
+		  //     wider track separates the paint from the hit area, which is mapped onto the INPUT's box;
+		  //     `margin-left` on the knob is what the ENGINE moves it with, so setting it froze the knob; and a
+		  //     `transform` moved it in a windowless view but not in the real window.
+		  //   * A track and knob of our own out of `<span>`s cannot be given a width at all in this flow — the
+		  //     span is stretched by the row and an explicit `width` is ignored, by stylesheet and by
+		  //     `setProperty` alike (the widget above is sized because it is a WIDGET).
+		  //
+		  // So: the engine's control keeps the geometry and the clicks, its own knob is hidden, and the page
+		  // draws the knob — as a CHILD OF THE INPUT, whose flow is `stack`, so a margin places it over the
+		  // track without disturbing anything. Both the drawing and the click mapping then run from the
+		  // input's box, which is the property every attempt above lacked.
+		  function targetEdited() {
+				var el = activeCombo();
+				if (!el) return;
+				el._target = +ccaSlider.value;
+				comboLine(el);
+				hlCca();
+				simBand();
+		  }
+		  // The same path a user's edit takes, callable: the desktop knob is drawn by the page, so "set the
+		  // target" has to mean re-render, not just assign. `ccaSetOppMin` next door is public for the same
+		  // reason — a harness (and the page's own checks) needs a way in that is not a synthesised drag.
+		  window.ccaSetTarget = function (v) {
+				if (!ccaSlider) { return; }
+				ccaSlider.value = v;
+				targetEdited();
+		  };
+		  var placeKnob = function () {};
+		  if (DESKTOP && ccaSlider) {
+				var native = document.createElement('input');
+				native.setAttribute('type', 'hslider');
+				['min', 'max', 'step', 'class'].forEach(function (a) {
+					 var v = ccaSlider.getAttribute(a);
+					 if (v !== null) native.setAttribute(a, v);
+				});
+				native.id = ccaSlider.id;
+				ccaSlider.parentElement.insertBefore(native, ccaSlider);
+				ccaSlider.parentElement.removeChild(ccaSlider);
+				ccaSlider = native;
+
+				var sMin = +native.getAttribute('min') || 1;
+				var sMax = +native.getAttribute('max') || 13;
+				var ourKnob = document.createElement('span');
+				ourKnob.className = 'nc-slider-knob';
+				native.appendChild(ourKnob);
+
+				// INLINE, because author CSS does not reach INSIDE the widget — measured on the engine's own knob
+				// (every selector down to `.cca-slider input[type="hslider"] > button.slider` left it untouched)
+				// and true of ours in the same place.
+				var accent = (getComputedStyle(document.documentElement).getPropertyValue('--sel') || '').trim() || '#2b6cb0';
+				ourKnob.style.setProperty('display', 'block');
+				ourKnob.style.setProperty('width', '1.4em');
+				ourKnob.style.setProperty('height', '1.4em');
+				ourKnob.style.setProperty('border-radius', '50%');
+				ourKnob.style.setProperty('background', accent);
+				ourKnob.style.setProperty('border', '1px solid #fff');
+
+				var applied = 0;
+				placeKnob = function () {
+					 // The engine's own knob, out of the way. Inline, because author CSS does not reach it —
+					 // measured down to `.cca-slider input[type="hslider"] > button.slider`.
+					 var theirs = native.querySelector('button.slider');
+					 if (theirs) { theirs.style.setProperty('display', 'none'); }
+
+					 var tr = native.getBoundingClientRect(), kr = ourKnob.getBoundingClientRect();
+					 var tw = tr.width, kw = kr.width;
+					 if (!(tw > 0) || !(kw > 0)) { return; }
+					 var v = +native.value;
+					 if (!(v >= sMin)) { v = sMin; }
+					 if (v > sMax) { v = sMax; }
+					 var frac = sMax > sMin ? (v - sMin) / (sMax - sMin) : 0;
+					 // SELF-CALIBRATING, because the widget has an inset of its own that nothing reports: the
+					 // knob sits a few px right of the track's left edge at a zero margin. Reading it back from
+					 // where the knob ACTUALLY is, given the margin last applied, removes it without having to
+					 // know what it is — and it re-derives itself if a font or a theme changes it.
+					 var inset = (kr.left - tr.left) - applied;
+					 // The classic mapping: the knob's own width comes off the travel, so at the top of the range
+					 // it ends ON the end of the track rather than past it.
+					 var want = Math.round(frac * (tw - kw) - inset);
+					 if (want !== applied) {
+						  ourKnob.style.setProperty('margin-left', want + 'px');
+						  applied = want;
+						  // One settle pass: the rects this call read are from BEFORE the margin it just applied,
+						  // so a jump across the range calibrates on stale numbers. Re-running once the layout has
+						  // caught up converges it, and the run after that changes nothing and stops.
+						  setTimeout(placeKnob, 0);
+					 }
+				};
+				placeKnob();
+				setTimeout(placeKnob, 0);
+				setTimeout(placeKnob, 150);
+		  }
 		  var ccaSliderVal = document.getElementById('nc-cca-target-val');
 		  var ccaFoot = document.querySelector('.cca-foot');
 		  var ccaSimBand = document.getElementById('nc-cca-sim');
@@ -675,7 +1013,7 @@
 				var el = activeCombo();
 				var hasBlind = !!(el && el._blind);
 				var modeEl = document.getElementById('nc-cca-mode');
-				if (modeEl) modeEl.hidden = !hasBlind;
+				if (modeEl) setHidden(modeEl, !hasBlind);
 				if (!hasBlind) ccaMode = 'exact';
 				var exBtn = document.getElementById('nc-cca-exact'), blBtn = document.getElementById('nc-cca-blind');
 				if (exBtn) exBtn.classList.toggle('sel', ccaMode === 'exact');
@@ -725,22 +1063,72 @@
 		  // creep under it. So we try the four corners in order and take the one with the least overlap with
 		  // the real-card seats (face-down unknown seats don't count). When a BOTTOM corner wins we still lift
 		  // above the par/combo captions, as before. No width/height overrides -> no per-slide resize.
+		  // The last word on the panel's horizontal placement, read from the box the engine ACTUALLY laid out.
+		  // `positionCca` clamps with `offsetWidth`, and that read is STALE right after the view changes size:
+		  // measured on a 1075 -> 1575 resize, the panel was placed with its old 646px width against the new
+		  // 1575px viewport and ended up at 919..1604 — 29px off the right edge — because it had meanwhile
+		  // relaid out 685px wide. A deferred re-clamp costs one rect and fixes the general case (any layout
+		  // that settles after the placement ran), rather than chasing one engine's measurement timing.
+		  function clampCcaIntoView() {
+				if (!ccaOpen) return;
+				var vw = viewW(), M = 10, r = ccaPanel.getBoundingClientRect();
+				if (!(r.width > 0)) return;
+				if (r.right > vw - M) { ccaPanel.style.setProperty('left', Math.max(M, vw - M - r.width) + 'px'); }
+				else if (r.left < M) { ccaPanel.style.setProperty('left', M + 'px'); }
+		  }
+
 		  function positionCca() {
 				if (!ccaOpen) return;
+				setTimeout(clampCcaIntoView, 0);
 				var slide = slides[idx];
 				if (!slide) return;
-				var vw = window.innerWidth, vh = window.innerHeight, M = 10;
+				var vw = viewW(), vh = viewH(), M = 10;
 				var s = ccaPanel.style;
-				s.top = s.right = s.maxWidth = s.maxHeight = ''; // natural size; CSS caps width/height
-				s.left = M + 'px';
-				s.bottom = M + 'px';
+				// THE OPPOSITE ANCHOR IS SET TO `auto`, NOT REMOVED. Removing the inline value only uncovers the
+				// STYLESHEET's `bottom: 0.6rem`, so a panel placed at the top ended up with top AND bottom in
+				// force and stretched between them: measured 751px tall around 331px of content, which is the
+				// panel that opens mostly empty. (Assigning '' does not clear a declaration here either, so
+				// neither spelling of "unset" works — `auto` is what says it.)
+				['right', 'max-width', 'max-height'].forEach(function (k) { s.removeProperty(k); });
+				// A STABLE WIDTH on the desktop, TAKEN FROM THE TRICK TABLE. Two things force this. The panel's
+				// widest child is its HEADER row, whose summary text CHANGES WITH THE TRICK TARGET ("… develop 1
+				// for 8" / "… (≥ 12 already)"), so a `max-content` panel resized on every step of the slider —
+				// the panel visibly jumping about as the target changed. And `max-width` does not cap an
+				// explicit width in this engine (measured: a panel 805px wide with `max-width: 44rem` in force),
+				// so the cap has to be applied here rather than declared. The table is the right ruler: its
+				// columns do not depend on the target, the header wraps happily (`flow: horizontal-wrap`), and
+				// anything still wider scrolls inside `#nc-cca-body`.
+				if (DESKTOP) {
+					 s.removeProperty('width');
+					 var table = ccaPanel.querySelector('.ct');
+					 var pad = 0, cs = getComputedStyle(ccaPanel);
+					 pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+					 var want = table ? Math.ceil(table.getBoundingClientRect().width) + pad + 2 : 0;
+					 if (want > 0) { s.setProperty('width', Math.min(want, vw - 2 * M) + 'px'); }
+				}
+				s.setProperty('top', 'auto');
+				s.setProperty('left', M + 'px');
+				s.setProperty('bottom', M + 'px');
 				var pw = ccaPanel.offsetWidth, ph = ccaPanel.offsetHeight;
-				// The visible (real-card) hands to keep clear. Unknown seats render face-down ('?') — ignore them.
+				// What the panel must keep clear: the visible (real-card) hands — unknown seats render face-down
+				// ('?'), so they do not count — AND the par/combo caption lines under the board, which carry the
+				// score and are the reason a bottom anchor used to be LIFTED. Scoring them like everything else
+				// is strictly better than lifting: the lift moved the panel UP into the board even when the
+				// bottom of a tall window was wide open (measured — caption at y 926..949, panel dragged from
+				// 1072..1390 up to 599..917, sitting against the board with 400px of empty space below it),
+				// because its test was only "is the panel's bottom below the caption's top", which is true of a
+				// panel entirely BELOW it too. As an avoid-rect it is simply not covered, wherever the panel goes.
 				var hands = [];
 				slide.querySelectorAll('.seat').forEach(function (seat) {
 					 if (seat.classList.contains('facedown')) return;
 					 var r = seat.getBoundingClientRect();
 					 if (r.width > 0 && r.height > 0) hands.push(r);
+				});
+				['.par', '.combo'].forEach(function (sel) {
+					 var c = slide.querySelector(sel);
+					 if (!c) return;
+					 var cr = c.getBoundingClientRect();
+					 if (cr.width > 0 && cr.height > 0) hands.push(cr);
 				});
 				// Candidate anchors (panel box left/top), in preference order: bottom-left, bottom-right, then top.
 				var C = [
@@ -764,31 +1152,16 @@
 					 var ov = handOverlap(C[i]);
 					 if (ov < bestOv) { best = C[i]; bestOv = ov; }
 				}
-				s.left = Math.max(M, Math.min(best.left, vw - pw - M)) + 'px';
+				s.setProperty('left', Math.max(M, Math.min(best.left, vw - pw - M)) + 'px');
 				if (!best.bottom) {
-					 s.bottom = '';
-					 s.top = M + 'px';
+					 s.setProperty('bottom', 'auto');
+					 s.setProperty('top', M + 'px');
 					 return;
 				}
-				// Bottom corner: keep the caption-lift so the par/combo score stays visible — BUT only when the
-				// hands are already clear (bestOv === 0). If the panel is too big to dodge the hands anyway
-				// (small viewport), lifting would only ride it further UP into them, so stay pinned low instead.
-				s.top = '';
-				s.bottom = M + 'px';
-				if (bestOv > 0) return;
-				var pr = ccaPanel.getBoundingClientRect();
-				var capTop = Infinity;
-				['.par', '.combo'].forEach(function (sel) {
-					 var c = slide.querySelector(sel);
-					 if (!c) return;
-					 var cr = c.getBoundingClientRect();
-					 if (cr.height > 0 && cr.right > pr.left && cr.left < pr.right) capTop = Math.min(capTop, cr.top);
-				});
-				if (capTop !== Infinity && pr.bottom > capTop) {
-					 var lift = vh - capTop + M;      // css bottom putting the panel's bottom M above capTop
-					 var maxLift = vh - ph - M;       // highest possible (panel top at M)
-					 s.bottom = Math.max(M, Math.min(lift, maxLift)) + 'px';
-				}
+				// Bottom corner: pinned low. The caption is an avoid-rect now (see above), so there is nothing
+				// left to lift for — a corner that would cover it loses to one that would not.
+				s.setProperty('top', 'auto');
+				s.setProperty('bottom', M + 'px');
 		  }
 		  // Highlight the target column + set the headline/slider value for the ACTIVE board's target.
 		  function hlCca() {
@@ -797,6 +1170,7 @@
 				if (!S || !S.total) return;
 				var t = el._target, r = recommend(S, t);
 				if (ccaSliderVal) ccaSliderVal.textContent = t;
+				placeKnob(); // the drawn knob follows the value (desktop only; a no-op in a browser)
 				// A. Winner/loser count (aids plan A): sum the per-suit guaranteed floors of the recommended
 				// blind lines; the gap to the target is what must be developed. Follows the slider.
 				if (ccaSub) {
@@ -828,7 +1202,7 @@
 				}
 		  }
 		  function setCca(open) {
-				ccaOpen = open; ccaPanel.hidden = !open;
+				ccaOpen = open; setHidden(ccaPanel, !open);
 				if (ccaBtn) ccaBtn.classList.toggle('sel', open);
 				renderCca(true); // opening: no slide transition in flight, place immediately
 		  }
@@ -903,9 +1277,9 @@
 		  function syncOppUI() {
 				var el = activeCombo(), S = el && sideData(el), J = S && S.joint;
 				var has = !!(J && J.length >= 4);
-				if (oppBtn) oppBtn.hidden = !has;
+				if (oppBtn) setHidden(oppBtn, !has);
 				if (!has) { ccaOppOpen = false; if (oppBtn) oppBtn.classList.remove('sel'); }
-				if (oppWrap) oppWrap.hidden = !(has && ccaOppOpen);
+				if (oppWrap) setHidden(oppWrap, !(has && ccaOppOpen));
 				if (oppBtn) oppBtn.classList.toggle('sel', has && ccaOppOpen);
 				var defs = ccaSide === 'ew' ? ['N', 'S'] : ['E', 'W'];
 				if (oppLoLbl) oppLoLbl.textContent = defs[0];
@@ -921,20 +1295,15 @@
 				syncOppUI();
 				positionCca(); // height changed -> re-place
 		  };
-		  oppInputs.forEach(function (inp) { inp.oninput = applyOpp; });
+		  oppInputs.forEach(function (inp) { onEdit(inp, applyOpp); });
 		  if (oppClear) oppClear.onclick = function () {
 				oppInputs.forEach(function (inp) { inp.value = ''; });
 				ccaSetOppMin(null);
 		  };
 		  // Slider adjusts the ACTIVE board's target only; the inline summary + overlay update together.
-		  if (ccaSlider) ccaSlider.oninput = function () {
-				var el = activeCombo();
-				if (!el) return;
-				el._target = +this.value;
-				comboLine(el);
-				hlCca();
-				simBand();
-		  };
+		  // The browser's native range reports edits as events; the desktop replacement calls `targetEdited`
+		  // directly (it has no events to raise), so both paths run exactly the same work.
+		  onEdit(ccaSlider, targetEdited);
 		  // N/S <-> E/W toggle: global choice, re-render the overlay + every inline one-liner.
 		  var nsBtn = document.getElementById('nc-cca-ns'), ewBtn = document.getElementById('nc-cca-ew');
 		  function setSide(s) {
@@ -1039,7 +1408,7 @@
 		  function simBand() {
 				if (!ccaSimBand) return;
 				var el = activeCombo(), src = activeSimSrc(el);
-				if (!src) { ccaSimBand.hidden = true; return; }
+				if (!src) { setHidden(ccaSimBand, true); return; }
 				var g = src.g[ccaStrain] || [], t = el._target;
 				var mk = 0; for (var k = t; k < 14; k++) mk += g[k] || 0;
 				var se = Math.sqrt(Math.max(0, mk * (1 - mk)) / src.n) * 100;
@@ -1096,15 +1465,15 @@
 					  (blind != null ? 'naive blind ' + blind.toFixed(1) + ' (SD census) · ' : '') +
 					  (exact ? 'double-dummy ' + etr(g).toFixed(1) + ' (exact)' : 'simulated ' + etr(g).toFixed(1) + ' (DDS whole-hand)') + '</span>';
 				ccaSimBand.innerHTML = s;
-				ccaSimBand.hidden = false;
+				setHidden(ccaSimBand, false);
 		  }
 		  // Populate the lead dropdown from the active board's sub-grids (grouped by defender, each card an
 		  // option). Hidden when the board has no lead data. Preserves the current pick if still valid.
 		  function buildLeadOptions(el) {
 				if (!ccaLeadSel || !ccaLeadWrap) return;
 				var leads = activeLeads(el);
-				if (!leads || !leads.seats) { ccaLeadWrap.hidden = true; return; }
-				ccaLeadWrap.hidden = false;
+				if (!leads || !leads.seats) { setHidden(ccaLeadWrap, true); return; }
+				setHidden(ccaLeadWrap, false);
 				var html = '<option value="">none</option>';
 				['N', 'E', 'S', 'W'].forEach(function (sk) {
 					 var cards = leads.seats[sk]; if (!cards) return;
@@ -1125,12 +1494,12 @@
 				if (!has) { ccaLead = null; want = ''; }
 				ccaLeadSel.value = want;
 		  }
-		  if (ccaLeadSel) ccaLeadSel.onchange = function () {
-				var v = this.value;
+		  onEdit(ccaLeadSel, function () {
+				var v = ccaLeadSel.value;
 				ccaLeadTouched = true; // user has taken over the pick; stop auto-seeding the recorded lead
 				if (!v) { ccaLead = null; } else { var p = v.split('|'); ccaLead = { seat: p[0], card: p[1] }; }
 				simBand();
-		  };
+		  });
 		  // Contract-strain picker (shown only if some board has sample data). Default = the baked contract.
 		  var strainBtns = ccaStrainWrap ? Array.prototype.slice.call(ccaStrainWrap.querySelectorAll('[data-str]')) : [];
 		  function setStrain(k) {
@@ -1141,39 +1510,67 @@
 		  strainBtns.forEach(function (btn) { btn.onclick = function () { setStrain(btn.getAttribute('data-str')); }; });
 		  var simDefault = null;
 		  for (var ci = 0; ci < combos.length; ci++) { if (combos[ci]._sim) { simDefault = combos[ci]._sim; break; } }
-		  if (simDefault && ccaStrainWrap) { ccaStrainWrap.hidden = false; }
+		  if (simDefault && ccaStrainWrap) { setHidden(ccaStrainWrap, false); }
 		  setStrain(simDefault && simDefault.strain ? simDefault.strain : 'nt');
 
 		  // Help modal.
 		  var helpModal = document.getElementById('nc-cca-help-modal');
 		  var helpBtn = document.getElementById('nc-cca-help'), helpClose = document.getElementById('nc-cca-help-close');
-		  if (helpBtn) helpBtn.onclick = function () { if (helpModal) helpModal.hidden = false; };
-		  if (helpClose) helpClose.onclick = function () { if (helpModal) helpModal.hidden = true; };
-		  if (helpModal) helpModal.onclick = function (e) { if (e.target === helpModal) helpModal.hidden = true; };
+		  if (helpBtn) helpBtn.onclick = function () { setHidden(helpModal, false); };
+		  if (helpClose) helpClose.onclick = function () { setHidden(helpModal, true); };
+		  if (helpModal) helpModal.onclick = function (e) { if (e.target === helpModal) setHidden(helpModal, true); };
 		  // Hover tooltip: the detailed play narration for a suit's recommended line (delegation, since the
 		  // table is rebuilt on every nav / toggle).
 		  var tipEl = document.getElementById('nc-cca-tip');
 		  function posTip(e) {
 				if (!tipEl) return;
 				var m = 14;
-				tipEl.style.left = Math.min(e.clientX + m, window.innerWidth - tipEl.offsetWidth - 8) + 'px';
-				tipEl.style.top = Math.min(e.clientY + m, window.innerHeight - tipEl.offsetHeight - 8) + 'px';
+				tipEl.style.left = Math.min(e.clientX + m, viewW() - tipEl.offsetWidth - 8) + 'px';
+				tipEl.style.top = Math.min(e.clientY + m, viewH() - tipEl.offsetHeight - 8) + 'px';
 		  }
 		  function tipTarget(e) { return e.target && e.target.closest ? e.target.closest('[data-tip]') : null; }
 		  document.addEventListener('mouseover', function (e) {
 				var t = tipTarget(e);
-				if (t && tipEl) { tipEl.textContent = t.getAttribute('data-tip'); tipEl.hidden = false; posTip(e); }
+				if (t && tipEl) { tipEl.textContent = t.getAttribute('data-tip'); setHidden(tipEl, false); posTip(e); }
 		  });
-		  document.addEventListener('mousemove', function (e) { if (tipEl && !tipEl.hidden) posTip(e); });
-		  document.addEventListener('mouseout', function (e) { if (tipTarget(e) && tipEl) tipEl.hidden = true; });
+		  document.addEventListener('mousemove', function (e) { if (tipEl && !isHidden(tipEl)) posTip(e); });
+		  document.addEventListener('mouseout', function (e) { if (tipTarget(e) && tipEl) setHidden(tipEl, true); });
 
 		  if (combos.length === 0 && ccaBtn) ccaBtn.style.display = 'none';
 
-		  window.addEventListener('resize', function () { show(idx); });
+		  // Resize arrives once per mouse move while a window edge is dragged, and `show` is not free: it
+		  // re-renders the overlay table and re-places the panel. Re-centre on every event (one measurement and
+		  // one transform, and no animation while the pointer is dragging) and do the rest once it stops.
+		  var resizeT = null;
+		  function onResized() {
+				refit();
+				clearTimeout(resizeT);
+				resizeT = setTimeout(function () { show(idx, true); }, 120);
+		  }
+		  window.addEventListener('resize', onResized);
+
+		  // AND a size WATCH, because a `window` resize event is not the only way this document changes size —
+		  // hosted in the workbench's Sciter `<frame>` it is not even a way it happens. Measured in the real
+		  // window: enlarging the workbench window resized the frame and relaid the document out, and NO
+		  // resize event reached the page, so the board stayed where the old width had centred it and the CCA
+		  // panel kept the old width's size and position until a click on CCA re-ran `show` — the page looked
+		  // like it had no responsive layout at all. There is no event to subscribe to from inside the frame,
+		  // so the viewport's own box is watched instead: two integer reads, and the work only happens on a
+		  // CHANGE (the boards outside the layout window are parked, so a re-fit is cheap).
+		  var seenW = viewport.clientWidth, seenH = viewport.clientHeight;
+		  setInterval(function () {
+				var w = viewport.clientWidth, h = viewport.clientHeight;
+				if (w === seenW && h === seenH) { return; }
+				seenW = w; seenH = h;
+				onResized();
+		  }, 200);
 		  applyAll();
 		  syncSideToggle(); // lock ccaSide to board 0's known side before the first inline-badge render
 		  combos.forEach(comboLine);
-		  show(0);
+		  padTrack();
+		  show(0, true);   // the opening board is not a movement
+		  setTimeout(refit, 0);     // a document that was laid out AFTER this script ran (the Sciter frame)
+		  setTimeout(refit, 150);   // ... and one whose fonts/metrics settled a beat later
 	 })();
 	 </script>
 </body>

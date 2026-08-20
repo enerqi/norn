@@ -6,6 +6,7 @@ package norn
 	These tests build boards deterministically (no RNG) so the exact expected text can be asserted.
 */
 
+import "core:fmt"
 import "core:math/rand"
 import "core:strings"
 import "core:testing"
@@ -218,4 +219,54 @@ test_deal_pretty_lines_and_voids :: proc(t: ^testing.T) {
 	testing.expect(t, strings.has_prefix(lines[0], "North "), "first line should label North")
 	testing.expect(t, strings.contains(lines[0], "S:-"), "North spades should be a void")
 	testing.expect(t, strings.contains(lines[0], "C:AKQJT98765432"), "North clubs should be the full suit")
+}
+
+// AN INLINE `<style>` IS CAPPED AT 32 KiB and an oversized one is dropped ENTIRE, so the emitter splits a
+// large sheet across several blocks (see `split_oversized_style`). The cut has to land on a top-level rule
+// boundary, or a severed rule would break the page in a way the cap never did.
+@(test)
+test_oversized_style_splits_on_rule_boundaries :: proc(t: ^testing.T) {
+	// A sheet of many small rules, comfortably over the split target.
+	sheet := strings.builder_make()
+	defer strings.builder_destroy(&sheet)
+	for i := 0; strings.builder_len(sheet) < SPLIT_TARGET * 2; i += 1 {
+		strings.write_string(&sheet, ".pad_")
+		strings.write_int(&sheet, i)
+		strings.write_string(&sheet, " { color: #010203; }\n")
+	}
+	// ... plus one @media block, which must survive whole.
+	strings.write_string(&sheet, "@media sciter {\n\t.x { width: 10px; }\n\t.y { width: 20px; }\n}\n")
+
+	page := strings.concatenate({"<head><style>", strings.to_string(sheet), "</style></head>"})
+	defer delete(page)
+	out := split_oversized_style(page, context.allocator)
+	defer delete(out)
+
+	// Every emitted block is under the engine's cap, and there is more than one of them.
+	blocks := strings.split(out, "<style>")
+	defer delete(blocks)
+	testing.expect(t, len(blocks) > 2, "an oversized sheet should be split into several <style> blocks")
+	for block, i in blocks[1:] {
+		end := strings.index(block, "</style>")
+		testing.expect(t, end > 0, "each block should be closed")
+		testing.expect(
+			t,
+			end < STYLE_CAP,
+			fmt.tprintf("block %d is %d bytes, over the engine's %d cap", i, end, STYLE_CAP),
+		)
+		// A block that begins mid-rule would start with a declaration rather than a selector.
+		testing.expect(t, !strings.contains(block[:end], "}\n\t}"), "no block should resume inside a rule")
+	}
+
+	// The @media block is intact: its opening brace and both rules are in ONE block.
+	media_at := strings.index(out, "@media sciter {")
+	testing.expect(t, media_at > 0, "the @media block should survive")
+	after := out[media_at:]
+	close_at := strings.index(after, "</style>")
+	testing.expect(t, close_at > 0, "the block holding @media should be closed")
+	testing.expect(t, strings.contains(after[:close_at], ".y { width: 20px; }"), "@media must not be severed")
+
+	// A sheet under the target is returned untouched.
+	small := "<head><style>.a { color: red; }</style></head>"
+	testing.expect_value(t, split_oversized_style(small, context.allocator), small)
 }

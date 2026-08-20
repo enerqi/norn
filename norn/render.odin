@@ -801,7 +801,148 @@ render_page_prologue :: proc(builder: ^strings.Builder, format: Output_Format, p
 	title := page_title if page_title != "" else "Practice Deals"
 	// replace_all into the temp allocator: no manual free, and the whole header is written this frame.
 	page, _ := strings.replace_all(header, "{{TITLE}}", title, context.temp_allocator)
-	strings.write_string(builder, page)
+	stripped := strip_style_comments(page, context.temp_allocator)
+	strings.write_string(builder, split_oversized_style(stripped, context.temp_allocator))
+}
+
+// AN INLINE `<style>` IS CAPPED AT 32 KiB in Sciter, and past that the engine silently drops THE WHOLE BLOCK.
+//
+// Measured on Sciter 6.0.4.9 by bisection, twice. The first pass established the number — 32763 bytes applied,
+// 32816 did not — and read the failure as a truncation. It is not: re-measured with markers at the start, the
+// middle and the end of one sheet, a block of 32741 bytes applies in full and one of 32769 applies NOTHING AT
+// ALL, its first rule included. There is no warning and no error, and the diagnostics go quiet for that sheet
+// because the parser abandons it. The card page's own stylesheet had grown to ~32.6 KB, so ONE added comment
+// was enough to cross the line — and what it took was not just the desktop overrides at the bottom but every
+// rule in the file, which is exactly what "the hands are the full width of the window" looked like.
+//
+// The SCOPE is one `<style>` element, which is what `split_oversized_style` below exploits: two blocks of
+// 20 KB both apply. A `<link>`ed sheet has no cap in reach (100 KB measured, every rule live), but these pages
+// are single-file by design — copied to a share, opened from disk, hosted in a `<frame>` — so linking is not
+// the way out here. Stripping comments buys headroom; splitting removes the cliff.
+//
+// The comments in `html_cards_header.html.tmpl` are the documentation of a hard-won port and are not going
+// anywhere; a BROWSER does not need them either, so they are removed on the way out. That is worth several
+// kilobytes and it is the difference between a stylesheet with headroom and one a sentence can break.
+// Browsers are unaffected — a comment has no meaning to them — and nothing else in the page is touched: this
+// works on the `<style>` element's contents only, so the script's `//` comments and every `url(...)` outside
+// it are left exactly as they are.
+//
+// CSS comments do not nest, which is what makes this safe to do with a scan rather than a parser.
+strip_style_comments :: proc(page: string, allocator := context.allocator) -> string {
+	STYLE_OPEN :: "<style>"
+	STYLE_CLOSE :: "</style>"
+	open := strings.index(page, STYLE_OPEN)
+	if open < 0 {
+		return page
+	}
+	start := open + len(STYLE_OPEN)
+	close := strings.index(page[start:], STYLE_CLOSE)
+	if close < 0 {
+		return page
+	}
+	style := page[start:][:close]
+
+	b := strings.builder_make(allocator)
+	strings.write_string(&b, page[:start])
+	for i := 0; i < len(style); {
+		if i + 1 < len(style) && style[i] == '/' && style[i + 1] == '*' {
+			end := strings.index(style[i:], "*/")
+			if end < 0 {
+				break // unterminated: leave the remainder alone rather than eating the stylesheet
+			}
+			i += end + 2
+			// The blank line the comment sat on goes with it, so the output does not gain empty lines.
+			for i < len(style) && (style[i] == ' ' || style[i] == '\t') {
+				i += 1
+			}
+			if i < len(style) && style[i] == '\n' {
+				i += 1
+			}
+			continue
+		}
+		strings.write_byte(&b, style[i])
+		i += 1
+	}
+	strings.write_string(&b, page[start + close:])
+	return strings.to_string(b)
+}
+
+// Split an oversized `<style>` into as many blocks as it takes, each under the engine's cap.
+//
+// The cap is per `<style>` element (see `strip_style_comments`), so the fix for a sheet that has outgrown it
+// is another element rather than a `<link>`. Comment-stripping alone leaves the page one sentence away from a
+// cliff; this makes the cliff unreachable, and a browser cannot tell the difference between one stylesheet
+// and two.
+//
+// The cut lands on a TOP-LEVEL rule boundary — the byte after a `}` that closes to depth 0 — so no rule and
+// no `@media` block is ever severed. `SPLIT_TARGET` is under the 32768 cap on purpose: the last boundary
+// before the target is taken, and a sheet whose rules are large (the `@media sciter` block is thousands of
+// bytes) can overshoot the target by one rule without coming near the cap.
+//
+// If no boundary can be found the page is returned untouched — an unsplittable sheet is the caller's problem
+// to notice (the consumer's `page-check` asserts the byte count), and silently emitting something malformed
+// would be worse.
+SPLIT_TARGET :: 24 * 1024
+STYLE_CAP :: 32 * 1024
+
+split_oversized_style :: proc(page: string, allocator := context.allocator) -> string {
+	STYLE_OPEN :: "<style>"
+	STYLE_CLOSE :: "</style>"
+	open := strings.index(page, STYLE_OPEN)
+	if open < 0 {
+		return page
+	}
+	start := open + len(STYLE_OPEN)
+	close := strings.index(page[start:], STYLE_CLOSE)
+	if close < 0 {
+		return page
+	}
+	style := page[start:][:close]
+	if len(style) <= SPLIT_TARGET {
+		return page
+	}
+
+	b := strings.builder_make(allocator)
+	strings.write_string(&b, page[:start])
+
+	rest := style
+	for len(rest) > SPLIT_TARGET {
+		cut := top_level_cut(rest, SPLIT_TARGET)
+		if cut <= 0 {
+			break // nothing to cut on: emit what is left as one block
+		}
+		strings.write_string(&b, rest[:cut])
+		strings.write_string(&b, STYLE_CLOSE)
+		strings.write_string(&b, "\n		<style>\n")
+		rest = rest[cut:]
+	}
+	strings.write_string(&b, rest)
+	strings.write_string(&b, page[start + close:])
+	return strings.to_string(b)
+}
+
+// The largest index <= `limit` that sits just after a `}` closing to brace depth 0, or 0 if there is none.
+@(private = "file")
+top_level_cut :: proc(style: string, limit: int) -> int {
+	depth := 0
+	best := 0
+	for i in 0 ..< len(style) {
+		switch style[i] {
+		case '{':
+			depth += 1
+		case '}':
+			depth -= 1
+			if depth <= 0 {
+				depth = 0
+				if i + 1 <= limit {
+					best = i + 1
+				} else {
+					return best
+				}
+			}
+		}
+	}
+	return best
 }
 
 // Write the once-per-run epilogue for `format`. Mirror of `render_page_prologue`.

@@ -22,6 +22,14 @@ One Odin package per directory; the single-file programs are built with `-file`.
 | `cmd/bench.odin` | `main` | scan-vs-bitmask hand-evaluation micro-benchmark. |
 | `examples/strong-1c.odin`, `examples/1major-gf-support.odin` | `main` | self-contained single-condition demo programs — the shape a consumer takes; `norn` primitives only. |
 
+**One allocator contract, stated here because breaking it is silent.** `combo.annotate`'s `Html_Cards`
+path ends with `free_all(context.temp_allocator)` — deliberately, since it recycles a per-deal arena — and
+`cli.run` reaches it. So a CALLER must not keep anything of its own in `context.temp_allocator` across a
+`cli.run` / `combo.annotate` call. `sim.exe` never notices, because its argv and its output path are
+`os.args` (static memory); the bidding-system workbench composed each scenario's `-o` path in temp memory
+and wrote 45 correct pages before failing with a filename of NUL bytes — the arena had been reset and
+recycled under a string `cli` was still holding. Compose per-run argv and paths on the heap.
+
 **The system-specific predicates and the scenario registry are NOT in this repo.** They live in the *consumer* project (`~/docs/bridge/bridge-bidding-system/deal-simulations/odin-sims`, package `bidding`), which imports norn as a collection and wires its `registry` into `cli.main_program`. Keeping norn generic and the bidding policy out is the deliberate library boundary.
 
 In-repo packages import each other by **relative path** (`import "../norn"`). An *external* consumer imports via a single collection rooted at the repo:
@@ -224,6 +232,67 @@ Conventions:
 - Editing a `.tmpl` changes the binary, so rebuild before testing — nothing reloads it at run time.
 - `just format` (odinfmt) does not touch them, and neither does `just lint`: a broken template is a
   BROWSER-visible bug, not a compile error. Verify page changes by opening a generated page.
+- The `Html_Cards` header carries **one `@media sciter { … }` block, and its POSITION is load-bearing**.
+  A consumer (the bidding-system workbench, a desktop app on Sciter) hosts this page in a Sciter
+  `<frame>`, and that engine reads a handful of declarations differently — a unitless `line-height`
+  resolves against the viewport, `width: fit-content` collapses, `gap`/`clamp()`/`min()`/`:is()` are not
+  implemented, and `<input type=range>` is an edit box without `behavior: slider`. Where a browser rule is
+  `clamp(min, <viewport term>, max)` the block keeps the VIEWPORT TERM and drops the bounds — `vh` does
+  resolve in a `font-size` there and re-evaluates on a resize, so the desktop board is the size a browser
+  draws at the same window rather than pinned to one window's worth. (An earlier note in this repository
+  said `vh` was invalid in a `font-size`; that was the 32 KiB per-`<style>` cap below dropping the whole sheet,
+  measured again since. `just sims page-check` in the consumer asserts the card text tracks the view
+  height, so a "fix" back to a constant fails.) The block repeats only
+  those declarations, and a browser ignores all of it because an unknown media *type* never matches. It
+  sits **above** the phone `@media (max-width: 640px)` because Sciter cannot parse that query and the
+  parse error discards the remainder of the stylesheet: anything Sciter must read has to come first. The
+  carousel **MOVES BY SCROLLING**, and that is the architectural point worth naming twice: `.viewport` is a
+  scroll container and a step is one `scrollTo`, with the animation DECLARED IN CSS on both engines
+  (`scroll-behavior: smooth` in a browser; `overflow-x: scroll-indicator scroll-manner(animation: true)` in
+  the sciter block, which is the engine's documented equivalent). Nothing drives a tween frame by frame any
+  more. It used to move the track with a paint-time `transform`, and every hard bug in it came from that
+  being UNREADABLE — no geometry API reports a transform, so the position was re-derived from the inline
+  style, the parking compensation compounded into it, a superseded tween could win the last write, and
+  nothing clamped the result: boards painted flush left, boards half a window off, boards off the end,
+  and a viewport parked on the gap between two boards while the engine caught up. A scroll offset is a
+  number the engine clamps and hands back, which is why `just page-check` in the consumer can now assert the
+  centring arithmetically instead of by sampling felt pixels. Two engine differences the rewrite turned up,
+  both measured: **`offsetLeft` here is relative to the SCROLLED viewport** (a board scrolled off the left
+  reports a negative offset) while a browser gives the unscrolled offset parent, so positions are compared
+  as `getBoundingClientRect` CENTRES, which mean the same in both and are immune to the board's `scale()`;
+  and a **percentage padding on a `max-content` box is dropped** here, so the half-viewport of side padding
+  that lets the first and last board reach the middle is set from script in pixels (`padTrack`). The
+  transform facts still hold and still matter if anything moves that way again — `translate(x, y)` paints
+  and `translateX(x)` does not, `style.setProperty('transform', ...)` applies and `style.transform = ...`
+  does not, and an inline transform does not transition while a cascade-driven one does. The
+  footer's script has three matching shims (`setHidden`/`isHidden` because `element.hidden` is not a
+  property there, and `viewW`/`viewH` because `window.innerWidth` does not exist) — browser-correct code
+  either way, so there is no branch on the host. The carousel also PARKS the boards outside a small window
+  round the active one (`display: none`, `LAYOUT_WINDOW`): every board in the layout is re-measured on every
+  window resize step, measured at 124ms per step for 48 boards in the desktop host against 6ms with the far
+  boards parked — and a browser was paying a smaller version of the same bill. Parking moves the boards that
+  remain, so `show` re-measures AFTER parking and corrects `scrollLeft` by the difference without animating,
+  which is arithmetic now that both halves are readable. Measured in the desktop window, per-frame cost does
+  NOT scale with what is on screen: 3 laid-out boards feel like 5 and a narrow window feels like a wide one,
+  so `LAYOUT_WINDOW` is a layout budget for that resize bill and not a smoothness lever.
+  **AN INLINE `<style>` IS CAPPED AT 32 KiB in that engine, ALL OR NOTHING** — an oversized block is dropped
+  ENTIRE rather than truncated at the cap. Bisected twice: 32741 bytes applies, 32769 applies nothing, its
+  FIRST rule included, with the CSS diagnostics going quiet for that sheet because the parser abandons it.
+  This template's `<style>` had grown to ~32.6 KB, so a single added comment took the whole stylesheet — the
+  symptom (hands the full width of the window) merely looked like the desktop overrides alone had gone. The
+  cap's scope is one `<style>` ELEMENT: two blocks of 20 KB both apply, and a `<link>`ed sheet has no cap in
+  reach (100 KB measured), but these pages are single-file by design so linking is not the way out.
+  `render_page_prologue` therefore does two things: `strip_style_comments` keeps the comments in the template
+  (they are the documentation of the port) and out of the page, which took the emitted sheet from 33.3 KB to
+  18.4 KB and a browser cannot tell; and `split_oversized_style` cuts a sheet past `SPLIT_TARGET` (24 KiB)
+  into several `<style>` blocks at TOP-LEVEL rule boundaries, so no rule and no `@media` block is ever
+  severed. Stripping buys headroom; splitting is what removes the cliff. At 19 KB emitted nothing splits
+  today — the machinery matters the day the sheet grows. The consumer's `page-check` asserts the byte count
+  of EVERY block.
+  The consumer's `just page-check` loads a rendered page
+  into a windowless Sciter view and asserts the resulting boxes, with an `-unported` run that proves the
+  assertions can fail, so a card-page change here can be checked against that host without opening the
+  desktop app.
 
 Small fragments (the handviewer iframe prefix/suffix, a one-line footer) stay as inline literals — the
 file indirection is only worth it once the blob is big enough to fight the editor.

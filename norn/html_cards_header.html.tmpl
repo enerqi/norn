@@ -28,8 +28,25 @@
 		/* Scenario name, centred above the carousel. Sits below the pinned toolbar pill (top-left),
 		   so it never overlaps it. */
 		.page-title { text-align: center; margin: 0.4rem 0.5rem 0; font-size: clamp(1rem, 2.6vw, 1.6rem); font-weight: 600; color: var(--ink); }
-		.viewport { overflow: hidden; width: 100%; padding: 0.75rem 0; }
-		.track { display: flex; align-items: center; gap: 40px; transition: transform 0.35s ease; will-change: transform; }
+		/* The carousel MOVES BY SCROLLING, and the movement is declared here rather than driven frame by frame
+		   from script: `scroll-behavior: smooth` makes the engine animate every programmatic `scrollTo`, and a
+		   move that must not animate passes `behavior: 'instant'` to override it. A scroll offset is also a
+		   real, readable, CLAMPED number — unlike a paint-time `transform`, which no geometry API reports and
+		   which could be driven past the end of the track. The scrollbar itself is hidden: the toolbar, the
+		   arrow keys and the wheel are the controls, and on a touch screen this now swipes for free. */
+		.viewport {
+			overflow-x: auto; overflow-y: hidden; width: 100%; padding: 0.75rem 0;
+			scroll-behavior: smooth; scrollbar-width: none; -ms-overflow-style: none;
+		}
+		.viewport::-webkit-scrollbar { width: 0; height: 0; }
+		/* The track no longer MOVES — the viewport scrolls over it — so it carries no transform and no
+		   transition; it is just a row wide enough to scroll. It DOES need half a viewport of padding each
+		   side, which a translated track did not: a scroll cannot go before 0 or past the end, so without it
+		   the FIRST and LAST boards can never reach the middle (measured: board 1 sat at the left edge, 430px
+		   off centre). That padding is applied FROM SCRIPT in pixels (`padTrack` in the footer), because
+		   `padding: 0 50%` on a `max-content` box is circular and the desktop engine drops it — measured, board
+		   1 stayed 430px off with the percentage form here. */
+		.track { display: flex; align-items: center; gap: 40px; width: max-content; }
 		/* Hug the (grouped) board content and cap at the viewport width, so the slide scales with the
 		   mid-row gap above — wide on big monitors, compact at 1080p — rather than a fixed pixel width. */
 		.slide {
@@ -298,8 +315,252 @@
 		.slide[class*="only-"] .par, .slide[class*="only-"] .combo { display: none; }
 		.track.hide-par .par, .track.hide-par .combo { display: none; }
 
+		/* ============================================================================================
+		   The DESKTOP host (Sciter), and nothing else. Measured both ways on 6.0.4.9: Sciter MATCHES a bare
+		   unknown media name like this one — with or without a host `set_media_vars(window, {"sciter": true})`,
+		   which the bidding-system workbench calls anyway so the page's intent is explicit and a stricter
+		   engine would still match — and a browser never matches an unknown media TYPE, so every rule below
+		   is invisible to the published page (checked: its computed styles are unchanged) and this block can
+		   only ever be additive. Overrides, not a second stylesheet: the rules above stay the source of
+		   truth and only the declarations Sciter reads differently are repeated.
+
+		   Sciter 6.0.4.9 is closer to a browser than its reputation: `display:flex` and `display:grid` ARE
+		   mapped (to `flow: horizontal|vertical|horizontal-wrap|w3grid`), `vw`/`vh` resolve, and
+		   `transform`, `transition`, `var()`, `:not()` and `[attr*=]` all work. What it does differently,
+		   each one measured against this page rather than assumed:
+
+		     * a UNITLESS `line-height` resolves against the VIEWPORT, not the font — `1.28` came out as
+		       1152px and made every hand 950px tall. `em` is the fix, and it is the single most
+		       destructive difference.
+		     * `width: fit-content` is not a width: the element collapses (70px for a whole board).
+		       `max-content` is the one that means what fit-content means here.
+		     * `clamp()`/`min()`/`max()` are not parsed. A `clamp()` degrades to its PREFERRED term with
+		       the bounds dropped (`clamp(1rem, 2.6vw, 1.6rem)` gave 33px at 1280 wide); a nested `min()`
+		       makes the whole declaration invalid, so the property falls back to its inherited value.
+		       Every one is respelled below as the single value that suits a desktop window.
+		     * `gap` does not exist. It is not an error either, so a stylesheet full of gaps silently loses
+		       all of them; spacing is margins on the children.
+		     * `:is()` is an unrecognised selector, so the seat-focus rules that use it are repeated
+		       expanded here.
+		     * `<input type=range>` is an EDIT BOX until a behavior is attached — `behavior: slider` turns
+		       the trick-target slider into a real one without touching the markup.
+		     * `margin: auto` does not centre; a flex-unit margin (`1*`) does.
+		     * an out-of-flow element with a percentage height lays out ONE PIXEL TALL, which is what the
+		       full-screen help backdrop is, so the help card joins the flow instead of covering it.
+
+		   ORDER MATTERS, and this is why the block sits HERE rather than at the end of the stylesheet: the
+		   phone `@media (max-width: 640px)` below is an "error parsing media section" to this engine, and
+		   the error ABORTS THE REST OF THE STYLESHEET. Everything after it is dropped — measured, by
+		   watching this whole block do nothing until it moved above it.
+		   ============================================================================================ */
+		@media sciter {
+			/* The platform UI face. The page's webfont is an https:// fetch a desktop window should not
+			   be making, and it is not there to fall back on. */
+			body { font-family: system; }
+
+			/* Unitless line-heights, respelled in em. */
+			.stats { line-height: 1.5em; }
+			.seat { line-height: 1.28em; }
+			.seat .lbl { line-height: 1em; }
+			.seat.facedown .unknown-hand { line-height: 1em; }
+			.cca-head .x, .cca-head .help, .cca-side .sidebtn, .cca-obj .sidebtn,
+			.cca-strain .sidebtn, .cca-mode .sidebtn { line-height: 1em; }
+			.cca-sim { line-height: 1.35em; }
+			.cca-oppnote { line-height: 1.3em; }
+			.cca-opp .opp-lbl { line-height: 1.3em; }
+			.cca-help-card { line-height: 1.5em; }
+			.ct { line-height: 1.35em; }
+			.cca-tip { line-height: 1.35em; }
+
+			/* THE MOVE IS THE ENGINE'S OWN SCROLL, ANIMATED FROM CSS. `scroll-behavior` is not implemented here;
+			   the engine's equivalent is `scroll-manner(...)`, and it is documented (`css/properties.md`) as a
+			   value of the `overflow` shorthand — measured, `overflow-x: scroll-indicator scroll-manner(...)`
+			   parses and reads back from `getComputedStyle(el).scrollMannerX`, and a plain `scrollTo({left})`
+			   is then animated by the engine with no script tween at all. `wheel-step` is a documented knob of
+			   the same value; the page's own wheel handler steps whole boards, so it only matters if that
+			   handler is ever removed. `overscroll-behavior: none` keeps the ends hard rather than
+			   rubber-banding.
+			   NO SCROLLBAR AT ALL: `overflow-x: hidden` still scrolls PROGRAMMATICALLY here (measured —
+			   `scrollLeft = 300` sticks, and an animated `scrollTo` progresses from it), so a visible bar is
+			   pure downside. Dragged, it parks the window on the track's side padding — empty page beside the
+			   boards — and it misreports the range, since every board has been seen by the time the thumb
+			   reaches the middle. The toolbar, the arrow keys and the wheel are the controls. (`scroll-indicator`
+			   is the engine's overlay bar, which at least takes no layout space, if one is ever wanted.)
+			   Why this replaced a hand-driven `morphContent` tween on the track's `transform`: everything the
+			   carousel got wrong for three sessions came from the move being PAINT-TIME and unreadable — no
+			   geometry API reports a transform, so the position had to be re-derived, the parking
+			   compensation compounded, a stale tween could win, and a bad target could leave the board off
+			   screen entirely. A scroll offset is a number the engine clamps, and reads back. */
+			.viewport { overflow-x: hidden scroll-manner(animation: true, wheel-step: 40dip); overscroll-behavior: none; }
+
+			/* fit-content -> max-content, and `auto` margins -> flex-unit coils. `position: sticky` is not
+			   implemented; the toolbar simply sits at the top of the document. */
+			.toolbar { position: static; width: max-content; }
+			.slide { width: max-content; }
+			.seat { width: max-content; }
+			.compass > .seat { margin-left: 1*; margin-right: 1*; }
+			.cca-side { margin-left: 1*; }
+			/* The coil (the engine's spelling of the browser's `margin-left: auto`) PINS THE SLIDER TO THE RIGHT
+			   EDGE of the row, and that is what keeps it still: the headline beside it is a sentence whose
+			   length changes with the target ("make 8: DD 92.2% · SD 91.6%" against "(≥ 12 already)"), so a
+			   left-packed slider slid sideways every time the number changed. Right-aligned it lands under the
+			   trick table's right edge — the panel is the table's width now, which is what makes this the tidy
+			   choice rather than the far-flung one it was when the panel was as wide as its header. */
+			.cca-slider { margin-left: 1*; }
+			/* THE ROW MUST NOT CHANGE WIDTH WITH THE NUMBER IN IT. Going 9 -> 10 widened the value by a digit,
+			   and since the row is pinned right and cannot grow, the label wrapped to two lines instead — the
+			   whole control jumping a line taller mid-drag. A fixed box for the value (wide enough for two
+			   digits, right-aligned so the units column stays put) and a label that will not wrap keep the row
+			   one line and the slider still. `min-width` is not enough: it is the GROWTH that has to go. */
+			/* SAME RULE FOR THE HEADER: the summary next to the title is a sentence that grows and shrinks with
+			   the target ("sure tricks 7, develop 4 for 11" against "(≥ 12 already)"), and in a wrapping row a
+			   longer one pushed the N/S, IMPs, ≥ and ▾ buttons onto a second line — controls moving under the
+			   pointer because a number changed. Given the leftover width and told not to wrap, the summary
+			   absorbs the change on its own and the buttons stay where they are. */
+			.cca-sub { width: *; white-space: nowrap; overflow: hidden; }
+			.cca-slider .lbl-txt { white-space: nowrap; }
+			.cca-slider b { width: 1.6em; text-align: right; }
+
+			/* clamp()/min() respelled, because neither function exists here: `clamp()` degrades to its
+			   PREFERRED term with the bounds dropped, and a nested `min()` invalidates the declaration
+			   outright (measured: `min(2.4vh, 4.3vw)` computes a flat 13.33px that does not track the
+			   window at all). So each one becomes a single term.
+			   `vh` IS valid in a `font-size` here, and it re-evaluates on a resize — measured, `2.4vh` is
+			   21.6px in a 900px-tall view, 28.8px at 1200 and 12px at 500, both on a fresh view and after
+			   resizing a live one. An earlier note here claimed the opposite; that reading (a computed
+			   font-size coming back EMPTY, the seat blown out to the width of the window) was the 32 KiB
+			   STYLESHEET CAP silently dropping this whole block, not the unit — see the cap note below.
+			   So the sizes the browser takes off the viewport HEIGHT keep doing that here, with the
+			   browser's own coefficient: the desktop board is then the size the browser draws at the same
+			   window, which is what closes the "browser boards are ~50% larger" gap for good rather than
+			   pinning the cards at one window's worth. The clamp BOUNDS are gone, so an extreme window over-
+			   or under-shoots a browser (2.4vh is 33.6px at 1400 tall against the browser's 2.2rem cap of
+			   29.3px). A media query CAN restore a cap — `@media sciter and (height > 1000px)` parses and
+			   matches, and so does a plain `@media` nested inside this block — but measured, a dimension
+			   query only takes effect after a RESIZE and not on the first layout, so a capped size would be
+			   wrong on the freshly opened window and right once it was dragged. Not worth it.
+			   The sizes the browser takes off the viewport WIDTH stay `rem`: their clamp CAP binds at any
+			   window wide enough to run this in (`.page-title`'s 2.6vw passes its 1.6rem cap at 985px), so
+			   the cap value IS the desktop value and a vw term would only overshoot. */
+			.page-title { font-size: 1.6rem; }
+			.compass { padding: 1.5vh 1.8rem; }
+			.seat { font-size: 2.4vh; min-width: 9rem; }
+			.par { font-size: 1.8vh; }
+			.combo { font-size: 1.35vh; }
+			.cca-panel { max-width: 44rem; }
+			.cca-panel.narrow { max-width: 26rem; }
+			.cca-help-card { max-width: 40rem; }
+			.ct { font-size: 0.9rem; }
+			.ct-head { font-size: 1rem; }
+			.slide.only-n .seat-n, .slide.only-e .seat-e,
+			.slide.only-s .seat-s, .slide.only-w .seat-w { font-size: 4vh; }
+
+			/* `gap` -> margins on the children. The mid row's 1fr|auto|1fr grid becomes a horizontal flow
+			   whose W/E hands hold the centre table off the middle by a fixed margin. */
+			.toolbar > * { margin-right: 0.6rem; }
+			.toolbar .group > * { margin-right: 0.2rem; }
+			.track > .slide { margin-right: 40px; }
+			.compass > * { margin-bottom: 0.9rem; }
+			.compass .mid { flow: horizontal; }
+			.compass .mid > .seat-w { margin-right: 3rem; }
+			.compass .mid > .seat-e { margin-left: 3rem; }
+			.stats .split > * { margin-left: 0.45rem; }
+			.cca-head > *, .cca-foot > * { margin-right: 0.6rem; }
+			.cca-side > *, .cca-obj > *, .cca-strain > *, .cca-mode > * { margin-right: 0.15rem; }
+			.cca-lead > *, .cca-slider > * { margin-right: 0.3rem; }
+
+			/* The seat-focus rules, expanded out of `:is()`. */
+			.slide.only-n .seat:not(.seat-n) .suit, .slide.only-n .seat:not(.seat-n) .hcp,
+			.slide.only-n .seat:not(.seat-n) .opc, .slide.only-n .seat:not(.seat-n) .shape,
+			.slide.only-e .seat:not(.seat-e) .suit, .slide.only-e .seat:not(.seat-e) .hcp,
+			.slide.only-e .seat:not(.seat-e) .opc, .slide.only-e .seat:not(.seat-e) .shape,
+			.slide.only-s .seat:not(.seat-s) .suit, .slide.only-s .seat:not(.seat-s) .hcp,
+			.slide.only-s .seat:not(.seat-s) .opc, .slide.only-s .seat:not(.seat-s) .shape,
+			.slide.only-w .seat:not(.seat-w) .suit, .slide.only-w .seat:not(.seat-w) .hcp,
+			.slide.only-w .seat:not(.seat-w) .opc, .slide.only-w .seat:not(.seat-w) .shape { display: none; }
+
+			/* The trick-target slider needs its native controller. */
+			/* Whichever element carries the slider: the page swaps the HTML `<input type=range>` for Sciter's
+			   own `<input type=hslider>` at startup (see the footer — the HTML one paints a 27px control in a
+			   147px box, and the invisible remainder still takes clicks).
+			   THE ENGINE'S SLIDER IS `<input>` + ONE `<button class="slider">`: the input's own background IS
+			   the track and the button is the knob (read out of the live DOM). Unstyled that is a black bar
+			   with a pale dot on it, so both halves are dressed here to match the page's other controls. */
+			/* THE DESKTOP SLIDER IS THE PAGE'S OWN — a track and a knob, positioned by the script (see the
+			   footer, which also records why all three engine sliders were abandoned). Two ordinary elements,
+			   so where the knob is drawn and where a click lands come from the same arithmetic. */
+			/* The engine's slider carries the track (its own background) and the clicks; the KNOB is the page's,
+			   drawn as a child of the input — see the footer for what that is worth and what it replaced. */
+			.cca-slider input { width: 11rem; height: 1.4em; background: #e4e4e4; border: none; border-radius: 0.7em; padding: 0; }
+			.cca-slider .nc-slider-knob {
+				display: block; width: 1.4em; height: 1.4em; border-radius: 50%;
+				background: var(--sel); border: 1px solid #fff;
+			}
+			/* THE KNOB IS NOT REACHABLE FROM AUTHOR CSS. It is a real child (`<button class="slider">`, read out
+			   of the live DOM) but no author rule touches it — `.cca-slider input > button`, `button.slider` and
+			   the fully specific `.cca-slider input[type="hslider"] > button.slider` were all measured to leave
+			   it the engine's grey 11px dot, while an INLINE style on the same element applied at once. So the
+			   knob is dressed from the script, next to the swap that creates it. */
+
+			/* The help modal: a full-screen backdrop is out-of-flow with a percentage height, which lays
+			   out 1px tall here, so the card joins the document flow at the foot of the page instead —
+			   the same choice the workbench's own About panel makes. */
+			/* The BACKDROP stops existing (`inset: 0` + a percentage height is the 1px-tall trap, and its
+			   `display: flex; align-items: center` also left the card measuring one line tall — its
+			   paragraphs laid out, 2500px of them, while the card's own box stayed 41px, which on screen is
+			   a thin white strip with the text spilling out of it). The CARD is the overlay instead, and it
+			   is positioned the same way the CCA panel is, which is the shape this engine gets right:
+			   pixel/rem offsets, a height capped against the view, and `scroll-indicator` — Sciter's overlay
+			   scrollbar — to scroll the rest. */
+			.cca-help { position: static; background: transparent; padding: 0; display: block; flow: vertical; }
+			.cca-help-card {
+				position: fixed; left: 1.5rem; top: 1.5rem; z-index: 41;
+				width: 40rem; max-width: 94%; max-height: 84vh; overflow: scroll-indicator;
+			}
+			/* Its close button is absolutely positioned, and an INLINE-LEVEL widget taken out of flow lays
+			   out 1x1 in this engine (measured: 0x0, so there was nothing to click). `display: block` is the
+			   documented fix. */
+			.cca-help-card .x { display: block; }
+
+			/* The overlay panel, for the same reason, cannot rely on `overflow: auto` to keep itself inside
+			   the window: with the opponent-length grid open it grew past the bottom of the frame and the
+			   trick-target row was simply cut off. `scroll-indicator` is Sciter's own overlay scrollbar, and
+			   it DOES scroll a capped box. `vh` resolves against the view here, so the cap is honest. */
+			.cca-panel { max-height: 88vh; overflow: scroll-indicator; }
+			/* And it has to size to its CONTENT, not to the space it was placed in. Measured on the two-hand
+			   advisor page (a wider trick table than a generated board carries): the panel came out 587px
+			   while its table wanted 607, and the overflow was NOT clipped — the foot row, the trick-target
+			   slider and its value were simply painted past the panel border, the value landing outside the
+			   white box altogether. `max-content` caps at the max-width above, so a table wider than that
+			   still scrolls inside the body rather than growing the panel off screen. */
+			/* The panel's WIDTH is set by the script (see `positionCca`): it has to be a stable number rather
+			   than `max-content`, because the header's summary text changes with the trick target and the panel
+			   would resize on every step of the slider. */
+			#nc-cca-body { overflow-x: scroll-indicator; }
+
+			/* The seat's position pill: `display: inline-block` is reported but behaves as a block, so the
+			   pill spanned the whole hand (measured 189px inside a 209px card) instead of hugging its
+			   letter. */
+			.seat .lbl { width: max-content; }
+
+			/* No transition on the focused hand's font-size. The engine applies the class-driven size only
+			   at the NEXT restyle when a transition is pending, so the enlarged hand appeared a beat late —
+			   on the next hover — and read as the button lagging behind the click. */
+			.seat { transition: none; }
+			/* The board's ZOOM is a class change, and a class change is exactly the kind of transform this
+			   engine DOES transition (an inline one set from script is the kind it does not). So the zoom is
+			   engine-driven here too, and short: the move is now a scroll the engine animates on its own
+			   clock, and these two want to finish together rather than the zoom landing instantly while the
+			   board is still travelling. Opacity is left to snap — a changing alpha on every board in view
+			   was measured as the expensive part, and the dim is peripheral. */
+			.slide { transition: transform 0.2s ease; }
+		}
+
 		/* Phones: strip the secondary lines (OPC/shape), pull the hands tight together, and shrink the
-		   HCP badge + centre table so a whole board fits a small screen in either orientation. */
+		   HCP badge + centre table so a whole board fits a small screen in either orientation.
+
+		   NOTE for the block above: to Sciter this `@media` is a parse error that discards the remainder
+		   of the stylesheet, so nothing Sciter must read may be added below this point. */
 		@media (max-width: 640px) {
 			.opc, .shape { display: none; }
 			.seat { min-width: 0; padding: 0.7rem 0.6rem 0.35rem; }
