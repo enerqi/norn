@@ -264,3 +264,83 @@ lin_remaining_hand :: proc(seen: ^[DECK_SIZE]bool) -> (hand: Hand, err: Lin_Pars
 	}
 	return hand, .None
 }
+
+// ---------------------------------------------------------------------------------------------------
+// Writing LIN
+//
+// The reader above exists because hands arrive as LIN: a bridgebase, IntoBridge or RealBridge link carries
+// its board as `pn|…|md|…|mb|…|pc|…`, and the advisor reads those. This is the other direction, and it is
+// what makes a generated deal SHAREABLE: a `md|` record pastes straight into
+//
+//	https://play.intobridge.com/hand?lin=…
+//	https://www.bridgebase.com/tools/handviewer.html?lin=…
+//
+// and it reads back through `parse_lin_deal`, so a deal can go out to a browser and come home to the
+// advisor without a lossy stop in between. PBN is the FILE interchange format and stays that; LIN is the
+// link format, and the two are not substitutes.
+//
+// What a generated deal can honestly carry is the deal, the dealer and the vulnerability - there is no
+// auction and no play here, so no `mb|`/`pc|` tokens are written. A viewer opens such a record on an empty
+// auction, which is exactly what these deals are for.
+
+// LIN's vulnerability codes, which are NOT the handviewer query string's (`-` there, `o` here).
+@(private = "file")
+LIN_VULNERABILITY_CODES := [Vulnerability]string {
+	.None        = "o",
+	.North_South = "n",
+	.East_West   = "e",
+	.Both        = "b",
+}
+
+// BBO's dealer digit for a seat: the inverse of `lin_dealer_seat`, and the same odd numbering
+// (1=South, 2=West, 3=North, 4=East) rather than the seat enum's.
+@(private = "file")
+lin_dealer_digit :: proc "contextless" (seat: Seat) -> u8 {
+	switch seat {
+	case .South:
+		return '1'
+	case .West:
+		return '2'
+	case .North:
+		return '3'
+	case .East:
+		return '4'
+	}
+	return '1'
+}
+
+/*
+Write one deal as a LIN record: `st||md|<dealer><S>,<W>,<N>,<E>|sv|<vul>|`, no trailing newline.
+
+The hands are in LIN's own `md` order - South, West, North, East (`LIN_MD_SEATS`), which is neither the seat
+enum's order nor the handviewer's - and each is `S<ranks>H<ranks>D<ranks>C<ranks>`, ranks high to low, a void
+written as nothing after its letter. All four hands are written rather than three and a remainder: the
+reader accepts either, and a record a person might edit should not depend on arithmetic.
+
+`st||` opens the record because that is what BBO writes and what its viewers expect to find; `sv|` closes it
+with the vulnerability. With `randomize_table` the dealer and vulnerability are drawn the same way every
+other format draws them, so a batch is not 48 boards all dealt by North with nobody vulnerable.
+*/
+render_deal_lin :: proc(builder: ^strings.Builder, deal: Deal, randomize_table := false) {
+	vulnerability := Vulnerability.None
+	dealer := Seat.North
+	if randomize_table {
+		vulnerability, dealer = random_table()
+	}
+
+	strings.write_string(builder, "st||md|")
+	strings.write_byte(builder, lin_dealer_digit(dealer))
+	md_seats := LIN_MD_SEATS
+	for seat, index in md_seats {
+		if index > 0 {
+			strings.write_byte(builder, ',')
+		}
+		for suit in SUIT_OUTPUT_ORDER {
+			strings.write_rune(builder, suit_letter(suit))
+			write_suit_ranks(builder, deal[seat], suit)
+		}
+	}
+	strings.write_string(builder, "|sv|")
+	strings.write_string(builder, LIN_VULNERABILITY_CODES[vulnerability])
+	strings.write_string(builder, "|")
+}

@@ -1929,7 +1929,7 @@ cell :: proc(b: ^strings.Builder, s: string) {
 //                       and renders an interactive table with an adjustable P(>= target) (the carousel
 //                       groups the sibling into the slide and folds it under the Par toggle)
 //   - Pretty          : the static text table, after the layout
-//   - Line/Numeric/Handviewer/Pbn : nothing (machine-parsed, or no room in the grammar)
+//   - Line/Numeric/Handviewer/Pbn/Lin : nothing (machine-parsed, or no room in the grammar)
 //
 // For the text formats `target = 0` is passed to `format_analysis` so no single make-chance line is
 // highlighted — the >=k row lets the reader read off any level; the card page makes that interactive.
@@ -1937,7 +1937,7 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 	// Full switch (no #partial), like deal_solve.annotate: a newly added Output_Format must be classified
 	// here rather than silently skipped or corrupted.
 	switch format {
-	case .Line, .Numeric, .Handviewer, .Pbn:
+	case .Line, .Numeric, .Handviewer, .Pbn, .Lin:
 		return
 	case .Html_Handviewer, .Html_Cards, .Pretty:
 	// emitted below
@@ -2133,7 +2133,7 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 		sd := sd_bundle(ds[.North], ds[.South])
 		ov := suit_overrides(ds[.North], ds[.South]) // book line where covered, else the engine's best fixed line
 		write_suit_lines_text(builder, ds[.North], ds[.South], &sd, &ov)
-	case .Line, .Numeric, .Handviewer, .Pbn:
+	case .Line, .Numeric, .Handviewer, .Pbn, .Lin:
 	// unreachable: filtered out above
 	}
 }

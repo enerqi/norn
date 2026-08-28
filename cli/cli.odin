@@ -11,7 +11,7 @@ package cli
 	Supported flags (GNU-ish; both `--flag value` and `--flag=value` work):
 
 		-n, --count    N           number of deals to generate (default 1)
-		-f, --format   FORMAT      output format: line|pretty|handviewer|html-handviewer|html-cards|pbn|numeric (default line)
+		-f, --format   FORMAT      output format: line|pretty|handviewer|html-handviewer|html-cards|pbn|lin|numeric (default line)
 		-o, --output   PATH        output file, or "-" for stdout (default "-")
 		-s, --seed     N           PRNG seed for reproducible deals (default: a fresh seed each run)
 		-S, --scenario NAME        keep only deals matching a named scenario
@@ -335,6 +335,8 @@ parse_format :: proc(name: string) -> (format: norn.Output_Format, ok: bool) {
 		return .Html_Cards, true
 	case strings.equal_fold(name, "pbn"):
 		return .Pbn, true
+	case strings.equal_fold(name, "lin"):
+		return .Lin, true
 	case strings.equal_fold(name, "numeric"), strings.equal_fold(name, "num"):
 		return .Numeric, true
 	}

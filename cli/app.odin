@@ -206,7 +206,7 @@ Usage:
 
 Options:
   -n, --count    N            number of deals to generate (default 1)
-  -f, --format   FORMAT       output format: line|pretty|handviewer|html-handviewer|html-cards|pbn|numeric
+  -f, --format   FORMAT       output format: line|pretty|handviewer|html-handviewer|html-cards|pbn|lin|numeric
                               (default line). html-handviewer = BBO iframe page; html-cards =
                               self-rendered, offline card carousel
   -o, --output   PATH         output file, or "-" for stdout (default "-")

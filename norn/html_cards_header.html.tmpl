@@ -469,6 +469,19 @@
 			.cca-side > *, .cca-obj > *, .cca-strain > *, .cca-mode > * { margin-right: 0.15rem; }
 			.cca-lead > *, .cca-slider > * { margin-right: 0.3rem; }
 
+			/* THE PHONE BLOCK'S FIRST RULE REACHES THIS ENGINE, and it hides these two lines.
+
+			   `@media (max-width: 640px)` is a parse error here, and the note further down says everything
+			   after it is discarded - but the rules INSIDE it are not all discarded with it. Measured
+			   (`page-check`): the block's opening `.opc, .shape { display: none; }` was applied on a 1200px
+			   desktop window, so every hand lost its OPC valuation and its shape line while a browser's copy
+			   of the same page showed both.
+
+			   Order cannot fix it - this block has to stay ABOVE the width query - so specificity does:
+			   `.seat .opc` is 0-2-0 against the phone rule's 0-1-0 and wins wherever it sits. A browser never
+			   matches `@media sciter`, so its phone layout is untouched. */
+			.seat .opc, .seat .shape { display: block; }
+
 			/* The seat-focus rules, expanded out of `:is()`. */
 			.slide.only-n .seat:not(.seat-n) .suit, .slide.only-n .seat:not(.seat-n) .hcp,
 			.slide.only-n .seat:not(.seat-n) .opc, .slide.only-n .seat:not(.seat-n) .shape,

@@ -78,6 +78,12 @@ Output_Format :: enum {
 	// full PBN export (Event, Board, Dealer, …) are intentionally omitted — add them only if a strict
 	// importer needs them. Matches deal's `pbn` formatter for the deal field itself.
 	Pbn,
+	// `Lin` is BBO's own record format for ONE board - `st||md|<dealer><S>,<W>,<N>,<E>|sv|<vul>|` - which
+	// is what a bridgebase, IntoBridge or RealBridge hand LINK carries (`…/hand?lin=…`). It is the format
+	// this library already READS (`parse_lin_deal`, for the advisor), so a deal written this way can be
+	// opened in a browser and read back without a lossy stop in between. PBN remains the FILE interchange
+	// format; these two are not substitutes for each other.
+	Lin,
 	// `Numeric` is deal's compact `numeric` format: a 52-character digit string per deal, one digit
 	// per card giving its owner seat (North 0, East 1, South 2, West 3). The cards are walked in a
 	// fixed order — suits S H D C, and within each suit ranks high-to-low A K Q J T 9 .. 2 — so the
@@ -103,6 +109,8 @@ render_deal :: proc(builder: ^strings.Builder, deal: Deal, format: Output_Format
 		render_deal_html_cards(builder, deal, randomize_table)
 	case .Pbn:
 		render_deal_pbn(builder, deal)
+	case .Lin:
+		render_deal_lin(builder, deal, randomize_table)
 	case .Numeric:
 		render_deal_numeric(builder, deal)
 	}
@@ -261,7 +269,10 @@ vulnerable :: proc "contextless" (v: Vulnerability, seat: Seat) -> bool {
 DEALER_DRAW_ORDER := [SEAT_COUNT]Seat{.North, .South, .East, .West}
 
 // Draw a random table (vulnerability + dealer) from `context.random_generator`, in that order.
-@(private = "file")
+//
+// Package-private rather than file-private because `lin.odin` writes a table too, and a second copy of the
+// draw would be a second answer to "which dealer did this deal get" - a seeded run has to have one.
+@(private)
 random_table :: proc() -> (v: Vulnerability, dealer: Seat) {
 	v = Vulnerability(rand.int_max(len(Vulnerability)))
 	dealer = DEALER_DRAW_ORDER[rand.int_max(SEAT_COUNT)]

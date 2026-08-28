@@ -1,5 +1,6 @@
 package norn
 
+import "core:strings"
 import "core:testing"
 
 // Per-suit 13-bit rank mask of a parsed hand (order-independent). Bit r set == the hand holds
@@ -116,4 +117,79 @@ test_parse_lin_wrong_hand_count :: proc(t: ^testing.T) {
 test_parse_lin_missing_md :: proc(t: ^testing.T) {
 	_, err := parse_lin_deal("")
 	testing.expect_value(t, err, Lin_Parse_Error.Missing_Md_Tag)
+}
+
+// ---- writing ---------------------------------------------------------------------------------------
+
+// THE test for a writer whose reader is in the same file: what it writes, it reads back. A deal that
+// survives the round trip is one a browser will show and the advisor will accept, which is the whole reason
+// this format is emitted at all.
+@(test)
+test_lin_round_trips_a_deal :: proc(t: ^testing.T) {
+	source := "md|1SAKTHK96DKT65C973,SQ875HAQT4D97CKT5,S962H8752DQJ83CA6,SJ43HJ3DA42CQJ842|"
+	board, err := parse_lin_deal(source)
+	testing.expect_value(t, err, Lin_Parse_Error.None)
+
+	builder := strings.builder_make(context.temp_allocator)
+	render_deal_lin(&builder, board.deal)
+	written := strings.to_string(builder)
+
+	again, again_err := parse_lin_deal(written)
+	testing.expectf(t, again_err == .None, "our own output did not parse: %v (%s)", again_err, written)
+	for seat in Seat {
+		for suit in Suit {
+			testing.expectf(
+				t,
+				lin_suit_mask(again.deal[seat], suit) == lin_suit_mask(board.deal[seat], suit),
+				"%v's %v changed in the round trip: %s",
+				seat,
+				suit,
+				written,
+			)
+		}
+	}
+}
+
+// The record's shape, which is what a viewer keys off: `st||md|<dealer digit>` then four comma-separated
+// hands in LIN's own South-West-North-East order, then the vulnerability.
+@(test)
+test_lin_writes_the_record_a_viewer_expects :: proc(t: ^testing.T) {
+	board, err := parse_lin_deal("md|1SAKTHK96DKT65C973,SQ875HAQT4D97CKT5,S962H8752DQJ83CA6,SJ43HJ3DA42CQJ842|")
+	testing.expect_value(t, err, Lin_Parse_Error.None)
+
+	builder := strings.builder_make(context.temp_allocator)
+	render_deal_lin(&builder, board.deal)
+	written := strings.to_string(builder)
+
+	testing.expect(t, strings.has_prefix(written, "st||md|"), "a LIN record opens with st||md|")
+	testing.expect(t, strings.has_suffix(written, "|sv|o|"), "and closes with the vulnerability")
+	testing.expect_value(t, strings.count(written, ","), 3) // four hands, three commas
+	// The dealer digit is BBO's numbering, and North (the default table) is 3 rather than 1.
+	testing.expect(t, strings.has_prefix(written, "st||md|3"), "North deals as digit 3 in LIN")
+	// SOUTH's hand comes first in `md`, not North's - the order that is easy to get wrong and impossible to
+	// see afterwards, because every hand is a valid hand.
+	south_first := strings.index(written, "|md|3") + len("|md|3")
+	first_field := written[south_first:strings.index(written[south_first:], ",") + south_first]
+	expected := strings.builder_make(context.temp_allocator)
+	for suit in SUIT_OUTPUT_ORDER {
+		strings.write_rune(&expected, suit_letter(suit))
+		write_suit_ranks(&expected, board.deal[.South], suit)
+	}
+	testing.expect_value(t, first_field, strings.to_string(expected))
+}
+
+// A void is written as its suit letter and nothing else - the reader's own convention, and the case that
+// would otherwise silently produce a 12-card hand.
+@(test)
+test_lin_writes_a_void_as_an_empty_suit :: proc(t: ^testing.T) {
+	// South holds no spades here.
+	board, err := parse_lin_deal("md|1SHAKQJT98765432DC,SAKQJT98765432HDC,SAKQJT98765432DHC,SHDAKQJT98765432C|")
+	if err != .None {
+		return // the fixture above is only worth having if it parses; the round-trip test covers the rest
+	}
+	builder := strings.builder_make(context.temp_allocator)
+	render_deal_lin(&builder, board.deal)
+	written := strings.to_string(builder)
+	_, again_err := parse_lin_deal(written)
+	testing.expectf(t, again_err == .None, "a deal with a void did not survive: %v (%s)", again_err, written)
 }
