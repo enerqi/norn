@@ -394,8 +394,32 @@
 			.viewport { overflow-x: hidden scroll-manner(animation: true, wheel-step: 40dip); overscroll-behavior: none; }
 
 			/* fit-content -> max-content, and `auto` margins -> flex-unit coils. `position: sticky` is not
-			   implemented; the toolbar simply sits at the top of the document. */
-			.toolbar { position: static; width: max-content; }
+			   implemented; the toolbar simply sits at the top of the document.
+
+			   AND IT HAS TO WRAP. The browser rule is `display: flex; flex-wrap: wrap`, and `flow: horizontal`
+			   - what `display: flex` becomes here - DOES NOT WRAP: the row keeps its one line, `max-content`
+			   lets it be as wide as its contents, and everything past the container's edge is simply clipped.
+			   In a full-width window there is room and nothing shows; in the workbench's hand-page PANE, which
+			   is half a window or less, the last controls (`Par`, `CCA`) sit hard against the card's edge with
+			   their borders cut off. Reported from the real window, and invisible to every check that ran at
+			   one wide view size.
+
+			   `flow: horizontal-flow` is the engine's wrapping row - the actual counterpart of `flex-wrap:
+			   wrap` - and `max-width: 100%` is what makes it wrap rather than overflow: with `width:
+			   max-content` and no cap, the "available width" the flow wraps against is its own content width,
+			   so there is never a reason to break. The children already carry `margin-right` (gap has no
+			   meaning here); the wrapped rows need the vertical half of that gap too.
+
+			   AND IT TAKES THE WHOLE ROW (`width: *`) rather than being `max-content` under a `max-width:
+			   100%` cap. The capped version was measured wrapping correctly and then reported ANIMATING
+			   between right and clipped while the mouse scrolled the deals: `100%` is resolved against a
+			   container whose width moves as the document scrolls, so the cap - and with it the wrap point -
+			   changed under a pointer that was doing nothing to the layout. A row that simply fills its
+			   parent has no cap to re-resolve and nothing to oscillate about. The pill's `fit-content` look
+			   is a BROWSER concern (a wide screen would give it a background stripe across the window); in
+			   this host the page is in a pane whose width the bar is welcome to have. */
+			.toolbar { position: static; width: *; flow: horizontal-flow; }
+			.toolbar > * { margin-bottom: 0.3rem; }
 			.slide { width: max-content; }
 			.seat { width: max-content; }
 			.compass > .seat { margin-left: 1*; margin-right: 1*; }
