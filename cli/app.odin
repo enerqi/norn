@@ -39,8 +39,13 @@ Gen_Hooks :: struct {
 // Parse arguments and run against `registry`. Kept thin: parse -> (usage / list) -> generate -> map
 // outcomes to an exit code. `hooks` carries the consumer's optional DD filter/annotator, applied
 // only when --dd is passed.
-main_program :: proc(registry: []Scenario, hooks := Gen_Hooks{}) -> int {
-	opts, ok, message := parse_args(os.args[1:])
+main_program :: proc(registry: []Scenario, hooks := Gen_Hooks{}, argv: []string = nil) -> int {
+	// `argv` defaults to this process's own arguments, which is what every caller wanted until one
+	// needed to CONSUME a flag of its own first. Unknown options are a usage error here (by design — a
+	// misspelled flag should not be silently ignored), so a consumer that adds one has to hand over the
+	// remainder rather than let the parser see it. `sim`'s `--scenarios <dir>` is the first such flag.
+	arguments := argv if argv != nil else os.args[1:]
+	opts, ok, message := parse_args(arguments)
 
 	if !ok {
 		fmt.eprintfln("norn: %s", message)

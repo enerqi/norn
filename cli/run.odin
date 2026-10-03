@@ -100,7 +100,9 @@ Export_Task :: struct {
 	// The HTML page format for this export — the BBO-iframe `Html_Handviewer` or the self-rendered
 	// `Html_Cards` (chosen by --format; see export_all_html). Both wrap deals in a full HTML page.
 	format:          norn.Output_Format,
-	predicate:       norn.Predicate,
+	// Compiled or interpreted — a `Condition` is the sum of the two. Shared read-only across workers
+	// either way: an interpreted one's program is built before the pool starts and only read afterwards.
+	predicate:       norn.Condition,
 	randomize_table: bool,
 	predeal:         Maybe(norn.Predeal),
 	// Shared, read-only across workers (randomness comes from each task's own seeded RNG), so one
@@ -339,7 +341,9 @@ select_scenarios :: proc(
 Freq_Task :: struct {
 	trials:      int,
 	seed:        u64,
-	predicate:   norn.Predicate,
+	// Compiled or interpreted, so `--frequency` measures a text scenario's hit rate like any other's.
+	// That number is what tells its author their condition is too tight BEFORE a generate run hangs.
+	predicate:   norn.Condition,
 	predeal:     Maybe(norn.Predeal),
 	// Shared, read-only across workers: the sampler only reads the spec (randomness comes from each
 	// task's own seeded RNG), so one pointer is safe to hand to every thread. nil if no --smartstack.

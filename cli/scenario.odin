@@ -12,11 +12,33 @@ package cli
 
 import "../norn"
 
-// One named simulation: a deal condition plus human-facing metadata.
+/*
+One named simulation: a deal condition plus human-facing metadata.
+
+TWO KINDS OF CONDITION, MODELLED AS A SUM. A COMPILED scenario's `predicate` is a `norn.Predicate` — a proc
+written in Odin, checked by the compiler, costing nothing at run time; every scenario in this repository is
+one. An INTERPRETED one's is a `norn.Interpreted_Predicate`: a walker plus the PROGRAM it walks, because a
+condition parsed from a user's text file is a tree and Odin procs do not capture, so a bare
+`proc(Deal_Summary) -> bool` has nowhere to keep it.
+
+`norn.Condition` is the union of the two, so a scenario cannot be both and cannot be half of each. The
+first version of this had two nullable fields plus a documented rule about which one won — the rule is
+gone, and with it the state where a compiled predicate silently overrides an interpreted one.
+
+Nothing here replaces anything: `predicate = proc(b: norn.Deal_Summary) -> bool { ... }` still compiles
+untouched, because Odin converts a proc literal into the matching union variant implicitly.
+*/
 Scenario :: struct {
 	name:        string,
 	description: string,
-	predicate:   norn.Predicate,
+	predicate:   norn.Condition,
+}
+
+// Was this scenario's condition parsed rather than compiled? What tells a user file's entries apart from
+// the built-in registry when the two are concatenated into one list.
+is_interpreted :: proc(s: Scenario) -> bool {
+	_, interpreted := s.predicate.(norn.Interpreted_Predicate)
+	return interpreted
 }
 
 // Human-facing page heading for a scenario: its one-line description when it has one, else the

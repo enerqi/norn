@@ -196,3 +196,65 @@ test_generate_accepted_filters :: proc(t: ^testing.T) {
 		testing.expectf(t, north_hcp_in_line(line) >= 18, "kept a North hand below 18 hcp: %s", line)
 	}
 }
+
+/*
+AN INTERPRETED CONDITION: a predicate that reads its rule out of `userdata` rather than having it compiled.
+
+This is the whole reason `Contextual_Predicate` exists. Odin procs do not capture, so a scenario parsed
+from a user's text file — whose condition is a PROGRAM rather than code — has nowhere to keep it. Here the
+"program" is a threshold in a struct, which is the smallest thing that could not have been written as a
+plain `Predicate`: the same proc gives different answers for different data.
+*/
+@(private = "file")
+Hcp_Floor :: struct {
+	seat: Seat,
+	min:  int,
+}
+
+@(private = "file")
+at_least :: proc(summary: Deal_Summary, userdata: rawptr) -> bool {
+	rule := (^Hcp_Floor)(userdata)
+	return hcp(summary[rule.seat]) >= rule.min
+}
+
+@(test)
+test_a_contextual_predicate_reads_its_rule_from_userdata :: proc(t: ^testing.T) {
+	builder := strings.builder_make(context.temp_allocator)
+
+	// The SAME proc, twice, with different programs — and the counts have to differ in the right
+	// direction, or the pointer is not being read at all.
+	loose := Hcp_Floor{.North, 6}
+	strict := Hcp_Floor{.North, 20}
+
+	kept_loose := count_accepted_seeded(2000, Interpreted_Predicate{at_least, &loose}, 7)
+	kept_strict := count_accepted_seeded(2000, Interpreted_Predicate{at_least, &strict}, 7)
+	testing.expect(t, kept_loose > 0, "a 6+ hcp North should be common")
+	testing.expectf(
+		t,
+		kept_strict < kept_loose,
+		"20+ hcp (%d) should be rarer than 6+ (%d) — the same proc must be reading its data",
+		kept_strict,
+		kept_loose,
+	)
+
+	// And it drives generation, not just counting.
+	accepted, attempts := generate_accepted(
+		&builder,
+		5,
+		.Line,
+		Interpreted_Predicate{at_least, &loose},
+		max_attempts = 200_000,
+	)
+	testing.expect_value(t, accepted, 5)
+	testing.expect(t, attempts >= accepted, "attempts cannot be fewer than acceptances")
+
+	// AND THE SUM TYPE MAKES "BOTH AT ONCE" UNSAYABLE. This used to be two nullable fields with a written
+	// rule about which won; a `Condition` is one or the other, so the impossible threshold below cannot be
+	// quietly overridden by a compiled predicate sitting beside it.
+	none := Hcp_Floor{.North, 41} // impossible: 40 hcp in the pack
+	blocked := count_accepted_seeded(500, Interpreted_Predicate{at_least, &none}, 7)
+	testing.expect_value(t, blocked, 0)
+
+	// A nil condition keeps everything, which is the fourth state a union gives for nothing.
+	testing.expect_value(t, count_accepted_seeded(100, nil, 7), 100)
+}
