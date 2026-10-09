@@ -23,22 +23,27 @@ EXIT_RUNTIME_ERROR :: 1
 EXIT_USAGE_ERROR :: 2
 
 // Consumer-supplied generation hooks, injected via main_program. Engine-agnostic (see the
-// `norn.Deal_Filter` / `norn.Deal_Annotator` docs) and optional; only wired into the run when the
-// user passes --dd. A consumer that wants double-dummy filtering/annotation builds these over its
-// solver of choice and hands them here, keeping this package solver-free.
+// `norn.Deal_Filter` / `norn.Deal_Annotator` docs) and optional. A consumer that wants double-dummy
+// filtering/annotation builds these over its solver of choice and hands them here, keeping this package
+// solver-free.
 //
-// Both maps are keyed by scenario name, so a batch run gives each scenario its own double-dummy
-// filter and/or annotator (or none). Per-scenario annotators (rather than one global one) let the
-// export pool scenarios that touch no solver; annotate every scenario and they all naturally
-// serialize (the solver isn't reentrant), each still parallel inside DDS.
+// The two maps are keyed by scenario name and are PART OF THOSE SCENARIOS: they always apply. A scenario
+// called "slam makes" whose filter only ran behind a flag was, without the flag, a different scenario under
+// the same name - so the old `--dd` switch is gone. Per-scenario annotators (rather than one global one) let
+// the export pool scenarios that touch no solver; annotate every scenario and they all naturally serialize
+// (the solver isn't reentrant), each still parallel inside DDS.
+//
+// `par_annotator` is the one RUN-level hook: with `--par` it captions every scenario that has no annotator
+// of its own (typically the par contract and what each side makes). nil = `--par` is a usage error.
 Gen_Hooks :: struct {
 	dd_filters:    map[string]norn.Deal_Filter,
 	dd_annotators: map[string]norn.Deal_Annotator,
+	par_annotator: norn.Deal_Annotator,
 }
 
 // Parse arguments and run against `registry`. Kept thin: parse -> (usage / list) -> generate -> map
-// outcomes to an exit code. `hooks` carries the consumer's optional DD filter/annotator, applied
-// only when --dd is passed.
+// outcomes to an exit code. `hooks` carries the consumer's optional per-scenario DD filters/annotators
+// (always applied) and the `--par` annotator.
 main_program :: proc(registry: []Scenario, hooks := Gen_Hooks{}, argv: []string = nil) -> int {
 	// `argv` defaults to this process's own arguments, which is what every caller wanted until one
 	// needed to CONSUME a flag of its own first. Unknown options are a usage error here (by design — a
@@ -53,11 +58,16 @@ main_program :: proc(registry: []Scenario, hooks := Gen_Hooks{}, argv: []string 
 		return EXIT_USAGE_ERROR
 	}
 
-	// Wire the consumer's DD hooks into the options when --dd was requested. Behind the flag so the
-	// default generator path never touches a solver.
-	if opts.dd {
-		opts.dd_filters = hooks.dd_filters
-		opts.dd_annotators = hooks.dd_annotators
+	// The consumer's per-scenario hooks always apply (they are part of the scenarios); `--par` needs the
+	// consumer to have supplied the annotator it means.
+	opts.dd_filters = hooks.dd_filters
+	opts.dd_annotators = hooks.dd_annotators
+	if opts.par {
+		if hooks.par_annotator == nil {
+			fmt.eprintln("norn: --par needs a double-dummy solver, and this program does not supply one")
+			return EXIT_USAGE_ERROR
+		}
+		opts.par_annotator = hooks.par_annotator
 	}
 
 	// The two print-and-exit modes come first, so they stay usable even with a broken hook table.
@@ -77,16 +87,6 @@ main_program :: proc(registry: []Scenario, hooks := Gen_Hooks{}, argv: []string 
 	if hooks_ok, hooks_msg := validate_gen_hooks(registry, hooks); !hooks_ok {
 		fmt.eprintfln("norn: %s", hooks_msg)
 		return EXIT_USAGE_ERROR
-	}
-
-	// --dd on a scenario with no hooks registered is silently inert: the run costs the same and the
-	// page comes out with no DD filter and no caption, which reads as a bug in the annotator. Not an
-	// error (a batch over the whole registry legitimately covers hookless scenarios), so warn and
-	// carry on.
-	if opts.dd {
-		if warn, has_warning := dd_hooks_warning(registry, opts); has_warning {
-			fmt.eprintfln("norn: warning: %s", warn)
-		}
 	}
 
 	acted, action_message := true, ""
@@ -135,73 +135,6 @@ validate_gen_hooks :: proc(registry: []Scenario, hooks: Gen_Hooks) -> (ok: bool,
 	)
 }
 
-// Does `--dd` actually reach a hook this run? Returns the warning text (allocated in the temp
-// allocator) and has_warning=true when it does not, i.e. when the flag is inert for some or all of
-// the selected scenarios. Two ways that happens:
-//
-//   - plain generation with no --scenario: both hooks are keyed by scenario name, so there is
-//     nothing to look them up with (see run.odin) and --dd can never fire;
-//   - a selected scenario that appears in NEITHER hook map.
-//
-// An unresolvable --scenario is not this proc's business — the real path reports it — so a selector
-// that fails to resolve is reported as no warning.
-@(private)
-dd_hooks_warning :: proc(registry: []Scenario, opts: Options) -> (message: string, has_warning: bool) {
-	if _, plain := opts.mode.(Generate); plain && opts.scenario == "" {
-		return "--dd has no effect without --scenario: the double-dummy filter and annotator are per-scenario hooks",
-			true
-	}
-
-	selected, filter, ok, _ := select_scenarios(registry, opts.scenario)
-	defer delete(filter)
-	if !ok {
-		return "", false
-	}
-
-	hookless: [dynamic]string
-	defer delete(hookless)
-	for s in selected {
-		_, has_filter := opts.dd_filters[s.name]
-		_, has_annotator := opts.dd_annotators[s.name]
-		if !has_filter && !has_annotator {
-			append(&hookless, s.name)
-		}
-	}
-	if len(hookless) == 0 {
-		return "", false
-	}
-	named := name_list(hookless[:])
-	if len(hookless) == len(selected) {
-		return fmt.tprintf(
-				"--dd is inert here: no double-dummy filter or annotator is registered for %s (deals are generated without a DD filter or par caption)",
-				named,
-			),
-			true
-	}
-	return fmt.tprintf(
-			"--dd: no double-dummy hooks registered for %s — those scenarios get no DD filter or par caption",
-			named,
-		),
-		true
-}
-
-// How many scenario names a warning spells out before summarising the rest. A whole-registry batch
-// export is a routine command, so its warning must stay one readable line rather than a roll-call.
-DD_WARNING_NAME_LIMIT :: 5
-
-// `a, b, c` — or `a, b, c, d, e and 7 more` past DD_WARNING_NAME_LIMIT. Temp-allocated.
-@(private)
-name_list :: proc(names: []string) -> string {
-	if len(names) <= DD_WARNING_NAME_LIMIT {
-		return strings.join(names, ", ", context.temp_allocator)
-	}
-	return fmt.tprintf(
-		"%s and %d more",
-		strings.join(names[:DD_WARNING_NAME_LIMIT], ", ", context.temp_allocator),
-		len(names) - DD_WARNING_NAME_LIMIT,
-	)
-}
-
 // Print the usage/help text to the given file (stdout for --help, stderr on a usage error).
 write_usage :: proc(handle: ^os.File) {
 	usage := `norn - a fast bridge deal generator
@@ -230,15 +163,12 @@ Options:
                               subset); BBO-iframe pages by default, or --format html-cards for the
                               offline card carousel
       --frequency N           measure each scenario's acceptance rate over N deals and exit (no deals
-                              emitted); all scenarios, or the --scenario subset. With --dd the rate
-                              also counts each scenario's double-dummy filter, matching what
-                              generation keeps
+                              emitted); all scenarios, or the --scenario subset. The rate counts a
+                              scenario's double-dummy filter too, matching what generation keeps
       --fixed-table           handviewer/html formats: fix vulnerability & dealer (default: randomise)
-      --dd                    enable the consumer's double-dummy hooks (per-scenario filter +
-                              annotator); no effect unless the program supplies them. Applies to
-                              generation, --html-dir export, AND --frequency (the filter is counted).
-                              DD scenarios run serially (solver isn't reentrant); solver-free
-                              scenarios still pool
+      --par                   html formats: caption every deal with its double-dummy par and what
+                              each side makes (needs a solver the program supplies). Slower: those
+                              scenarios run serially (the solver isn't reentrant)
   -h, --help                  show this help
 
 Examples:

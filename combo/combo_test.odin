@@ -14,7 +14,10 @@ package combo
 	  3. The combining layer — convolution stays normalised and P(>=k) is a correct tail.
 */
 
+import "base:runtime"
+import "core:strings"
 import "core:testing"
+import "core:time"
 
 import "../norn"
 
@@ -228,5 +231,23 @@ test_combined_normalised_and_tail :: proc(t: ^testing.T) {
 		cur := p_at_least(a.total, k)
 		testing.expectf(t, cur <= prev + 1e-12, "tail not monotone at k=%d", k)
 		prev = cur
+	}
+}
+
+// `shutdown` and then `annotate` again: the pool must come back. `shutdown` destroyed the pool but left its
+// `sync.Once` spent, so the next annotate handed its tasks to the dead pool and waited forever (a hang found
+// by the workbench tests, the first time one test stopped combo and a later one started it).
+@(test)
+test_annotate_after_shutdown_restarts_the_pool :: proc(t: ^testing.T) {
+	testing.set_fail_timeout(t, 30 * time.Second)
+	context.allocator = runtime.default_allocator() // the pool lives for the process; not this test's tracker
+	board, err := norn.parse_pbn_deal(`[Deal "N:AJ54.AK2.A32.AK3 KT32.543.654.542 Q76.QJT9.KQJ.QJ9 98.876.T987.T876"]`)
+	testing.expect_value(t, err, norn.Pbn_Parse_Error.None)
+	for round in 0 ..< 2 {
+		b := strings.builder_make()
+		annotate(&b, board.deal, .Html_Cards)
+		testing.expectf(t, strings.builder_len(b) > 0, "round %d annotated nothing", round)
+		strings.builder_destroy(&b)
+		shutdown()
 	}
 }

@@ -1243,6 +1243,10 @@ shutdown :: proc() {
 			g_scratch_regs = nil
 			thread.pool_destroy(&g_pool)
 			g_pool_started = false
+			// And the ONCE with it, or the next `annotate` after a shutdown never builds a pool: it hands its
+			// tasks to the destroyed one and waits for them forever. Measured as a hang in the workbench
+			// tests, the first time one stopped combo and a later one started it again.
+			g_pool_once = {}
 		}
 	}
 	book_shutdown()

@@ -93,7 +93,7 @@ just diagnose              # verbose build of the CLI
 | `--list` | prints the empty-registry notice (`write_scenario_list`) |
 | `--html-dir DIR` | "no scenarios to export (registry is empty)" |
 | `--frequency N` | "no scenarios to measure (registry is empty)" |
-| `--dd` | parses, but the hooks are keyed by scenario name, so none can fire |
+| `--par` | "needs a double-dummy solver, and this program does not supply one" (no `Gen_Hooks.par_annotator`) |
 
 This is the library boundary working as intended, not a gap: the registry is the consumer's bidding policy. `examples/strong-1c.odin` and `examples/1major-gf-support.odin` do NOT fill the hole — they bypass the CLI framework entirely, calling `norn.generate_accepted` with a hardcoded predicate and taking no flags.
 

@@ -1,5 +1,6 @@
 package norn
 
+import "core:strconv"
 import "core:strings"
 
 /*
@@ -40,6 +41,12 @@ Board :: struct {
 	// or a 2-hand OCR board with no metadata. LIN: derived from the `mb|` auction (final bid + the
 	// rule-correct declarer). PBN: from `[Contract]` + `[Declarer]` tags.
 	contract:     Maybe(Contract),
+	// The cards played, when the record carries them AND names the contract (who plays each card follows
+	// from the declarer and the trump suit) AND gives all four hands. LIN: the `pc|` tokens plus an `mc|`
+	// claim; PBN: the `[Play]` section plus `[Result]`. A bad card cuts the play there (see play.odin).
+	play:         Maybe(Play),
+	// Which board, which room, who played it and in what match, as far as the record says (`Board_Table`).
+	table:        Board_Table,
 }
 
 // An opening lead: the card led and the seat that led it. One value rather than two loose fields because
@@ -148,7 +155,156 @@ parse_pbn_deal :: proc(text: string) -> (board: Board, err: Pbn_Parse_Error) {
 			}
 		}
 	}
+	if contract, has := board.contract.?; has && board.known == {.North, .East, .South, .West} {
+		board.play = pbn_play(text, board.deal, contract)
+	}
+	board.table = pbn_table(text)
 	return board, .None
+}
+
+// The board's identity tags: `[Board]`, `[Room]`, the four seats' names, `[Event]`, `[Stage]` (else `[Round]`),
+// `[HomeTeam]`, `[VisitTeam]`. Missing tags leave their fields empty.
+@(private = "file")
+pbn_table :: proc(text: string) -> (table: Board_Table) {
+	if v, ok := pbn_tag_value(text, "Board"); ok {
+		if n, nok := strconv.parse_int(strings.trim_space(v), 10); nok && n > 0 {
+			table.number = n
+		}
+	}
+	if v, ok := pbn_tag_value(text, "Room"); ok {
+		switch strings.to_lower(strings.trim_space(v), context.temp_allocator) {
+		case "open":
+			table.room = .Open
+		case "closed":
+			table.room = .Closed
+		}
+	}
+	SEAT_TAGS :: [Seat]string {
+		.North = "North",
+		.East  = "East",
+		.South = "South",
+		.West  = "West",
+	}
+	tags := SEAT_TAGS
+	for seat in Seat {
+		table.players[seat], _ = pbn_tag_value(text, tags[seat])
+	}
+	table.event, _ = pbn_tag_value(text, "Event")
+	if v, ok := pbn_tag_value(text, "Stage"); ok && v != "" {
+		table.stage = v
+	} else {
+		table.stage, _ = pbn_tag_value(text, "Round")
+	}
+	table.teams[0], _ = pbn_tag_value(text, "HomeTeam")
+	table.teams[1], _ = pbn_tag_value(text, "VisitTeam")
+	return table
+}
+
+/*
+The play from a `[Play "<seat>"]` section, and the declaring side's tricks from `[Result]`. nil when there is
+no `[Play]` tag and no result.
+
+Each line of the section is one trick and each COLUMN one seat, in a fixed order starting from the tag's seat
+(the opening leader). The columns do not rotate to each trick's leader, so the order a trick was played in is
+worked out from who won the trick before. `-` is a card not played (the play stopped); `*` ends the section.
+Comments (`{…}`, `;` to end of line) and annotations (`$n` NAGs, `=n=` note references, `^n` irregularity
+marks) are skipped, as is a `!`/`?` suffix on a card.
+*/
+@(private = "file")
+pbn_play :: proc(text: string, deal: Deal, contract: Contract) -> Maybe(Play) {
+	result: Maybe(int)
+	if val, found := pbn_tag_value(text, "Result"); found {
+		if n, ok := strconv.parse_int(strings.trim_space(val), 10); ok && n >= 0 && n <= PLAY_TRICKS {
+			result = n
+		}
+	}
+	seat_val, found := pbn_tag_value(text, "Play")
+	first_column := Seat.North // the seat of the section's first column
+	sok := false
+	if len(seat_val) > 0 {
+		first_column, sok = seat_from_letter(seat_val[0])
+	}
+	if !found || !sok {
+		if result == nil {
+			return nil
+		}
+		return Play{result = result}
+	}
+
+	// The section's tokens in order, four to a row: a card, `-` (not played), or something unreadable.
+	Slot :: struct {
+		card:   Card,
+		played: bool,
+		bad:    bool,
+	}
+	slots: [DECK_SIZE]Slot
+	slot_count := 0
+	body := text[strings.index(text, `[Play "`):]
+	body = body[strings.index_byte(body, ']') + 1:]
+	scan: for i := 0; i < len(body) && slot_count < len(slots); {
+		c := body[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\r' || c == '\n':
+			i += 1
+		case c == '{':
+			close := strings.index_byte(body[i:], '}')
+			i = close < 0 ? len(body) : i + close + 1
+		case c == ';':
+			eol := strings.index_byte(body[i:], '\n')
+			i = eol < 0 ? len(body) : i + eol + 1
+		case c == '[' || c == '*':
+			break scan
+		case:
+			end := i
+			for end < len(body) && !strings.contains_rune(" \t\r\n{;[", rune(body[end])) {
+				end += 1
+			}
+			tok := body[i:end]
+			i = end
+			switch tok[0] {
+			case '$', '=', '^':
+				continue scan // an annotation, not a card
+			case '-':
+				slots[slot_count] = {}
+			case:
+				for len(tok) > 2 && (tok[len(tok) - 1] == '!' || tok[len(tok) - 1] == '?') {
+					tok = tok[:len(tok) - 1]
+				}
+				card, ok := lin_card(tok) // PBN writes a card suit-first too: `SA`, `HT`
+				slots[slot_count] = {card, ok, !ok}
+			}
+			slot_count += 1
+		}
+	}
+
+	play := Play {
+		result = result,
+	}
+	walk := play_walk_start(deal, contract)
+	rows: for row := 0; row * SEAT_COUNT < slot_count; row += 1 {
+		leader, more := play_walk_next_seat(&walk).?
+		if !more {
+			break
+		}
+		for k in 0 ..< SEAT_COUNT {
+			column := (int(leader) + k - int(first_column) + SEAT_COUNT) % SEAT_COUNT
+			index := row * SEAT_COUNT + column
+			if index >= slot_count || !slots[index].played {
+				if index < slot_count && slots[index].bad {
+					play.error, play.error_index = .Bad_Card, play.count
+				}
+				break rows
+			}
+			card := slots[index].card
+			if err := play_walk_card(&walk, card); err != .None {
+				play.error, play.error_index = err, play.count
+				break rows
+			}
+			play.cards[play.count] = card
+			play.count += 1
+		}
+	}
+	return play
 }
 
 // The contract from a `[Contract "..."]` tag: level 1..7 plus denomination (`4H`, `3NT`, `4SX` — a

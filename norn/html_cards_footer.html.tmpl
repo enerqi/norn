@@ -257,7 +257,11 @@
 		  // the padding alone when there is only one of it (there is nothing to scroll), which is why this is
 		  // not merely cosmetic. Cheap either way: two extra measurements on a laid-out page, and the second
 		  // one is what a late layout needs.
-		  function refit() {
+		  function refit(resizing) {
+				// Not WHILE a size is changing: tucking every board is a run of forced layouts (clear the margins,
+				// measure six boxes, write them back), and during a window drag it ran on every step. The trailing
+				// `show` below tucks once the size has settled.
+				if (!resizing) tuckLaidOut();
 				padTrack();
 				var s = slides[idx];
 				if (s) scrollToPx(centreScrollFor(s), true);
@@ -319,9 +323,10 @@
 		  // one. So this is a LAYOUT budget (the 48-board resize cost it was introduced for), not a smoothness
 		  // one — per-frame cost in this engine does not scale with what is on screen.
 		  var LAYOUT_WINDOW = 2;
-		  function parkFarSlides(i) {
+		  function parkFarSlides(i, reach) {
+				if (reach === undefined) reach = LAYOUT_WINDOW;
 				for (var j = 0; j < slides.length; j++) {
-					 var wanted = Math.abs(j - i) <= LAYOUT_WINDOW;
+					 var wanted = Math.abs(j - i) <= reach;
 					 var parked = slides[j].style.getPropertyValue('display') === 'none';
 					 if (wanted === parked) slides[j].style.setProperty('display', wanted ? '' : 'none');
 				}
@@ -365,10 +370,260 @@
 				if (seat) s.classList.add('only-' + seat);
 				var table = s.querySelector('.table');
 				if (table) {
-					 if (seat) { table.textContent = 'Reveal all'; table.classList.add('reveal'); }
-					 else { table.textContent = 'Board ' + (i + 1); table.classList.remove('reveal'); }
+					 // A board with a play keeps its trick when a hand is focused (renderPlay adds the button under it).
+					 if (playOf(i)) table.classList.remove('reveal');
+					 else if (seat) { table.textContent = 'Reveal all'; table.classList.add('reveal'); table.classList.remove('trick'); }
+					 else { table.textContent = boardLabel(i); table.classList.remove('reveal'); }
+				}
+				renderPlay(i);
+		  }
+
+		  // --- North and South tucked in towards the trick -----------------------------------------------
+		  // The middle row is as tall as the taller of West and East, and the trick (or "Board N") is centred
+		  // in it, so a deal leaves a band of empty felt above the trick and another below it: at XL that was
+		  // ~115px each, and the board ran off the bottom of the window. When North's card is clear of West and
+		  // East sideways, the middle row is pulled up under it until North sits just above the trick (never so
+		  // far that West and East rise above North's top), and South is pulled up the same way. A board with a
+		  // play gets a trick area at least as wide as North and South, so that they ARE clear; any other board
+		  // is tucked only if it happens to be. Measured with rects, converted to CSS px by the board's own
+		  // ratio, because a board that is not the active one is drawn scaled down.
+		  var TUCK_PAD = 6;
+		  function tuckHands(i) {
+				var s = slides[i];
+				if (!s || s.style.getPropertyValue('display') === 'none') return;
+				var compass = s.querySelector('.compass'), mid = s.querySelector('.compass > .mid');
+				var table = s.querySelector('.table');
+				var N = s.querySelector('.compass > .seat-n'), S = s.querySelector('.compass > .seat-s');
+				var W = mid ? mid.querySelector('.seat-w') : null, E = mid ? mid.querySelector('.seat-e') : null;
+				if (!compass || !mid || !table || !N || !S || !W || !E) return;
+				mid.style.removeProperty('margin-top');
+				mid.style.removeProperty('position');
+				S.style.removeProperty('margin-top');
+				W.style.removeProperty('min-width');
+				E.style.removeProperty('min-width');
+				if (seatFor(i)) return; // one hand enlarged: that layout is its own
+				var cr = compass.getBoundingClientRect();
+				if (!cr.width) return;
+				var k = compass.offsetWidth / cr.width || 1; // on-screen px -> CSS px
+				// West and East as WIDE AS EACH OTHER, so the trick between them is on the board's centre line
+				// under North and South. The browser's 1fr|auto|1fr grid does that by itself; the desktop
+				// engine's row is W, the trick and E side by side, centred as a group, so a wider East pushed
+				// the trick left of centre.
+				var both = Math.ceil(Math.max(W.getBoundingClientRect().width, E.getBoundingClientRect().width) * k);
+				W.style.setProperty('min-width', both + 'px');
+				E.style.setProperty('min-width', both + 'px');
+				if (s._play && !s._tableMin) {
+					 var widest = Math.max(N.getBoundingClientRect().width, S.getBoundingClientRect().width);
+					 s._tableMin = Math.ceil(widest * k) + 2 * TUCK_PAD;
+					 table.style.setProperty('min-width', s._tableMin + 'px');
+				}
+				var n = N.getBoundingClientRect(), so = S.getBoundingClientRect();
+				var w = W.getBoundingClientRect(), e = E.getBoundingClientRect(), t = table.getBoundingClientRect();
+				function clear(r) { return r.left >= w.right + TUCK_PAD && r.right <= e.left - TUCK_PAD; }
+				// Both moves are worked out from these positions: lifting the middle row lifts South with it, so
+				// South's distance to the trick does not change.
+				//
+				// The lifted row is made `position: relative` (with no offset) so that it is hit-tested ABOVE North.
+				// Without that the desktop engine gave a click on West's or East's pill, now level with North, to
+				// the board instead, and a hand could not be focused (page-check). Two other ways to lift the row
+				// were measured and are wrong there: `position: relative; top` moved it by twice `top`, and a
+				// transform moved the paint but not the boxes, so clicks missed what was drawn.
+				if (clear(n)) {
+					 var up = Math.min(t.top - n.bottom - TUCK_PAD, Math.min(w.top, e.top) - n.top);
+					 if (up > 1) {
+						  mid.style.setProperty('margin-top', -Math.floor(up * k) + 'px');
+						  mid.style.setProperty('position', 'relative');
+					 }
+				}
+				if (clear(so)) {
+					 var lift = Math.min(so.top - t.bottom - TUCK_PAD, so.bottom - Math.max(w.bottom, e.bottom));
+					 if (lift > 1) S.style.setProperty('margin-top', -Math.floor(lift * k) + 'px');
 				}
 		  }
+		  function tuckLaidOut() {
+				for (var j = 0; j < slides.length; j++) tuckHands(j);
+		  }
+
+		  // --- Which board, and who played it -----------------------------------------------------------
+		  // A board read from a match record (a vugraph `.lin`, a PBN export) has a hidden `.board-table`: its
+		  // number, the room, and the four players. The board is then called by ITS number ("Board 13 · Open"),
+		  // not by its place in the carousel, and each name sits by its seat. A vugraph operator who never typed
+		  // the closed room's names leaves the seat words there ("South"), which are not names and are not shown.
+		  var SEAT_WORDS = { N: 'north', E: 'east', S: 'south', W: 'west' };
+		  function tableOf(i) { return slides[i] ? slides[i]._table : null; }
+		  function boardLabel(i) {
+				var T = tableOf(i);
+				if (!T || !T.n) return 'Board ' + (i + 1);
+				return 'Board ' + T.n + (T.room ? ' \u00b7 ' + T.room : '');
+		  }
+		  function isName(L, name) {
+				var n = (name || '').trim().toLowerCase();
+				return n !== '' && n !== '?' && n !== '-' && n !== SEAT_WORDS[L] && n !== L.toLowerCase();
+		  }
+		  slides.forEach(function (s) {
+				var el = s.querySelector('.board-table');
+				var T = el ? parseAttr(el, 'data-table') : null;
+				if (!T) return;
+				s._table = T;
+				if (!T.players) return;
+				'NESW'.split('').forEach(function (L) {
+					 var lbl = s.querySelector('.seat-' + L.toLowerCase() + ' .lbl');
+					 if (!lbl || !isName(L, T.players[L])) return;
+					 var name = document.createElement('span');
+					 name.className = 'pname';
+					 name.textContent = T.players[L];
+					 lbl.parentNode.insertBefore(name, lbl.nextSibling);
+				});
+		  });
+
+		  // --- Play-through -----------------------------------------------------------------------------
+		  // A board whose record carried the play (a LIN `pc|` run, a PBN `[Play]` section) has a hidden
+		  // `.play` element: the cards in order, who played each, each trick's winner, the deal, and — when the
+		  // analyser solved it — the declaring side's double-dummy total before every card, what each card
+		  // cost and the cards that would have kept the trick (deal_solve/play_cost.odin writes it). The bar
+		  // under the board steps through it: the hands shrink, the trick in progress sits in the middle of
+		  // the table, and a card that cost a trick is ringed and named. Keys: CTRL+SHIFT+arrow or `,` `.` step a
+		  // card, CTRL+arrow or `[` `]` a trick (the bare arrows and a/n/e/s/w are already the
+		  // carousel's and the seats').
+		  var SUIT_SYM = { S: '♠', H: '♥', D: '♦', C: '♣' };
+		  var PLAY_KEYS = { ',': 'prev', '.': 'next', '[': 'tprev', ']': 'tnext',
+				Comma: 'prev', Period: 'next', BracketLeft: 'tprev', BracketRight: 'tnext' };
+		  function playOf(i) { return slides[i] ? slides[i]._play : null; }
+		  function cardHTML(c) {
+				var su = c.charAt(1);
+				return '<span class="ssym ' + su.toLowerCase() + '">' + SUIT_SYM[su] + '</span>' + c.charAt(0);
+		  }
+		  // A contract as it is read: `2♠`, `3NT`.
+		  function conHTML(con) {
+				var su = con.slice(1);
+				return SUIT_SYM[su] ? con.charAt(0) + '<span class="ssym ' + su.toLowerCase() + '">' + SUIT_SYM[su] + '</span>' : con;
+		  }
+		  function sameSide(a, b) { return ('NS'.indexOf(a) < 0) === ('NS'.indexOf(b) < 0); }
+		  function initPlay(s, i) {
+				var el = s.querySelector('.play');
+				var d = el ? parseAttr(el, 'data-play') : null;
+				if (!d || !d.c || !d.c.length) return;
+				var bar = document.createElement('div');
+				bar.className = 'playbar';
+				var tricks = '';
+				for (var t = 0; t * 4 < d.c.length; t++) {
+					 var bad = false;
+					 for (var k = t * 4; k < Math.min(d.c.length, t * 4 + 4); k++) if (d.cost && d.cost[k] > 0) bad = true;
+					 tricks += '<button data-p="t' + (t + 1) + '"' + (bad ? ' class="costly" title="A card in this trick cost a trick"' : '') + '>' + (t + 1) + '</button>';
+				}
+				var anyBad = d.cost && d.cost.some(function (x) { return x > 0; });
+				bar.innerHTML =
+					 '<div class="pctl"><button data-p="start" title="Before the opening lead">&#9664;&#9664;</button>' +
+					 '<button data-p="tprev" title="Back a trick (Ctrl+Left or [ )">&#9664;|</button>' +
+					 '<button data-p="prev" title="Back a card (Ctrl+Shift+Left or , )">&#9664;</button>' +
+					 '<span class="pinfo"></span>' +
+					 '<button data-p="next" title="Forward a card (Ctrl+Shift+Right or . )">&#9654;</button>' +
+					 '<button data-p="tnext" title="Forward a trick (Ctrl+Right or ] )">|&#9654;</button>' +
+					 '<button data-p="end" title="To the end of the record">&#9654;&#9654;</button>' +
+					 (anyBad ? '<button data-p="mistake" class="costly" title="To the next card that cost a trick">!</button>' : '') +
+					 '</div><div class="ptricks">' + tricks + '</div><div class="pnote"></div>';
+				var compass = s.querySelector('.compass');
+				s.insertBefore(bar, compass ? compass.nextSibling : null);
+				bar.addEventListener('click', function (e) {
+					 var b = e.target.closest('[data-p]');
+					 if (b) playCmd(i, b.getAttribute('data-p'));
+				});
+				s._play = { d: d, step: 0, bar: bar };
+		  }
+		  function playCmd(i, cmd) {
+				var P = playOf(i);
+				if (!P) return;
+				var n = P.d.c.length, st = P.step;
+				if (cmd === 'next') st += 1;
+				else if (cmd === 'prev') st -= 1;
+				else if (cmd === 'tnext') st = Math.floor(st / 4) * 4 + 4;
+				else if (cmd === 'tprev') st = Math.ceil(st / 4) * 4 - 4;
+				else if (cmd === 'start') st = 0;
+				else if (cmd === 'end') st = n;
+				else if (cmd === 'mistake') {
+					 var j = st;
+					 while (j < n && !(P.d.cost[j] > 0)) j++;
+					 if (j === n) { j = 0; while (j < n && !(P.d.cost[j] > 0)) j++; } // wrap to the first
+					 st = j + 1;
+				} else if (cmd.charAt(0) === 't') st = parseInt(cmd.slice(1), 10) * 4;
+				P.step = Math.max(0, Math.min(n, st));
+				renderPlay(i);
+		  }
+		  function renderPlay(i) {
+				var P = playOf(i);
+				if (!P) return;
+				var s = slides[i], d = P.d, st = P.step, n = d.c.length;
+				var gone = {};
+				for (var k = 0; k < st; k++) gone[d.c[k]] = true;
+				var toPlay = st < n ? d.by.charAt(st) : '';
+				'NESW'.split('').forEach(function (L) {
+					 var seatEl = s.querySelector('.seat-' + L.toLowerCase());
+					 if (!seatEl) return;
+					 seatEl.classList.toggle('to-play', L === toPlay);
+					 var parts = (d.hands[L] || '').split('.'), lines = seatEl.querySelectorAll('.suit');
+					 ['S', 'H', 'D', 'C'].forEach(function (su, j) {
+						  if (!lines[j]) return;
+						  var ranks = parts[j] || '', left = '';
+						  for (var r = 0; r < ranks.length; r++) if (!gone[ranks.charAt(r) + su]) left += ranks.charAt(r);
+						  lines[j].innerHTML = '<span class="sym">' + SUIT_SYM[su] + '</span>' + (left || '&mdash;');
+					 });
+				});
+
+				// The trick in the middle. The grid is drawn from the first card to the last with ALL FOUR places
+				// filled — a seat that has not played yet holds an invisible card — so its size never changes and
+				// the cards already on the table stay where they are as the others arrive.
+				var t = st > 0 ? Math.floor((st - 1) / 4) : -1;
+				var table = s.querySelector('.table');
+				// The trick is drawn in the one-hand view too - the cards played are what is being watched - with
+				// the "Reveal all" button under it rather than in its place.
+				if (table) {
+					 var GHOST = '<span class="pc ghost">' + cardHTML('AS') + '</span>';
+					 var cell = { N: GHOST, E: GHOST, S: GHOST, W: GHOST };
+					 if (t >= 0) {
+						  var first = t * 4, last = Math.min(st, first + 4);
+						  for (var c = first; c < last; c++) {
+								var cls = 'pc';
+								if (last - first === 4 && d.win.charAt(t) === d.by.charAt(c)) cls += ' won';
+								if (d.cost && d.cost[c] > 0) cls += ' costly';
+								cell[d.by.charAt(c)] = '<span class="' + cls + '">' + cardHTML(d.c[c]) + '</span>';
+						  }
+					 }
+					 table.innerHTML = '<table class="trk"><tr><td></td><td>' + cell.N + '</td><td></td></tr>' +
+						  '<tr><td>' + cell.W + '</td><td class="tno">' + (t < 0 ? 1 : t + 1) + '</td><td>' + cell.E + '</td></tr>' +
+						  '<tr><td></td><td>' + cell.S + '</td><td></td></tr></table>' +
+						  (seatFor(i) ? '<div class="reveal-all">Reveal all</div>' : '');
+					 table.classList.add('trick');
+				}
+
+				// The bar: where we are, the tricks won so far, double dummy from here, and what the last card did.
+				var done = Math.floor(st / 4), dec = 0;
+				for (var w = 0; w < done && w < d.win.length; w++) if (sameSide(d.win.charAt(w), d.dec)) dec++;
+				var decSide = 'NS'.indexOf(d.dec) >= 0 ? 'N/S' : 'E/W', defSide = decSide === 'N/S' ? 'E/W' : 'N/S';
+				var info = (tableOf(i) ? boardLabel(i) + ' &middot; ' : '') + conHTML(d.con) + ' ' + d.dec + ' &middot; ' + (t < 0 ? 'opening lead' : 'trick ' + (t + 1) + ' card ' + ((st - 1) % 4 + 1)) +
+					 ' &middot; ' + decSide + ' ' + dec + ' &ndash; ' + defSide + ' ' + (done - dec);
+				if (d.dd) info += ' &middot; <span title="Double dummy: the declaring side\'s total tricks with best play from here">DD ' + d.dd[st] + '</span>';
+				P.bar.querySelector('.pinfo').innerHTML = info;
+				var note = '';
+				if (st > 0 && d.cost && d.cost[st - 1] > 0) {
+					 var lost = d.cost[st - 1], best = (d.best[String(st - 1)] || []).map(cardHTML).join(' ');
+					 note = '<b class="bad">' + d.by.charAt(st - 1) + ' ' + cardHTML(d.c[st - 1]) + ' cost ' + lost +
+						  (lost === 1 ? ' trick' : ' tricks') + '</b> &middot; best: ' + best;
+				}
+				if (st === n) {
+					 var end = [];
+					 if (d.err) end.push('the record stops at a bad card (' + d.err.replace(/_/g, ' ').toLowerCase() + ')');
+					 if (d.res !== undefined) {
+						  var claim = (n < 52 ? 'claim: ' : 'result: ') + d.res + ' trick' + (d.res === 1 ? '' : 's');
+						  if (d.dd && n < 52 && d.res !== d.dd[n]) claim += ' (double dummy ' + d.dd[n] + ')';
+						  end.push(claim);
+					 }
+					 if (end.length) note = (note ? note + ' &middot; ' : '') + end.join(' &middot; ');
+				}
+				P.bar.querySelector('.pnote').innerHTML = note;
+				var bs = P.bar.querySelectorAll('.ptricks button');
+				for (var b = 0; b < bs.length; b++) bs[b].classList.toggle('cur', b === t);
+		  }
+		  slides.forEach(initPlay); // drawn by applyAll() at the end of the script, with the seats
 		  function applyAll() { for (var i = 0; i < total; i++) applySeat(i); }
 		  // A focus/reveal reflows the felt (font-size transition): re-centre now and after it settles.
 		  function recentre() { show(idx, true); setTimeout(function () { show(idx, true); }, 280); }
@@ -386,6 +641,7 @@
 					 // then starts from the right place.
 					 var was = offCentre(s);
 					 parkFarSlides(idx);
+					 tuckLaidOut();
 					 var shift = offCentre(s) - was;
 					 if (Math.abs(shift) >= 1) scrollToPx(Math.max(0, Math.round(viewport.scrollLeft + shift)), true);
 
@@ -400,7 +656,7 @@
 				// positioning now would mis-place (drift) the panel. One reposition on the settled layout.
 				renderCca(false);
 				clearTimeout(ccaPosT);
-				ccaPosT = setTimeout(positionCca, 380);
+				ccaPosT = setTimeout(function () { tuckLaidOut(); positionCca(); }, 380);
 		  }
 
 		  document.getElementById('nc-prev').onclick = function () { show(idx - 1); };
@@ -422,6 +678,14 @@
 				var t = e.target;
 				if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
 				var pressed = keyOf(e);
+				// CTRL+arrow steps the play a whole trick, CTRL+SHIFT+arrow a card. Checked before the bare
+				// arrows, which move between boards: with CTRL held the board never moves, play or not.
+				if (e.ctrlKey && (pressed === 'ArrowLeft' || pressed === 'ArrowRight')) {
+					 if (playOf(idx)) playCmd(idx, (e.shiftKey ? '' : 't') + (pressed === 'ArrowLeft' ? 'prev' : 'next'));
+					 if (e.preventDefault) e.preventDefault();
+					 return;
+				}
+				if (PLAY_KEYS[pressed] && playOf(idx)) { playCmd(idx, PLAY_KEYS[pressed]); return; }
 				if (pressed === 'ArrowLeft') { show(idx - 1); return; }
 				if (pressed === 'ArrowRight') { show(idx + 1); return; }
 				// a = all seats, n/e/s/w = just that seat — press the matching toolbar button so the
@@ -507,6 +771,29 @@
 				};
 		  }
 
+		  // Card size (M / L / XL): a class on the body that the stylesheet scales the hands' suit lines and the
+		  // trick's cards by. Remembered in a browser; the desktop host has no localStorage (see the top).
+		  var cardBtns = document.querySelectorAll('[data-cards]');
+		  function applyCards(size) {
+				document.body.classList.remove('cards-l', 'cards-xl');
+				if (size) document.body.classList.add('cards-' + size);
+				slides.forEach(function (s) {
+					 s._tableMin = 0;
+					 var table = s.querySelector('.table');
+					 if (table) table.style.removeProperty('min-width');
+				});
+				for (var m = 0; m < cardBtns.length; m++) cardBtns[m].classList.toggle('sel', cardBtns[m].getAttribute('data-cards') === size);
+		  }
+		  for (var c = 0; c < cardBtns.length; c++) {
+				cardBtns[c].onclick = function () {
+					 var size = this.getAttribute('data-cards');
+					 applyCards(size);
+					 try { localStorage.setItem('nc-cards', size); } catch (e) {}
+					 recentre();
+				};
+		  }
+		  try { var savedCards = localStorage.getItem('nc-cards'); if (savedCards === 'l' || savedCards === 'xl') applyCards(savedCards); } catch (e) {}
+
 		  // Reset: drop every per-board override so all boards follow the global default again.
 		  document.getElementById('nc-reset').onclick = function () {
 				for (var i = 0; i < total; i++) override[i] = undefined;
@@ -523,7 +810,9 @@
 				var i = slides.indexOf(slideEl);
 				if (i < 0) return;
 				if (e.target.closest('.table')) {
-					 if (seatFor(i)) { override[i] = ''; applySeat(i); recentre(); } // Reveal all
+					 // Reveal all: the whole centre marker, or on a board with a play only its button under the trick.
+					 var reveal = e.target.closest('.table.reveal, .reveal-all');
+					 if (reveal && seatFor(i)) { override[i] = ''; applySeat(i); recentre(); }
 					 return;
 				}
 				var lbl = e.target.closest('.lbl');
@@ -1541,11 +1830,26 @@
 		  // Resize arrives once per mouse move while a window edge is dragged, and `show` is not free: it
 		  // re-renders the overlay table and re-places the panel. Re-centre on every event (one measurement and
 		  // one transform, and no animation while the pointer is dragging) and do the rest once it stops.
-		  var resizeT = null;
+		  //
+		  // AND ONLY THE ACTIVE BOARD while the size is changing: every board in the layout is re-laid-out on
+		  // each step, and the neighbours kept for a smooth NEXT step are no use mid-drag. Measured on a 16-board
+		  // analysed page in the desktop engine: ~150-195ms of layout and paint per resize step with the usual
+		  // five boards in. The neighbours come back with the trailing `show`.
+		  //
+		  // The trailing delay is LONGER than the size watch's 200ms poll below (it was 120ms): hosted in the
+		  // workbench, resizes arrive only from that poll, so a shorter delay ran `show` - neighbours back in,
+		  // overlay re-rendered - between every two polls of a continuous drag.
+		  var resizeT = null, resizing = false;
 		  function onResized() {
-				refit();
+				if (!resizing) {
+					 resizing = true;
+					 var s = slides[idx], was = s ? offCentre(s) : 0;
+					 parkFarSlides(idx, 0);
+					 if (s) scrollToPx(Math.max(0, Math.round(viewport.scrollLeft + offCentre(s) - was)), true);
+				}
+				refit(true);
 				clearTimeout(resizeT);
-				resizeT = setTimeout(function () { show(idx, true); }, 120);
+				resizeT = setTimeout(function () { resizing = false; show(idx, true); }, 350);
 		  }
 		  window.addEventListener('resize', onResized);
 

@@ -7,10 +7,11 @@ import "core:strings"
 
 	LIN is the play-record format used by Bridge Base Online, IntoBridge, RealBridge and friends. A
 	full LIN record is a run of `key|value|` tokens carrying player names (`pn|`), the deal (`md|`),
-	vulnerability (`sv|`), the auction (`mb|`) and the played cards (`pc|`). This reader consumes only
-	the `md|` token — the deal — and turns it into the same `Board` that `parse_pbn_deal`
-	yields, so a hand pasted from one of those sites can be fed into norn/odin-sims exactly like a PBN
-	`[Deal]` tag. The auction and play are ignored.
+	vulnerability (`sv|`), the auction (`mb|`) and the played cards (`pc|`). This reader turns the `md|`
+	deal into the same `Board` that `parse_pbn_deal` yields, so a hand pasted from one of those sites can
+	be fed into norn/odin-sims exactly like a PBN `[Deal]` tag, and reads the auction (-> `contract`) and
+	the play (-> `play`, see play.odin) when the record carries them. Names and `sv|` are not read here;
+	a multi-board vugraph file is split by `split_lin_boards` first.
 
 	The `md|` value looks like:
 
@@ -115,6 +116,7 @@ parse_lin_deal :: proc(text: string) -> (board: Board, err: Lin_Parse_Error) {
 		calls := lin_auction_calls(text, context.temp_allocator)
 		if contract, cok := derive_contract(dealer, calls[:]); cok {
 			board.contract = contract
+			board.play = lin_play(text, board.deal, contract)
 		}
 	}
 	return board, .None

@@ -114,7 +114,7 @@
 		   rest — otherwise the E/W pills, centred in the mid row, misalign when exactly one is dealer. */
 		/* Seat label: a big pill coloured by vulnerability (red = vulnerable, green = not). */
 		.seat .lbl {
-			display: inline-block; font-weight: 700; font-size: 1.7em; line-height: 1;
+			display: inline-block; font-weight: 700; font-size: 1.45em; line-height: 1;
 			padding: 0.02em 0.28em; border-radius: 14px; color: #fff; margin-bottom: 0.25rem;
 		}
 		.seat.vul .lbl { background: var(--red); }
@@ -131,7 +131,12 @@
 			font-size: 0.38em; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sel);
 		}
 		/* Four-colour suits, matching the bidding-system stylesheet (bml.css). */
-		.suit { display: block; white-space: nowrap; }
+		/* Line heights in em of the line's OWN font: tight suit lines, and the small hcp/opc/shape lines no
+		   taller than their text. (The desktop engine inherits `.seat`'s line height as a LENGTH, so without
+		   these a 0.4em line was as tall as a line of cards.) */
+		.suit { display: block; white-space: nowrap; line-height: 1.12em; }
+		.hcp, .opc, .shape { line-height: 1.3em; }
+		.seat .pname { font-family: 'Open Sans', sans-serif; font-size: 0.5em; font-weight: 600; color: #555; display: inline-block; margin-left: 0.9em; vertical-align: middle; }
 		.suit.s { color: Black; }
 		.suit.h { color: Red; }
 		.suit.d { color: Orange; }
@@ -151,6 +156,32 @@
 			font-family: 'Consolas', 'Courier New', monospace; font-size: clamp(0.55rem, 1.35vh, 0.9rem);
 		}
 		.combo .cmini { font-weight: 700; color: var(--sel); letter-spacing: 0.05em; margin-right: 0.45rem; }
+		/* Play-through bar under a board whose record carried the play (see renderPlay in the footer). */
+		.playbar { margin-top: clamp(0.3rem, 0.8vh, 0.7rem); text-align: center; color: #555; font-size: clamp(0.8rem, 1.5vh, 1.05rem); }
+		.playbar button { font: inherit; padding: 0.05rem 0.4rem; margin: 0 0.1rem; border: 1px solid var(--line); background: #f7f7f7; border-radius: 4px; cursor: pointer; }
+		.playbar .pinfo { display: inline-block; margin: 0 0.5rem; }
+		.playbar .ptricks { margin-top: 0.25rem; }
+		.playbar .ptricks button { min-width: 1.7em; padding: 0 0.2rem; font-size: 0.85em; }
+		.playbar button.cur { border-color: var(--sel); color: var(--sel); font-weight: 700; }
+		.playbar button.costly { background: #fde2e2; }
+		.playbar .pnote { min-height: 1.5em; margin-top: 0.2rem; }
+		.playbar .bad { color: var(--red); }
+		/* The trick in the middle is sized like the hands (the same expression as `.seat`), and each card in
+		   it a little larger again: it is the thing being watched. Everything inside is in em of that. */
+		.table.trick { padding: 0.3em 0.4em; font-family: 'Consolas', 'Courier New', monospace; font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem); }
+		.trk { border-collapse: collapse; margin: 0 auto; }
+		.trk td { min-width: 2.4em; height: 1.7em; text-align: center; vertical-align: middle; padding: 0.1em; }
+		.trk .tno { color: rgba(255,255,255,0.6); font-size: 0.6em; }
+		.trk .pc { display: inline-block; background: #fff; color: var(--ink); border-radius: 0.2em; padding: 0.05em 0.3em; font-size: 1.15em; box-shadow: 0 1px 3px rgba(0,0,0,0.35); }
+		.trk .pc.ghost { visibility: hidden; }
+		.trk .pc.won { box-shadow: 0 0 0 0.12em var(--sel); font-weight: 700; }
+		.trk .pc.costly { box-shadow: 0 0 0 0.12em var(--red); }
+		/* Card size (toolbar `cards`): the hands' suit lines and the trick's cards, +20% / +40%. */
+		.cards-l .seat .suit { font-size: 1.2em; }
+		.cards-xl .seat .suit { font-size: 1.4em; }
+		.cards-l .trk .pc { font-size: 1.35em; }
+		.cards-xl .trk .pc { font-size: 1.55em; }
+		.seat.to-play .lbl { box-shadow: 0 0 0 3px #ffd54a; }
 		/* The CCA overlay: a fixed, floating panel with the full trick-chance table for the current
 		   board. position:fixed keeps it OUT of document flow (the board never grows), and it caps its
 		   own height and scrolls internally, so the page itself never gains a scrollbar. */
@@ -303,6 +334,8 @@
 		   script adds .reveal + the text) when a single hand is focused. */
 		.table.reveal { cursor: pointer; background: rgba(255,255,255,0.22); }
 		.table.reveal:hover { background: rgba(255,255,255,0.35); }
+		.trick .reveal-all { margin-top: 0.3em; padding: 0.15em 0.5em; border-radius: 6px; font-family: 'Open Sans', sans-serif; font-size: 0.55em; cursor: pointer; background: rgba(255,255,255,0.22); }
+		.trick .reveal-all:hover { background: rgba(255,255,255,0.35); }
 		/* Single East/West focus: replace the 1fr|auto|1fr grid with a content-hugging flex row so the
 		   felt wraps the big card (the grid's equal 1fr columns would mirror its width as empty green on
 		   the far side), and centre the items vertically so the opposite pill + Reveal-all button sit
@@ -469,6 +502,20 @@
 			.page-title { font-size: 1.6rem; }
 			.compass { padding: 1.5vh 1.8rem; }
 			.seat { font-size: 2.4vh; min-width: 9rem; }
+			.table.trick { font-size: 2.4vh; width: max-content; }
+			/* NO DROP SHADOWS HERE: this engine paints them very slowly. Measured on a 16-board page at
+			   1700x1100: 197ms a paint with them, 16ms with the rings drawn as OUTLINES and the felt and the
+			   hands flat - and every frame of a window resize is a full paint. The big felt's ring alone (a
+			   spread box-shadow the size of the board) cost ~90ms. Browsers keep the shadows (they are only
+			   overridden here). */
+			.slide.active .compass { box-shadow: none; outline: 3px solid var(--sel); }
+			.seat { box-shadow: none; border: 1px solid rgba(0,0,0,0.18); }
+			.seat.is-dealer .lbl { box-shadow: none; outline: 3px solid var(--sel); outline-offset: 3px; }
+			.seat.to-play .lbl { box-shadow: none; outline: 3px solid #ffd54a; }
+			.trk .pc { box-shadow: none; border: 1px solid rgba(0,0,0,0.25); }
+			.trk .pc.won { box-shadow: none; outline: 0.12em solid var(--sel); }
+			.trk .pc.costly { box-shadow: none; outline: 0.12em solid var(--red); }
+			.trk { margin-left: 1*; margin-right: 1*; }
 			.par { font-size: 1.8vh; }
 			.combo { font-size: 1.35vh; }
 			.cca-panel { max-width: 44rem; }
@@ -488,6 +535,10 @@
 			.compass .mid { flow: horizontal; }
 			.compass .mid > .seat-w { margin-right: 3rem; }
 			.compass .mid > .seat-e { margin-left: 3rem; }
+			/* ...and the row centred: a horizontal flow puts its slack on the right, which left the trick off the
+			   board's centre line. The outer margins share the slack. */
+			.compass .mid > .seat-w { margin-left: 1*; }
+			.compass .mid > .seat-e { margin-right: 1*; }
 			.stats .split > * { margin-left: 0.45rem; }
 			.cca-head > *, .cca-foot > * { margin-right: 0.6rem; }
 			.cca-side > *, .cca-obj > *, .cca-strain > *, .cca-mode > * { margin-right: 0.15rem; }
@@ -631,6 +682,12 @@
 			<button data-seat="e">E</button>
 			<button data-seat="s">S</button>
 			<button data-seat="w">W</button>
+		</div>
+		<div class="group" title="Card size: the hands and the trick being played">
+			<span class="lbl-txt">cards</span>
+			<button data-cards="" class="sel">M</button>
+			<button data-cards="l">L</button>
+			<button data-cards="xl">XL</button>
 		</div>
 		<button id="nc-reset" title="Reset every board to the current seat default">Reset</button>
 		<button id="nc-par-toggle">Par</button>

@@ -6,7 +6,6 @@ package cli
 	parse_args is pure, so every branch can be checked directly with no process side effects.
 */
 
-import "core:fmt"
 import "core:strings"
 import "core:testing"
 
@@ -319,119 +318,29 @@ test_parse_combined :: proc(t: ^testing.T) {
 	testing.expect_value(t, seed, u64(9))
 }
 
-// --dd with no --scenario can never fire: both hooks are keyed by scenario name, so plain generation
-// has nothing to look them up with.
+// `--dd` is gone: a scenario's double-dummy hooks are part of it and always apply. `--par` is the run-level
+// switch, and it captions only the scenarios WITHOUT an annotator of their own.
 @(test)
-test_dd_warning_without_scenario :: proc(t: ^testing.T) {
-	registry := []Scenario{{name = "a", predicate = norn.accept_all}}
-	opts := default_options()
-	opts.dd = true
+test_par_captions_the_scenarios_without_their_own :: proc(t: ^testing.T) {
+	_, dd_ok, _ := parse_args({"--dd"})
+	testing.expect(t, !dd_ok, "--dd is no longer an option")
 
-	msg, warned := dd_hooks_warning(registry, opts)
-	testing.expect(t, warned, "--dd without --scenario should warn")
-	testing.expect(t, strings.contains(msg, "--scenario"), msg)
-}
+	opts, ok, msg := parse_args({"--par"})
+	testing.expectf(t, ok, "--par should parse: %s", msg)
+	testing.expect(t, opts.par, "--par sets par")
 
-// A selected scenario present in NEITHER hook map gets a warning naming it; one that has either hook
-// does not. The mixed case names only the hookless scenarios.
-@(test)
-test_dd_warning_hookless_scenarios :: proc(t: ^testing.T) {
-	registry := []Scenario {
-		{name = "hooked", predicate = norn.accept_all},
-		{name = "bare", predicate = norn.accept_all},
-	}
-	filters := make(map[string]norn.Deal_Filter)
-	defer delete(filters)
-	filters["hooked"] = proc(deal: norn.Deal) -> bool {return true}
-
-	opts := default_options()
-	opts.dd = true
-	opts.dd_filters = filters
-
-	// Only the hooked scenario -> silent.
-	opts.scenario = "hooked"
-	_, warned_hooked := dd_hooks_warning(registry, opts)
-	testing.expect(t, !warned_hooked, "a scenario with a filter should not warn")
-
-	// Only the bare one -> the "inert" wording, since NOTHING selected has a hook.
-	opts.scenario = "bare"
-	bare_msg, warned_bare := dd_hooks_warning(registry, opts)
-	testing.expect(t, warned_bare, "a hookless scenario should warn")
-	testing.expect(t, strings.contains(bare_msg, "inert"), bare_msg)
-	testing.expect(t, strings.contains(bare_msg, "bare"), bare_msg)
-
-	// Both -> partial wording, naming only the hookless one.
-	opts.scenario = "hooked,bare"
-	mixed_msg, warned_mixed := dd_hooks_warning(registry, opts)
-	testing.expect(t, warned_mixed, "a mixed selection should warn about the hookless part")
-	testing.expect(t, !strings.contains(mixed_msg, "inert"), mixed_msg)
-	testing.expect(t, strings.contains(mixed_msg, "bare"), mixed_msg)
-	testing.expect(t, !strings.contains(mixed_msg, "hooked"), mixed_msg)
-}
-
-// An annotator alone is enough for --dd to do something (the caption), so no warning.
-@(test)
-test_dd_warning_annotator_only :: proc(t: ^testing.T) {
-	registry := []Scenario{{name = "a", predicate = norn.accept_all}}
+	own := proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output_Format) {}
+	par := proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output_Format) {}
 	annotators := make(map[string]norn.Deal_Annotator)
 	defer delete(annotators)
-	annotators["a"] = proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output_Format) {}
-
-	opts := default_options()
-	opts.dd = true
-	opts.scenario = "a"
+	annotators["captioned"] = own
 	opts.dd_annotators = annotators
 
-	_, warned := dd_hooks_warning(registry, opts)
-	testing.expect(t, !warned, "an annotator alone should silence the warning")
-}
-
-// A batch mode with no --scenario means the WHOLE registry, so the no-scenario shortcut must not
-// fire there: the per-scenario check runs instead.
-@(test)
-test_dd_warning_batch_covers_whole_registry :: proc(t: ^testing.T) {
-	registry := []Scenario {
-		{name = "hooked", predicate = norn.accept_all},
-		{name = "bare", predicate = norn.accept_all},
-	}
-	filters := make(map[string]norn.Deal_Filter)
-	defer delete(filters)
-	filters["hooked"] = proc(deal: norn.Deal) -> bool {return true}
-
-	opts := default_options()
-	opts.dd = true
-	opts.mode = Export_Html {
-		dir = "./out",
-	}
-	opts.dd_filters = filters
-
-	msg, warned := dd_hooks_warning(registry, opts)
-	testing.expect(t, warned, "a batch export should warn about hookless scenarios")
-	testing.expect(t, strings.contains(msg, "bare"), msg)
-	testing.expect(t, !strings.contains(msg, "--scenario"), msg)
-}
-
-// A whole-registry batch is a routine command, so its warning summarises past DD_WARNING_NAME_LIMIT
-// rather than listing every scenario.
-@(test)
-test_dd_warning_caps_the_name_list :: proc(t: ^testing.T) {
-	registry := make([]Scenario, DD_WARNING_NAME_LIMIT + 3)
-	defer delete(registry)
-	for &s, i in registry {
-		s = Scenario {
-			name      = fmt.tprintf("s%d", i),
-			predicate = norn.accept_all,
-		}
-	}
-
-	opts := default_options()
-	opts.dd = true
-	opts.mode = Export_Html {
-		dir = "./out",
-	}
-
-	msg, warned := dd_hooks_warning(registry, opts)
-	testing.expect(t, warned, "a hookless registry should warn")
-	testing.expect(t, strings.contains(msg, "and 3 more"), msg)
-	testing.expect(t, !strings.contains(msg, "s7"), msg)
+	opts.par = false
+	testing.expect(t, annotator_for(opts, "captioned") == own, "a scenario's own annotator always applies")
+	testing.expect(t, annotator_for(opts, "bare") == nil, "without --par a bare scenario has none")
+	opts.par = true
+	opts.par_annotator = par
+	testing.expect(t, annotator_for(opts, "captioned") == own, "--par does not replace a scenario's own")
+	testing.expect(t, annotator_for(opts, "bare") == par, "--par captions the rest")
 }

@@ -60,7 +60,7 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 			predeal = opts.predeal,
 			smartstack = ss,
 			// No scenario selected -> no scenario name to key an annotator on, so plain generation is
-			// never annotated (annotation is a per-scenario hook). Use -S with --dd to annotate.
+			// never annotated (annotation is a per-scenario hook). Use -S to annotate.
 		)
 	} else {
 		// Reject sampling: deal until `count` deals satisfy the scenario. Report the hit rate on
@@ -74,7 +74,7 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 			predeal = opts.predeal,
 			smartstack = ss,
 			deal_filter = opts.dd_filters[scenario.name],
-			annotate = opts.dd_annotators[scenario.name],
+			annotate = annotator_for(opts, scenario.name),
 			page_title = scenario_title(scenario),
 		)
 		fmt.eprintfln(
@@ -226,7 +226,7 @@ export_all_html :: proc(registry: []Scenario, opts: Options, mode: Export_Html) 
 			predeal         = opts.predeal,
 			smartstack      = ss,
 			deal_filter     = opts.dd_filters[s.name],
-			annotate        = opts.dd_annotators[s.name],
+			annotate        = annotator_for(opts, s.name),
 			page_title      = scenario_title(s),
 			builder         = &builders[i],
 		}
@@ -237,8 +237,8 @@ export_all_html :: proc(registry: []Scenario, opts: Options, mode: Export_Html) 
 	// transposition tables and can't overlap, so they run serially AFTER the pool drains. Each DDS
 	// scenario still uses DDS's own internal threads, so "serial" is per-scenario, not per-core.
 	//
-	// Both hooks are per-scenario (keyed by name in opts.dd_filters / opts.dd_annotators), so a
-	// scenario with neither stays on the pool. Annotate every scenario and the pool empties — they all
+	// Both hooks are per-scenario (keyed by name in opts.dd_filters / opts.dd_annotators, plus the
+	// `--par` annotator for every scenario without one), so a scenario with neither stays on the pool. Annotate every scenario and the pool empties — they all
 	// serialize — which is fine: each is still DDS-parallel internally.
 	if thread_count <= 1 {
 		// Single core (or a lone scenario): skip the pool machinery and run everything inline.
@@ -437,7 +437,7 @@ measure_frequencies :: proc(
 			s.predicate,
 			opts.predeal,
 			ss,
-			opts.dd_filters[s.name], // nil unless --dd resolved a filter for this scenario
+			opts.dd_filters[s.name], // nil unless the scenario has a double-dummy filter
 			&results[i],
 		}
 	}

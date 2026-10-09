@@ -113,12 +113,13 @@ Options :: struct {
 	// Mutually exclusive with --predeal (it already lays out a whole seat). Applies to every
 	// generation path. Big by value, but Options is not copied on a hot path.
 	smartstack:      Maybe(norn.Smart_Stack),
-	// When true (--dd), the consumer's double-dummy hooks are enabled. parse_args only sets the flag;
-	// the hooks themselves come from code (main_program wires them from its Gen_Hooks argument), so
-	// this package stays solver-agnostic. Off by default: the base generator never calls a solver.
-	dd:              bool,
-	// Consumer-supplied generation hooks, wired in by main_program when `dd` is set (never by
-	// parse_args — they are function values, not command-line data). Empty/nil unless --dd was passed.
+	// When true (--par), every scenario WITHOUT an annotator of its own is captioned by `par_annotator`
+	// (the consumer's, wired in by main_program). parse_args only sets the flag, so this package stays
+	// solver-agnostic.
+	par:             bool,
+	par_annotator:   norn.Deal_Annotator,
+	// Consumer-supplied generation hooks, wired in by main_program (never by parse_args — they are function
+	// values, not command-line data). They are part of the scenarios they name and always apply.
 	//
 	// Both maps are keyed by scenario name, so each scenario carries its OWN double-dummy hooks (a
 	// preempt defence and a slam scenario want different tests / captions); a scenario absent from a
@@ -140,7 +141,7 @@ default_options :: proc() -> Options {
 		randomize_table = true,
 		predeal = nil,
 		smartstack = nil,
-		dd = false,
+		par = false,
 	}
 }
 
@@ -177,8 +178,8 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 		case "--fixed-table":
 			opts.randomize_table = false
 
-		case "--dd":
-			opts.dd = true
+		case "--par":
+			opts.par = true
 
 		case "-S", "--scenario":
 			value, got, why := take_value(has_inline, inline_value, args, &i, flag)
@@ -341,4 +342,12 @@ parse_format :: proc(name: string) -> (format: norn.Output_Format, ok: bool) {
 		return .Numeric, true
 	}
 	return .Line, false
+}
+
+// The annotator a scenario's deals get: its own, else the `--par` one when that is on, else none.
+annotator_for :: proc(opts: Options, name: string) -> norn.Deal_Annotator {
+	if own, has := opts.dd_annotators[name]; has && own != nil {
+		return own
+	}
+	return opts.par_annotator if opts.par else nil
 }
