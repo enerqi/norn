@@ -19,8 +19,8 @@
 				<span class="cca-lead" id="nc-cca-lead" hidden title="Condition the simulated make-% on the opening lead (a defender holding that exact card)">
 					 <span class="lbl-txt">lead</span><select id="nc-cca-lead-sel"><option value="">none</option></select>
 				</span>
-				<button class="x" id="nc-cca-opp-btn" hidden title="Enter a known opponent length to re-weight the odds (vacant space / a-posteriori)">&ge;</button>
-				<button class="x" id="nc-cca-rows" title="Collapse the per-suit rows (show only the totals) to save height">&#9662;</button>
+				<button class="x" id="nc-cca-opp-btn" hidden title="Enter a known opponent length to re-weight the odds (vacant space / a-posteriori)">length &#9656;</button>
+				<button class="x" id="nc-cca-rows" title="Collapse the per-suit rows (show only the totals) to save height">suits &#9662;</button>
 				<button class="x" id="nc-cca-narrow" title="Narrow the panel (keeps the hands visible on small screens; the trick table scrolls sideways)">&#8596;</button>
 				<button class="help" id="nc-cca-help" title="What is this?">?</button>
 				<button class="x" id="nc-cca-close" title="Close">&#10005;</button>
@@ -129,7 +129,7 @@
 				<h3>Known opponent length (vacant space)</h3>
 				<p>The default figures assume you know <i>nothing</i> about the opponents' shape: every split of their
 					cards is weighted only by how likely it is a priori. Often you know more &mdash; a defender
-					pre-empted, showed out, or the bidding marked length. The <b>&ge;</b> button (top right, on boards
+					pre-empted, showed out, or the bidding marked length. The <b>length</b> button (top right, on boards
 					that support it) opens a little grid: two rows, one per defender, four suit columns. Type the
 					<b>fewest</b> cards a defender is known to hold in a suit &mdash; e.g. a <b>3&hearts;</b> opener sitting
 					East is "E &hearts; &ge; 6".</p>
@@ -198,6 +198,27 @@
 		  var DESKTOP = !!(typeof Window !== 'undefined' && Window.this);
 		  function viewW() { return document.documentElement.clientWidth; }
 		  function viewH() { return document.documentElement.clientHeight; }
+		  // The desktop's stand-ins for `vw`/`vh` (see the `nc-…` variables in the `@media sciter` block): a
+		  // viewport unit made every frame of a window resize restyle the whole page there, so the lengths
+		  // are variables set HERE, once a size has settled. `nc-h240` = 2.4% of the view's height. Only
+		  // when the size really changed: setting them restyles every board once. A browser keeps its units.
+		  var VIEW_UNITS = { 'nc-h080': 0.8, 'nc-h110': 1.1, 'nc-h135': 1.35, 'nc-h150': 1.5, 'nc-h180': 1.8,
+							 'nc-h240': 2.4, 'nc-h400': 4, 'nc-h840': 84, 'nc-h880': 88, 'nc-w700': 7, 'nc-w960': 96 };
+		  var unitsW = -1, unitsH = -1;
+		  function setViewUnits() {
+				if (!DESKTOP) return false;
+				var w = viewW(), h = viewH();
+				if (w === unitsW && h === unitsH) return false;
+				unitsW = w; unitsH = h;
+				var vars = {};
+				for (var name in VIEW_UNITS) {
+					 var of = name.charAt(3) === 'w' ? w : h;
+					 vars[name] = (of * VIEW_UNITS[name] / 100).toFixed(2) + 'px';
+				}
+				document.documentElement.style.variables(vars);
+				return true;
+		  }
+		  setViewUnits();
 		  // Which event a control raises for "the user changed me" is the one place the two engines were
 		  // not measurably identical (a slider drag cannot be synthesised in a test), so the handlers that
 		  // matter are registered for both names. Every one of them re-renders from the control's CURRENT
@@ -261,7 +282,7 @@
 				// Not WHILE a size is changing: tucking every board is a run of forced layouts (clear the margins,
 				// measure six boxes, write them back), and during a window drag it ran on every step. The trailing
 				// `show` below tucks once the size has settled.
-				if (!resizing) tuckLaidOut();
+				if (!resizing) { setViewUnits(); tuckLaidOut(); }
 				padTrack();
 				var s = slides[idx];
 				if (s) scrollToPx(centreScrollFor(s), true);
@@ -399,6 +420,7 @@
 				mid.style.removeProperty('margin-top');
 				mid.style.removeProperty('position');
 				S.style.removeProperty('margin-top');
+				S.style.removeProperty('position');
 				W.style.removeProperty('min-width');
 				E.style.removeProperty('min-width');
 				if (seatFor(i)) return; // one hand enlarged: that layout is its own
@@ -437,7 +459,15 @@
 				}
 				if (clear(so)) {
 					 var lift = Math.min(so.top - t.bottom - TUCK_PAD, so.bottom - Math.max(w.bottom, e.bottom));
-					 if (lift > 1) S.style.setProperty('margin-top', -Math.floor(lift * k) + 'px');
+					 // In a BROWSER South is positioned as well, for the same hit-testing reason: the lifted
+					 // (positioned) middle row is otherwise above South, and South's pill, now inside the row's band,
+					 // took no clicks (reported). Both positioned, the later one - South - is on top. NOT in the desktop
+					 // engine: its hit-testing never had this fault (page-check: every seat's pill takes a click), and
+					 // a positioned South there brought back the Par button's stale redraw (reported).
+					 if (lift > 1) {
+						  S.style.setProperty('margin-top', -Math.floor(lift * k) + 'px');
+						  if (!DESKTOP) S.style.setProperty('position', 'relative');
+					 }
 				}
 		  }
 		  function tuckLaidOut() {
@@ -688,9 +718,16 @@
 				if (PLAY_KEYS[pressed] && playOf(idx)) { playCmd(idx, PLAY_KEYS[pressed]); return; }
 				if (pressed === 'ArrowLeft') { show(idx - 1); return; }
 				if (pressed === 'ArrowRight') { show(idx + 1); return; }
-				// a = all seats, n/e/s/w = just that seat — press the matching toolbar button so the
-				// click handler (class + highlight) runs, keeping keyboard and buttons in lockstep.
+				// a = all seats, n/e/s/w = just that seat, and m/l/x = the card size - press the matching
+				// toolbar button so the click handler (class + highlight) runs, keeping keyboard and buttons in
+				// lockstep.
 				var k = pressed.toLowerCase();
+				var size = { m: '', l: 'l', x: 'xl' }[k];
+				if (size !== undefined) {
+					 var sizeBtn = document.querySelector('[data-cards="' + size + '"]');
+					 if (sizeBtn) sizeBtn.click();
+					 return;
+				}
 				var seat = (k === 'a') ? '' : ((k === 'n' || k === 'e' || k === 's' || k === 'w') ? k : null);
 				if (seat === null) return;
 				var btn = document.querySelector('[data-seat="' + seat + '"]');
@@ -826,10 +863,222 @@
 				recentre();
 		  });
 
+		  // BBO LINK: the current board as a bridgebase.com hand-viewer link, on the clipboard - the cheapest
+		  // way to send one board to someone, since every bridge player can open it. The query is baked into
+		  // each board (`data-hv`), so nothing here knows the card notation. The desktop engine's copy is its
+		  // global `Clipboard.writeText`, and it is asked FIRST: it also has a `navigator.clipboard` whose
+		  // write rejects (an unhandled rejection in the console). A browser's write is a promise, handled.
+		  var bboBtn = document.getElementById('nc-bbo');
+		  function copyText(text) {
+				try { if (DESKTOP && typeof Clipboard !== 'undefined' && typeof Clipboard.writeText === 'function') return Clipboard.writeText(text) !== false; } catch (e) {}
+				try {
+					 if (navigator.clipboard && navigator.clipboard.writeText) {
+						  var p = navigator.clipboard.writeText(text);
+						  if (p && p.catch) p.catch(function () { bboBtn.textContent = 'copy failed'; bboBtn.title = text; });
+						  return true;
+					 }
+				} catch (e) {}
+				return false;
+		  }
+		  var bboT = null;
+		  bboBtn.onclick = function () {
+				var c = slides[idx] && slides[idx].querySelector('.compass');
+				var q = c && c.getAttribute('data-hv');
+				if (!q) return;
+				var url = 'https://www.bridgebase.com/tools/handviewer.html?' + q;
+				var ok = copyText(url);
+				// Say so on the button, then put it back. A refused copy leaves the link in the tooltip.
+				bboBtn.textContent = ok ? 'copied ✓' : 'copy failed';
+				if (!ok) bboBtn.title = url;
+				clearTimeout(bboT);
+				bboT = setTimeout(function () { bboBtn.textContent = 'BBO link'; }, 1600);
+		  };
+
+		  // SHARE: every board on the page as ONE link, `<player>#v1.<payload>`, which a fixed player page (norn in
+		  // WebAssembly) turns back into this page in the reader's browser - nothing is uploaded. The format is
+		  // the notes repo's `share` package (deal-simulations/odin-sims/share/share.odin), and the parts of it
+		  // that are not trivial are NOT redone here: each board's deal and table come from its `data-hv` (as
+		  // the BBO link does), its par from the bytes its caption already carries (`data-par`), and a 2-hand
+		  // board's CCA target from its `.par`'s `data-target`. What is here is the packing: 2 bits a card, a
+		  // table byte, a header with the title. `ncShareFragment` is global so a test can hold it to Odin's.
+		  //
+		  // The player is wherever this page's writer published it (`<meta name="nc-share-player">`); a page
+		  // that was itself opened from a link is the player, so its own address serves.
+		  var shareBtn = document.getElementById('nc-share');
+		  // base64url by hand: the desktop engine's script has no `atob`/`btoa`.
+		  var B64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+		  function bytesOfB64url(text) {
+				var out = [], bits = 0, acc = 0;
+				for (var i = 0; i < text.length; i++) {
+					 var v = B64URL.indexOf(text.charAt(i));
+					 if (v < 0) continue;
+					 acc = (acc << 6) | v; bits += 6;
+					 if (bits >= 8) { bits -= 8; out.push((acc >> bits) & 255); }
+				}
+				return out;
+		  }
+		  function b64urlOfBytes(bytes) {
+				var out = '', bits = 0, acc = 0;
+				for (var i = 0; i < bytes.length; i++) {
+					 acc = ((acc & 0xFFFF) << 8) | bytes[i]; bits += 8;
+					 while (bits >= 6) { bits -= 6; out += B64URL.charAt((acc >> bits) & 63); }
+				}
+				if (bits > 0) out += B64URL.charAt((acc << (6 - bits)) & 63);
+				return out;
+		  }
+		  var SHARE_SEAT = { n: 0, e: 1, s: 2, w: 3 }, SHARE_SUIT = { c: 0, d: 1, h: 2, s: 3 };
+		  function shareBoardBytes(slide) {
+				var compass = slide.querySelector('.compass');
+				var q = compass && compass.getAttribute('data-hv');
+				if (!q) return null;
+				var owner = [], known = 0, vul = -1;
+				for (var c = 0; c < 52; c++) owner.push(-1);
+				var fields = q.split('&');
+				for (var f = 0; f < fields.length; f++) {
+					 var key = fields[f].charAt(0), value = fields[f].slice(2);
+					 if (key in SHARE_SEAT) {
+						  var seat = SHARE_SEAT[key], suit = -1, count = 0;
+						  for (var i = 0; i < value.length; i++) {
+								var ch = value.charAt(i);
+								if (ch in SHARE_SUIT) { suit = SHARE_SUIT[ch]; continue; }
+								var rank = '23456789TJQKA'.indexOf(ch);
+								if (rank < 0 || suit < 0) return null;
+								var card = suit * 13 + rank;
+								if (owner[card] >= 0) return null;
+								owner[card] = seat; count++;
+						  }
+						  if (count !== 13) return null;
+						  known |= 1 << seat;
+					 } else if (key === 'v') {
+						  vul = '-neb'.indexOf(value);
+					 }
+				}
+				var sides = known === 15 ? 0 : known === 5 ? 1 : known === 10 ? 2 : -1;
+				if (vul < 0 || sides < 0) return null;
+				// The hands nobody shows get the other cards in card order, as `boards_from_page` deals them.
+				for (var s = 0, next = 0; s < 4; s++) {
+					 if (known & (1 << s)) continue;
+					 for (var n = 0; n < 13; n++) { while (owner[next] >= 0) next++; owner[next] = s; }
+				}
+				var bytes = [];
+				for (var b = 0; b < 13; b++) bytes.push(0);
+				for (var card2 = 0; card2 < 52; card2++) bytes[card2 >> 2] |= owner[card2] << ((card2 & 3) * 2);
+				var dealer = 4, marked = compass.querySelector('.is-dealer');
+				if (marked) {
+					 var m = /seat-([nesw])/.exec(marked.className);
+					 if (m) dealer = SHARE_SEAT[m[1]];
+				}
+				var extra = [];
+				if (sides === 0) {
+					 var parEl = slide.querySelector('[data-par]');
+					 if (parEl) extra = bytesOfB64url(parEl.getAttribute('data-par'));
+				} else {
+					 var tEl = slide.querySelector('.par[data-target]');
+					 var target = tEl ? parseInt(tEl.getAttribute('data-target'), 10) : 0;
+					 if (target >= 1 && target <= 13) extra = [target];
+				}
+				bytes.push(vul | dealer << 2 | sides << 5 | (extra.length ? 0x80 : 0));
+				return bytes.concat(extra);
+		  }
+		  window.ncShareFragment = function () {
+				// The title as UTF-8, at most 255 bytes, never cut inside a character.
+				// `document.title` is empty in the desktop engine (measured, page-check): read the element too.
+				var titleEl = document.querySelector('title');
+				var rawTitle = document.title || (titleEl ? titleEl.textContent : '') || '';
+				// UTF-8 by hand: `unescape(encodeURIComponent(..))` double-encodes in the desktop engine (measured).
+				var text = rawTitle.trim(), title = [];
+				for (var ci = 0; ci < text.length; ci++) {
+					 var cp = text.charCodeAt(ci);
+					 if (cp >= 0xD800 && cp < 0xDC00 && ci + 1 < text.length) {
+						  cp = 0x10000 + ((cp - 0xD800) << 10) + (text.charCodeAt(++ci) - 0xDC00);
+					 }
+					 if (cp < 0x80) title.push(cp);
+					 else if (cp < 0x800) title.push(0xC0 | cp >> 6, 0x80 | cp & 63);
+					 else if (cp < 0x10000) title.push(0xE0 | cp >> 12, 0x80 | cp >> 6 & 63, 0x80 | cp & 63);
+					 else title.push(0xF0 | cp >> 18, 0x80 | cp >> 12 & 63, 0x80 | cp >> 6 & 63, 0x80 | cp & 63);
+				}
+				if (title.length > 255) {
+					 var end = 255;
+					 while (end > 0 && (title[end] & 0xC0) === 0x80) end--;
+					 title = title.slice(0, end);
+				}
+				var bytes = [document.querySelector('.combo') ? 1 : 0, title.length].concat(title);
+				for (var i = 0; i < slides.length; i++) {
+					 var board = shareBoardBytes(slides[i]);
+					 if (!board) return null;
+					 bytes = bytes.concat(board);
+				}
+				return 'v1.' + b64urlOfBytes(bytes);
+		  };
+		  // Where the link opens, best first: the published player this page was written with; the player this
+		  // page was itself opened through; else `player.html` BESIDE this page - the workbench keeps a current
+		  // one in its deals folder - which works on this computer, or anywhere once the folder is online.
+		  // `local` says it is that last one, so the button can say so.
+		  function sharePlayer() {
+				var meta = document.querySelector('meta[name="nc-share-player"]');
+				var address = meta ? (meta.getAttribute('content') || '').trim() : '';
+				if (address) return { url: address.split('#')[0], local: false };
+				var here = '';
+				try { here = String(location.href || document.URL || ''); } catch (e) { here = ''; }
+				if (here.indexOf('#v1.') > 0) return { url: here.split('#')[0], local: false };
+				if (/^(file|https?):/.test(here)) {
+					 var base = here.split('#')[0].split('?')[0];
+					 return { url: base.slice(0, base.lastIndexOf('/') + 1) + 'player.html', local: true };
+				}
+				return null;
+		  }
+		  var shareT = null;
+		  function shareSay(text) {
+				shareBtn.textContent = text;
+				clearTimeout(shareT);
+				shareT = setTimeout(function () { shareBtn.textContent = 'Share'; }, 2200);
+		  }
+		  shareBtn.onclick = function () {
+				var player = sharePlayer();
+				if (!player) {
+					 shareBtn.title = 'This page does not say where the shared-deals player is, so it cannot make a link. ' +
+						  'Use the workbench\'s own share link, or set where the player is published (Settings, Sharing) and generate the page again.';
+					 shareSay('no player set');
+					 return;
+				}
+				var fragment = window.ncShareFragment();
+				if (!fragment) { shareSay('cannot share'); return; }
+				var url = player.url + '#' + fragment;
+				var ok = copyText(url);
+				shareBtn.title = !ok ? url : player.local
+					 ? 'The link opens player.html beside this page: on this computer, or for anyone once this folder is online. ' +
+						'To send links elsewhere, set where the player is published (workbench Settings, Sharing).'
+					 : 'Copy a link that opens all these deals, as this page, in any browser - nothing is uploaded';
+				shareSay(!ok ? 'copy failed' : player.local ? 'link copied (this computer) ✓' : 'link copied ✓');
+		  };
+
 		  var parToggle = document.getElementById('nc-par-toggle');
 		  parToggle.onclick = function () {
-				track.classList.toggle('hide-par');
-				parToggle.classList.toggle('off');
+				var off = !track.classList.contains('hide-par');
+				// On each caption as well as on the track: the desktop engine does not restyle a hidden caption
+				// when only the TRACK's class goes (measured - Par switched off and stayed off until the board
+				// changed), while an element's own class change always restyles it.
+				var caps = track.querySelectorAll('.par, .combo');
+				for (var c = 0; c < caps.length; c++) {
+					 if (off) caps[c].classList.add('cap-off'); else caps[c].classList.remove('cap-off');
+					 // On the desktop the class alone was not enough either: the window showed the change only
+					 // at the next click. An INLINE display is applied by that engine directly.
+					 if (DESKTOP) {
+						  if (off) caps[c].style.setProperty('display', 'none');
+						  else caps[c].style.removeProperty('display');
+					 }
+				}
+				if (off) { track.classList.add('hide-par'); parToggle.classList.add('off'); }
+				else { track.classList.remove('hide-par'); parToggle.classList.remove('off'); }
+				// And SHOW it: in the desktop window the restyled captions were not drawn until the next click
+				// (the windowless check, which paints every frame, could not see that). The board's height has
+				// changed too, so it is re-centred - which is what changing hand did, and why that fixed it.
+				if (track.requestPaint) track.requestPaint();
+				// Centred TWICE (`recentre`), as the seat buttons are: the board's new height lands at the engine's
+				// next restyle, AFTER this handler (real-window probe: still 557px when it returned, 591px at
+				// 50ms), so a `show` from here alone centred and drew the old box and the caption waited for the
+				// next click. The delayed second `show` is what brings it on screen.
+				recentre();
 		  };
 
 		  // --- Combo trick-chance analysis (client-side) ---------------------------------------
@@ -1366,6 +1615,7 @@
 				else if (r.left < M) { ccaPanel.style.setProperty('left', M + 'px'); }
 		  }
 
+		  var ccaZoomF = 1, ccaCssW = 0; // what positionCca chose last: the panel's zoom factor and CSS width
 		  function positionCca() {
 				if (!ccaOpen) return;
 				setTimeout(clampCcaIntoView, 0);
@@ -1388,17 +1638,77 @@
 				// columns do not depend on the target, the header wraps happily (`flow: horizontal-wrap`), and
 				// anything still wider scrolls inside `#nc-cca-body`.
 				if (DESKTOP) {
-					 s.removeProperty('width');
+					 // SCREEN PX AND CSS PX ARE NOT THE SAME HERE. Boxes are read on screen, a width is written in
+					 // CSS px, and the page's own zoom (91%, 125%…) and the display's scaling sit between them -
+					 // measured: a 549px width drew 500px wide under a 91% page, around a table 527px wide, so the
+					 // panel cut its last columns off (reported). So: write a provisional width, read back what it
+					 // drew, and size from that ratio, whatever the zoom is.
+					 //
+					 // STEADY: nothing here is undone and redone on every call. A re-placement that took the zoom
+					 // off to measure and put it back made the panel shake in the window after the board was
+					 // scrolled (reported) - so the factor and the width this code chose are remembered, and
+					 // changed only when the answer changes.
+					 // The page's own zoom, as the host set it on the root (the workbench's page zoom). Read there
+					 // rather than off the panel, where a zoom this code set would be read back instead.
+					 var base = parseFloat(document.documentElement.style.getPropertyValue('zoom')) || 1;
 					 var table = ccaPanel.querySelector('.ct');
-					 var pad = 0, cs = getComputedStyle(ccaPanel);
-					 pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
-					 var want = table ? Math.ceil(table.getBoundingClientRect().width) + pad + 2 : 0;
-					 if (want > 0) { s.setProperty('width', Math.min(want, vw - 2 * M) + 'px'); }
+					 var cs = getComputedStyle(ccaPanel);
+					 var pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0) + 2;
+					 var tw = table ? table.getBoundingClientRect().width : 0;
+					 if (tw > 0) {
+						  if (!(ccaCssW > 0)) { ccaCssW = Math.ceil(tw + pad); s.setProperty('width', ccaCssW + 'px'); }
+						  var drawn = ccaPanel.getBoundingClientRect().width;
+						  var scale = drawn > 0 ? drawn / ccaCssW : 1; // screen px per CSS px, zoom included
+						  var w = Math.ceil(Math.min(tw / scale + pad, (vw - 2 * M) / scale));
+						  if (Math.abs(w - ccaCssW) > 1) { ccaCssW = w; s.setProperty('width', w + 'px'); }
+					 }
+					 // BIGGER WHEN THERE IS ROOM (asked for: larger text "for poor eyesight"). The whole panel is
+					 // scaled with `zoom` (its rules are in rem, which a font-size would not reach) by as much as
+					 // the free space BELOW THE BOARD allows (not covering the captions there), up to 1.6x. An
+					 // element's zoom here reads back as the one it inherits and is set as an absolute, so the
+					 // factor goes on top of the page's own. Its size at factor 1 is today's size / the factor.
+					 // The page zoom changed under a zoomed panel: its absolute zoom follows FIRST, so the fit test
+					 // below sees the panel as it now draws (and shrinks it if the new page zoom made it too big).
+					 if (ccaZoomF > 1) {
+						  var applied = parseFloat(s.getPropertyValue('zoom')) || 1;
+						  if (Math.abs(applied - base * ccaZoomF) > 0.01) s.setProperty('zoom', String(Math.round(base * ccaZoomF * 100) / 100));
+					 }
+					 var now = ccaPanel.getBoundingClientRect();
+					 var low = 0;
+					 slide.querySelectorAll('.compass, .par, .combo').forEach(function (el) {
+						  var r = el.getBoundingClientRect();
+						  if (r.height > 0 && r.bottom > low) low = r.bottom;
+					 });
+					 var roomH = vh - low - 2 * M, roomW = vw - 2 * M;
+					 var natW = (now.right - now.left) / ccaZoomF, natH = (now.bottom - now.top) / ccaZoomF;
+					 var fit = Math.min(1.6, roomW / (natW || 1), roomH / (natH || 1));
+					 var want = Math.floor(fit * 10) / 10;
+					 if (want < 1.1) want = 1;
+					 // HYSTERESIS: grow only by a clear step, shrink only when the panel no longer fits - so two
+					 // neighbouring answers (1.5 / 1.6) cannot alternate call after call.
+					 var fits = (now.bottom - now.top) <= roomH && (now.right - now.left) <= roomW;
+					 if (fits && want < ccaZoomF + 0.2) want = ccaZoomF;
+					 if (!fits && want >= ccaZoomF) want = Math.round((ccaZoomF - 0.1) * 10) / 10;
+					 if (want < 1.1) want = 1;
+					 if (want !== ccaZoomF) {
+						  // Then CHECKED, not trusted: the drawn panel has to clear the board's lowest line (a
+						  // prediction came out 8px over the caption in page-check), so stepped down until it does.
+						  var f = want;
+						  for (; f >= 1.1; f = Math.round((f - 0.1) * 10) / 10) {
+								s.setProperty('zoom', String(Math.round(base * f * 100) / 100));
+								var zr = ccaPanel.getBoundingClientRect();
+								if ((zr.bottom - zr.top) <= roomH && (zr.right - zr.left) <= roomW) break;
+						  }
+						  if (f < 1.1) { f = 1; s.removeProperty('zoom'); }
+						  ccaZoomF = f;
+					 }
 				}
 				s.setProperty('top', 'auto');
 				s.setProperty('left', M + 'px');
 				s.setProperty('bottom', M + 'px');
-				var pw = ccaPanel.offsetWidth, ph = ccaPanel.offsetHeight;
+				// The box ON SCREEN, zoom included (offsetWidth/Height report the unzoomed layout box).
+				var pbox = ccaPanel.getBoundingClientRect();
+				var pw = pbox.right - pbox.left, ph = pbox.bottom - pbox.top;
 				// What the panel must keep clear: the visible (real-card) hands — unknown seats render face-down
 				// ('?'), so they do not count — AND the par/combo caption lines under the board, which carry the
 				// score and are the reason a bottom anchor used to be LIFTED. Scoring them like everything else
@@ -1522,8 +1832,9 @@
 				ccaPanel.classList.toggle('suits-collapsed', ccaSuitsCollapsed);
 				if (rowsBtn) {
 					 rowsBtn.classList.toggle('sel', ccaSuitsCollapsed);
-					 // Disclosure triangle: ▾ when the suit rows are shown (click to fold up), ▸ when collapsed.
-					 rowsBtn.innerHTML = ccaSuitsCollapsed ? '&#9656;' : '&#9662;';
+					 // A WORD AND A TRIANGLE: ▾ when the suit rows are shown, ▸ when collapsed. The word because a
+					 // bare triangle beside the opponent-length button's read as the same control (reported).
+					 rowsBtn.innerHTML = ccaSuitsCollapsed ? 'suits &#9656;' : 'suits &#9662;';
 					 rowsBtn.title = ccaSuitsCollapsed ? 'Show the per-suit rows' : 'Collapse the per-suit rows (show only the totals) to save height';
 				}
 		  }
@@ -1570,6 +1881,8 @@
 				if (!has) { ccaOppOpen = false; if (oppBtn) oppBtn.classList.remove('sel'); }
 				if (oppWrap) setHidden(oppWrap, !(has && ccaOppOpen));
 				if (oppBtn) oppBtn.classList.toggle('sel', has && ccaOppOpen);
+				// Its triangle says whether the grid is open (it was a bare `≥`, read as an arrow that never moved).
+				if (oppBtn) oppBtn.innerHTML = (has && ccaOppOpen) ? 'length &#9662;' : 'length &#9656;';
 				var defs = ccaSide === 'ew' ? ['N', 'S'] : ['E', 'W'];
 				if (oppLoLbl) oppLoLbl.textContent = defs[0];
 				if (oppHiLbl) oppHiLbl.textContent = defs[1];
@@ -1826,6 +2139,12 @@
 		  document.addEventListener('mouseout', function (e) { if (tipTarget(e) && tipEl) setHidden(tipEl, true); });
 
 		  if (combos.length === 0 && ccaBtn) ccaBtn.style.display = 'none';
+		  // Par toggles the par captions and the combo summary lines; a page with neither has nothing for it to
+		  // do. Without `--par` a board's `.par` is still there but EMPTY - only a holder for `data-target` /
+		  // `data-sim` - so it counts only when it has text (measured in the workbench: Par on such a page
+		  // flipped `display` on an empty caption and nothing on screen changed, which read as a repaint bug).
+		  var hasPar = Array.prototype.some.call(track.querySelectorAll('.par'), function (p) { return (p.textContent || '').trim() !== ''; });
+		  if (!hasPar && combos.length === 0) parToggle.style.display = 'none';
 
 		  // Resize arrives once per mouse move while a window edge is dragged, and `show` is not free: it
 		  // re-renders the overlay table and re-places the panel. Re-centre on every event (one measurement and
@@ -1846,10 +2165,23 @@
 					 var s = slides[idx], was = s ? offCentre(s) : 0;
 					 parkFarSlides(idx, 0);
 					 if (s) scrollToPx(Math.max(0, Math.round(viewport.scrollLeft + offCentre(s) - was)), true);
+					 seenSize = watchedSize();
 				}
 				refit(true);
 				clearTimeout(resizeT);
-				resizeT = setTimeout(function () { resizing = false; show(idx, true); }, 350);
+				resizeT = setTimeout(function () {
+					 resizing = false;
+					 // New card sizes land at the engine's next restyle, not here, so a board centred now is centred on
+					 // the OLD sizes (measured: 35px off after a 500px widening) - `recentre` centres again once settled.
+					 if (setViewUnits()) recentre(); else show(idx, true);
+					 // What the page itself just changed is not a resize. Parking the neighbours and bringing
+					 // them back changes the carousel's height whenever a neighbour is taller than the active
+					 // board (measured in a browser: 483px <-> 505px), and the size watch below read each change
+					 // as a new resize - which parked them again: the board beside board 1 flashed in and out
+					 // every ~1.1s, and the page shook, until a scroll moved the active board. So the watch
+					 // starts again from the size the page has now settled at.
+					 seenSize = watchedSize();
+				}, 350);
 		  }
 		  window.addEventListener('resize', onResized);
 
@@ -1861,11 +2193,16 @@
 		  // like it had no responsive layout at all. There is no event to subscribe to from inside the frame,
 		  // so the viewport's own box is watched instead: two integer reads, and the work only happens on a
 		  // CHANGE (the boards outside the layout window are parked, so a re-fit is cheap).
-		  var seenW = viewport.clientWidth, seenH = viewport.clientHeight;
+		  // The VIEW's size as well as the carousel's: on the desktop the page's lengths are variables set from
+		  // the view size (`setViewUnits`), and with no `vh` left in the stylesheet the carousel's own height no
+		  // longer follows the view's (measured: it stayed 558px from a 900px view down to 560 and back), so a
+		  // watch on it alone missed a window growing taller.
+		  function watchedSize() { return viewport.clientWidth + 'x' + viewport.clientHeight + ':' + viewW() + 'x' + viewH(); }
+		  var seenSize = watchedSize();
 		  setInterval(function () {
-				var w = viewport.clientWidth, h = viewport.clientHeight;
-				if (w === seenW && h === seenH) { return; }
-				seenW = w; seenH = h;
+				var size = watchedSize();
+				if (size === seenSize) { return; }
+				seenSize = size;
 				onResized();
 		  }, 200);
 		  applyAll();

@@ -1,3 +1,4 @@
+#+build !js
 package norn
 
 import "core:strings"

@@ -159,9 +159,9 @@ Options:
                               (N | N+ | N- | x). Builds the rare seat directly; can't combine with
                               --predeal
       --list                  list the available scenarios and exit
-      --html-dir DIR          export scenarios to DIR/<name>.html and exit (all, or the --scenario
-                              subset); BBO-iframe pages by default, or --format html-cards for the
-                              offline card carousel
+      --html-dir DIR          export scenarios to DIR and exit (all, or the --scenario subset):
+                              BBO-iframe pages <name>.hv.html by default, or --format html-cards
+                              for the offline card carousel, <name>.html
       --frequency N           measure each scenario's acceptance rate over N deals and exit (no deals
                               emitted); all scenarios, or the --scenario subset. The rate counts a
                               scenario's double-dummy filter too, matching what generation keeps

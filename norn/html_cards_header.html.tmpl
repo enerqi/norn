@@ -1,13 +1,17 @@
 <!DOCTYPE html>
 <head>
-	<title>{{TITLE}}</title>
+	<!-- The charset FIRST: the desktop engine decodes as it reads, and a title before it came out as Latin-1
+	     ("Â·" for "·" - measured, page-check's Share check). -->
 	<meta charset="utf-8">
+	<title>{{TITLE}}</title>
 	<meta name="viewport" content="width=device-width, initial-scale=1">
-	<link href="https://fonts.googleapis.com/css?family=Open Sans" rel="stylesheet">
+	<!-- Where a shared link opens (the page's Share button): a published player page, set by whoever wrote this
+	     page (`norn.share_player`). Empty: Share works only in a page that was itself opened from a link. -->
+	<meta name="nc-share-player" content="{{SHARE_PLAYER}}">
 	<style>
 		:root { --ink:#222; --red:#c00; --line:#ccc; --sel:#2b6cb0; --felt:#3f7d5c; --felt-dark:#2f5f46; }
 		* { box-sizing: border-box; }
-		body { font-family: 'Open Sans', sans-serif; color: var(--ink); margin: 0; }
+		body { font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; color: var(--ink); margin: 0; }
 		/* Compact control pill, pinned top-left — fit-content so its background never spans the width
 		   and blocks the centred card on wide screens. */
 		.toolbar {
@@ -27,7 +31,8 @@
 		.toolbar .lbl-txt { color: #666; font-size: 0.78rem; }
 		/* Scenario name, centred above the carousel. Sits below the pinned toolbar pill (top-left),
 		   so it never overlaps it. */
-		.page-title { text-align: center; margin: 0.4rem 0.5rem 0; font-size: clamp(1rem, 2.6vw, 1.6rem); font-weight: 600; color: var(--ink); }
+		.page-title { text-align: center; margin: 0.4rem 0.5rem 0; font-weight: 600; color: var(--ink); }
+		:where(html) .page-title { font-size: clamp(1rem, 2.6vw, 1.6rem); }
 		/* The carousel MOVES BY SCROLLING, and the movement is declared here rather than driven frame by frame
 		   from script: `scroll-behavior: smooth` makes the engine animate every programmatic `scrollTo`, and a
 		   move that must not animate passes `behavior: 'instant'` to override it. A scroll offset is also a
@@ -50,17 +55,18 @@
 		/* Hug the (grouped) board content and cap at the viewport width, so the slide scales with the
 		   mid-row gap above — wide on big monitors, compact at 1080p — rather than a fixed pixel width. */
 		.slide {
-			flex: 0 0 auto; width: fit-content; max-width: 96vw;
+			flex: 0 0 auto; width: fit-content;
 			opacity: 0.4; transform: scale(0.9); transition: opacity 0.35s ease, transform 0.35s ease;
 		}
+		:where(html) .slide { max-width: 96vw; }
 		.slide.active { opacity: 1; transform: scale(1); }
 		/* The board is a green "tablecloth"; each hand sits on it as its own light card panel. */
 		.compass {
 			position: relative;
 			border: 1px solid var(--felt-dark); border-radius: 12px; background: var(--felt);
-			padding: clamp(0.6rem, 1.5vh, 1.5rem) clamp(0.5rem, 3vw, 2rem);
-			display: flex; flex-direction: column; gap: clamp(0.35rem, 1.1vh, 1.2rem);
+			display: flex; flex-direction: column;
 		}
+		:where(html) .compass { padding: clamp(0.6rem, 1.5vh, 1.5rem) clamp(0.5rem, 3vw, 2rem); gap: clamp(0.35rem, 1.1vh, 1.2rem); }
 		.slide.active .compass { box-shadow: 0 0 0 3px var(--sel), 0 8px 24px rgba(0,0,0,0.25); }
 		/* Partnership HCP summary, pinned to the felt's top-right corner. */
 		.stats {
@@ -73,12 +79,19 @@
 		.stats .split { display: flex; justify-content: flex-end; align-items: baseline; gap: 0.45rem; }
 		.stats .split .pct { color: #888; min-width: 4.3em; text-align: right; }
 		.stats .ssym { font-size: 1.15em; }
+		/* The four splits as TWO columns, and the box's text following the cards' size: one suit a line made the
+		   box six lines tall at a fixed 1.05rem, while the hands shrink with the window's height, so in a wide,
+		   short window East's card was drawn over the clubs line (measured at 1870x820: box bottom 305px, East's
+		   top 219px). Two lines of splits and a smaller face bring it to ~210px. Browser-only (`:where(html)`):
+		   the desktop engine drops the rule and keeps the stack, and has no `display: grid`. */
+		:where(html) .stats { font-size: clamp(0.8rem, 1.6vh, 1.05rem); line-height: 1.4; }
+		:where(html) .stats .splits { display: grid; grid-template-columns: auto auto; column-gap: 0.9rem; }
 		.ssym.s { color: Black; } .ssym.h { color: Red; } .ssym.d { color: Orange; } .ssym.c { color: MediumSeaGreen; }
 		/* Per-hand shape pattern + how common it is, under each hand's cards. */
-		.hcp { margin-top: 0.25rem; font-family: 'Open Sans', sans-serif; font-size: 0.5em; font-weight: 600; color: #555; }
-		.opc { margin-top: 0.1rem; font-family: 'Open Sans', sans-serif; font-size: 0.42em; color: #777; }
+		.hcp { margin-top: 0.25rem; font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 0.5em; font-weight: 600; color: #555; }
+		.opc { margin-top: 0.1rem; font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 0.42em; color: #777; }
 		.shape {
-			margin-top: 0.1rem; font-family: 'Open Sans', sans-serif; font-size: 0.4em;
+			margin-top: 0.1rem; font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 0.4em;
 			font-weight: 300; color: #9a9a9a; opacity: 0.75;
 		}
 		.prob { color: #b5b5b5; }
@@ -93,8 +106,8 @@
 		   dealer's "Dealer" tag makes one card taller, and centring would offset its top-anchored pill. */
 		.compass .mid {
 			display: grid; grid-template-columns: 1fr auto 1fr; align-items: flex-start;
-			column-gap: clamp(0.5rem, 7vw, 6rem);
 		}
+		:where(html) .compass .mid { column-gap: clamp(0.5rem, 7vw, 6rem); }
 		.compass .mid > .seat-w { justify-self: end; }
 		.compass .mid > .seat-e { justify-self: start; }
 		.compass .mid > .table { justify-self: center; align-self: center; }
@@ -102,10 +115,10 @@
 		   phones where width is the tight one (landscape) or height is (portrait). */
 		.seat {
 			font-family: 'Consolas', 'Courier New', monospace;
-			font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem);
-			line-height: 1.28; min-width: clamp(5rem, 20vw, 11rem);
+			line-height: 1.28;
 			background: #fff; border-radius: 10px; padding: 0.85rem 1rem 0.45rem; box-shadow: 0 2px 6px rgba(0,0,0,0.25);
 		}
+		:where(html) .seat { font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem); min-width: clamp(5rem, 20vw, 11rem); }
 		/* North/South: centre the hand as a block but keep its suit lines left-aligned to the suit
 		   symbol, so the symbols form a column exactly like East/West (which are already left-aligned). */
 		.compass > .seat { width: fit-content; margin: 0 auto; }
@@ -113,9 +126,12 @@
 		   seat that clearance (in the base padding above) so the dealer card is not taller than the
 		   rest — otherwise the E/W pills, centred in the mid row, misalign when exactly one is dealer. */
 		/* Seat label: a big pill coloured by vulnerability (red = vulnerable, green = not). */
+		/* Padding uneven on purpose: at `line-height: 1` Consolas puts a capital's ink ~0.03em below the line
+		   box's middle (measured in Chrome: 8px of pill above the letter, 6.9px below, at 37px). The same total,
+		   so the pill keeps its size and only the letter moves up to the middle. */
 		.seat .lbl {
 			display: inline-block; font-weight: 700; font-size: 1.45em; line-height: 1;
-			padding: 0.02em 0.28em; border-radius: 14px; color: #fff; margin-bottom: 0.25rem;
+			padding: 0.005em 0.28em 0.035em; border-radius: 14px; color: #fff; margin-bottom: 0.25rem;
 		}
 		.seat.vul .lbl { background: var(--red); }
 		.seat.nonvul .lbl { background: ForestGreen; }
@@ -127,7 +143,7 @@
 			font-size: 2.4em; color: #9fb0c0; text-align: center; padding: 0.5em 0.7em 0.2em; line-height: 1;
 		}
 		.dtag {
-			display: block; margin: 0.35rem 0 0.4rem; font-family: 'Open Sans', sans-serif;
+			display: block; margin: 0.35rem 0 0.4rem; font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 			font-size: 0.38em; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sel);
 		}
 		/* Four-colour suits, matching the bidding-system stylesheet (bml.css). */
@@ -136,7 +152,7 @@
 		   these a 0.4em line was as tall as a line of cards.) */
 		.suit { display: block; white-space: nowrap; line-height: 1.12em; }
 		.hcp, .opc, .shape { line-height: 1.3em; }
-		.seat .pname { font-family: 'Open Sans', sans-serif; font-size: 0.5em; font-weight: 600; color: #555; display: inline-block; margin-left: 0.9em; vertical-align: middle; }
+		.seat .pname { font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 0.5em; font-weight: 600; color: #555; display: inline-block; margin-left: 0.9em; vertical-align: middle; }
 		.suit.s { color: Black; }
 		.suit.h { color: Red; }
 		.suit.d { color: Orange; }
@@ -146,18 +162,20 @@
 			border: 1px solid rgba(255,255,255,0.35); border-radius: 8px; padding: 0.7rem 1.1rem; text-align: center;
 			font-size: 1.3rem; color: #fff; background: rgba(255,255,255,0.12); white-space: nowrap;
 		}
-		.par { margin-top: clamp(0.4rem, 1.1vh, 1rem); text-align: center; color: #555; font-size: clamp(1rem, 1.8vh, 1.3rem); }
+		.par { text-align: center; color: #555; }
+		:where(html) .par { margin-top: clamp(0.4rem, 1.1vh, 1rem); font-size: clamp(1rem, 1.8vh, 1.3rem); }
 		/* The board's .combo div carries only the raw per-suit distributions (data-suits JSON). To keep
 		   the board short (no page scroll), inline it is just a ONE-LINE summary — the full interactive
 		   trick table lives in the CCA overlay panel, which is fixed/out-of-flow so it never adds page
 		   height. Both are built client-side and react to the toolbar's "tricks >=" slider. */
-		.combo {
-			margin-top: clamp(0.3rem, 0.8vh, 0.7rem); text-align: center; color: #555;
-			font-family: 'Consolas', 'Courier New', monospace; font-size: clamp(0.55rem, 1.35vh, 0.9rem);
+		.combo { text-align: center; color: #555;
+			font-family: 'Consolas', 'Courier New', monospace;
 		}
+		:where(html) .combo { margin-top: clamp(0.3rem, 0.8vh, 0.7rem); font-size: clamp(0.55rem, 1.35vh, 0.9rem); }
 		.combo .cmini { font-weight: 700; color: var(--sel); letter-spacing: 0.05em; margin-right: 0.45rem; }
 		/* Play-through bar under a board whose record carried the play (see renderPlay in the footer). */
-		.playbar { margin-top: clamp(0.3rem, 0.8vh, 0.7rem); text-align: center; color: #555; font-size: clamp(0.8rem, 1.5vh, 1.05rem); }
+		.playbar { text-align: center; color: #555; }
+		:where(html) .playbar { margin-top: clamp(0.3rem, 0.8vh, 0.7rem); font-size: clamp(0.8rem, 1.5vh, 1.05rem); }
 		.playbar button { font: inherit; padding: 0.05rem 0.4rem; margin: 0 0.1rem; border: 1px solid var(--line); background: #f7f7f7; border-radius: 4px; cursor: pointer; }
 		.playbar .pinfo { display: inline-block; margin: 0 0.5rem; }
 		.playbar .ptricks { margin-top: 0.25rem; }
@@ -168,7 +186,8 @@
 		.playbar .bad { color: var(--red); }
 		/* The trick in the middle is sized like the hands (the same expression as `.seat`), and each card in
 		   it a little larger again: it is the thing being watched. Everything inside is in em of that. */
-		.table.trick { padding: 0.3em 0.4em; font-family: 'Consolas', 'Courier New', monospace; font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem); }
+		.table.trick { padding: 0.3em 0.4em; font-family: 'Consolas', 'Courier New', monospace; }
+		:where(html) .table.trick { font-size: clamp(1rem, min(2.4vh, 4.3vw), 2.2rem); }
 		.trk { border-collapse: collapse; margin: 0 auto; }
 		.trk td { min-width: 2.4em; height: 1.7em; text-align: center; vertical-align: middle; padding: 0.1em; }
 		.trk .tno { color: rgba(255,255,255,0.6); font-size: 0.6em; }
@@ -186,15 +205,15 @@
 		   board. position:fixed keeps it OUT of document flow (the board never grows), and it caps its
 		   own height and scrolls internally, so the page itself never gains a scrollbar. */
 		.cca-panel {
-			position: fixed; left: 0.6rem; bottom: 0.6rem; z-index: 20;
-			max-width: min(96vw, 44rem); max-height: 78vh; overflow: auto;
+			position: fixed; left: 0.6rem; bottom: 0.6rem; z-index: 20; overflow: auto;
 			background: #fff; border: 1px solid var(--line); border-radius: 10px;
 			box-shadow: 0 6px 24px rgba(0,0,0,0.28); padding: 0.55rem 0.8rem 0.7rem;
 		}
+		:where(html) .cca-panel { max-width: min(96vw, 44rem); max-height: 78vh; }
 		.cca-panel[hidden] { display: none; }
 		/* Narrow mode (user toggle): cap the panel so it can't span both E/W hands on a small viewport;
 		   the wide trick table then scrolls sideways inside its own box instead of covering the cards. */
-		.cca-panel.narrow { max-width: min(94vw, 26rem); }
+		:where(html) .cca-panel.narrow { max-width: min(94vw, 26rem); }
 		.cca-panel.narrow #nc-cca-body { overflow-x: auto; }
 		/* Suits-collapsed (user toggle): hide the per-suit rows (♠♥♦♣ + their blind sub-rows), leaving the
 		   tot / ≥k / sd totals — saves vertical height when the viewport is short. */
@@ -251,7 +270,8 @@
 		/* Help modal: a large centred card over a dimmed backdrop, laymen's explanation of the CCA. */
 		.cca-help { position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; padding: 1rem; }
 		.cca-help[hidden] { display: none; }
-		.cca-help-card { position: relative; background: #fff; border-radius: 12px; max-width: min(94vw, 40rem); max-height: 88vh; overflow: auto; padding: 1.2rem 1.4rem 1.4rem; box-shadow: 0 10px 40px rgba(0,0,0,0.35); line-height: 1.5; color: #333; }
+		.cca-help-card { position: relative; background: #fff; border-radius: 12px; overflow: auto; padding: 1.2rem 1.4rem 1.4rem; box-shadow: 0 10px 40px rgba(0,0,0,0.35); line-height: 1.5; color: #333; }
+		:where(html) .cca-help-card { max-width: min(94vw, 40rem); max-height: 88vh; }
 		.cca-help-card h2 { margin: 0 0 0.5rem; font-size: 1.2rem; }
 		.cca-help-card h3 { margin: 0.95rem 0 0.2rem; font-size: 0.97rem; color: var(--sel); }
 		.cca-help-card p { margin: 0.3rem 0; font-size: 0.9rem; }
@@ -267,9 +287,9 @@
 		.cca-slider input[type="range"]:focus { outline: 2px solid var(--sel); outline-offset: 2px; }
 		.ct {
 			display: inline-table; border-collapse: collapse;
-			font-family: 'Consolas', 'Courier New', monospace;
-			font-size: clamp(0.6rem, 1.5vw, 0.9rem); line-height: 1.35; color: #555;
+			font-family: 'Consolas', 'Courier New', monospace; line-height: 1.35; color: #555;
 		}
+		:where(html) .ct { font-size: clamp(0.6rem, 1.5vw, 0.9rem); }
 		/* Uniform min-widths so every board's table is the SAME width (the panel then never resizes as
 		   you flip slides). content-box makes min-width the CONTENT width, so a "100" cell and a "·"
 		   cell floor to the exact same size regardless of how many digits they hold. */
@@ -301,7 +321,8 @@
 		   the CELL (td/th.hl) so this out-specifies the coloured .totsd/.cumsd row rules above —
 		   otherwise the blue SD text stayed blue on the blue highlight and was unreadable. */
 		.ct td.hl, .ct th.hl { background: var(--sel); color: #fff !important; border-radius: 3px; }
-		.ct-head { margin-top: 0.45rem; font-weight: 600; color: #333; font-size: clamp(0.8rem, 1.6vw, 1rem); }
+		.ct-head { margin-top: 0.45rem; font-weight: 600; color: #333; }
+		:where(html) .ct-head { font-size: clamp(0.8rem, 1.6vw, 1rem); }
 		/* Seat toggle: keep just one seat visible across every board (layout preserved via visibility). */
 		/* Single-seat view: the other three seats collapse to just their position pill (and Dealer tag),
 		   so the compass orientation, vulnerability, and dealer stay visible — only their cards hide. */
@@ -321,8 +342,7 @@
 		/* The chosen seat grows by REAL layout (font-size, everything inside is em-relative), so the
 		   green felt reflows to contain it — a transform would leave the card spilling off a small felt. */
 		.seat { transition: font-size 0.25s ease; }
-		.slide.only-n .seat-n, .slide.only-e .seat-e,
-		.slide.only-s .seat-s, .slide.only-w .seat-w { font-size: clamp(1.6rem, min(4vh, 6.5vw), 3.4rem); }
+		:where(html) .slide.only-n .seat-n, :where(html) .slide.only-e .seat-e, :where(html) .slide.only-s .seat-s, :where(html) .slide.only-w .seat-w { font-size: clamp(1.6rem, min(4vh, 6.5vw), 3.4rem); }
 		/* The partnership HCP summary is meaningless with only one hand shown, so hide it then. */
 		.slide.only-n .stats, .slide.only-e .stats,
 		.slide.only-s .stats, .slide.only-w .stats { display: none; }
@@ -334,19 +354,20 @@
 		   script adds .reveal + the text) when a single hand is focused. */
 		.table.reveal { cursor: pointer; background: rgba(255,255,255,0.22); }
 		.table.reveal:hover { background: rgba(255,255,255,0.35); }
-		.trick .reveal-all { margin-top: 0.3em; padding: 0.15em 0.5em; border-radius: 6px; font-family: 'Open Sans', sans-serif; font-size: 0.55em; cursor: pointer; background: rgba(255,255,255,0.22); }
+		.trick .reveal-all { margin-top: 0.3em; padding: 0.15em 0.5em; border-radius: 6px; font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 0.55em; cursor: pointer; background: rgba(255,255,255,0.22); }
 		.trick .reveal-all:hover { background: rgba(255,255,255,0.35); }
 		/* Single East/West focus: replace the 1fr|auto|1fr grid with a content-hugging flex row so the
 		   felt wraps the big card (the grid's equal 1fr columns would mirror its width as empty green on
 		   the far side), and centre the items vertically so the opposite pill + Reveal-all button sit
 		   level with the enlarged hand. North/South focus keeps the grid (the big card is outside .mid). */
 		.slide.only-e .mid, .slide.only-w .mid {
-			display: flex; justify-content: center; align-items: center; gap: clamp(0.5rem, 7vw, 6rem);
+			display: flex; justify-content: center; align-items: center;
 		}
+		:where(html) .slide.only-e .mid, :where(html) .slide.only-w .mid { gap: clamp(0.5rem, 7vw, 6rem); }
 		/* Par/combo captions describe the whole board, so hide them while a single hand is focused —
 		   they only make sense (and only show) in that board's 4-hand view. */
 		.slide[class*="only-"] .par, .slide[class*="only-"] .combo { display: none; }
-		.track.hide-par .par, .track.hide-par .combo { display: none; }
+		.track.hide-par .par, .track.hide-par .combo, .par.cap-off, .combo.cap-off { display: none; }
 
 		/* ============================================================================================
 		   The DESKTOP host (Sciter), and nothing else. Measured both ways on 6.0.4.9: Sciter MATCHES a bare
@@ -387,14 +408,15 @@
 		   watching this whole block do nothing until it moved above it.
 		   ============================================================================================ */
 		@media sciter {
-			/* The platform UI face. The page's webfont is an https:// fetch a desktop window should not
-			   be making, and it is not there to fall back on. */
+			/* The platform UI face, named the way this engine names it. */
 			body { font-family: system; }
 
 			/* Unitless line-heights, respelled in em. */
 			.stats { line-height: 1.5em; }
 			.seat { line-height: 1.28em; }
-			.seat .lbl { line-height: 1em; }
+			/* And this engine puts the letter HIGH in its line box where Chrome puts it low (painted, page-check:
+			   4px of pill above the ink, 9px below), so the pill's padding leans the other way here. */
+			.seat .lbl { line-height: 1em; padding: 0.12em 0.28em 0; }
 			.seat.facedown .unknown-hand { line-height: 1em; }
 			.cca-head .x, .cca-head .help, .cca-side .sidebtn, .cca-obj .sidebtn,
 			.cca-strain .sidebtn, .cca-mode .sidebtn { line-height: 1em; }
@@ -499,10 +521,33 @@
 			   The sizes the browser takes off the viewport WIDTH stay `rem`: their clamp CAP binds at any
 			   window wide enough to run this in (`.page-title`'s 2.6vw passes its 1.6rem cap at 985px), so
 			   the cap value IS the desktop value and a vw term would only overshoot. */
+			/* NO `vw`/`vh` IN THIS ENGINE, EVEN OVERRIDDEN: each one is a `length(nc-…)` variable the script
+			   sets (`setViewUnits` in the footer: `nc-h240` is 2.4% of the view's height, `nc-w700` 7% of its
+			   width) when a size SETTLES, never during a drag. Measured 2026-10-10 in a real window (a
+			   windowless view cannot see it): a page with viewport units made every frame of a window resize
+			   restyle the whole document - hidden boards included, and with the pane closed - ~150ms a frame
+			   on a 16-board page against ~45ms with the same page's lengths fixed. OVERRIDING a base rule's
+			   unit is not enough (measured: a visible page stayed slow), so the base rules carry their
+			   viewport lengths in `:where(html) …` copies placed straight after them - a selector this engine
+			   drops, one rule at a time with an "unrecognized css selector" warning, while a browser applies
+			   it in the same order at no added specificity - and the lengths are re-said here. `length()` directly, not
+			   inside `calc()`: a `font-size: calc(2.4 * length(x))` is computed once and never follows the
+			   variable (measured). The defaults are a 1000x900 view, for the moment before the script runs. */
+			html {
+				var(nc-h080): 7.2px; var(nc-h110): 9.9px; var(nc-h135): 12.15px; var(nc-h150): 13.5px;
+				var(nc-h180): 16.2px; var(nc-h240): 21.6px; var(nc-h400): 36px; var(nc-h840): 756px;
+				var(nc-h880): 792px; var(nc-w700): 70px; var(nc-w960): 960px;
+			}
+			.slide { max-width: length(nc-w960); }
+			.compass { gap: length(nc-h110); }
+			.compass .mid, .slide.only-e .mid, .slide.only-w .mid { column-gap: length(nc-w700); gap: length(nc-w700); }
+			.par { margin-top: length(nc-h110); }
+			.combo, .playbar { margin-top: length(nc-h080); }
+			.playbar { font-size: length(nc-h150); }
 			.page-title { font-size: 1.6rem; }
-			.compass { padding: 1.5vh 1.8rem; }
-			.seat { font-size: 2.4vh; min-width: 9rem; }
-			.table.trick { font-size: 2.4vh; width: max-content; }
+			.compass { padding: length(nc-h150) 1.8rem; }
+			.seat { font-size: length(nc-h240); min-width: 9rem; }
+			.table.trick { font-size: length(nc-h240); width: max-content; }
 			/* NO DROP SHADOWS HERE: this engine paints them very slowly. Measured on a 16-board page at
 			   1700x1100: 197ms a paint with them, 16ms with the rings drawn as OUTLINES and the felt and the
 			   hands flat - and every frame of a window resize is a full paint. The big felt's ring alone (a
@@ -516,15 +561,15 @@
 			.trk .pc.won { box-shadow: none; outline: 0.12em solid var(--sel); }
 			.trk .pc.costly { box-shadow: none; outline: 0.12em solid var(--red); }
 			.trk { margin-left: 1*; margin-right: 1*; }
-			.par { font-size: 1.8vh; }
-			.combo { font-size: 1.35vh; }
+			.par { font-size: length(nc-h180); }
+			.combo { font-size: length(nc-h135); }
 			.cca-panel { max-width: 44rem; }
 			.cca-panel.narrow { max-width: 26rem; }
 			.cca-help-card { max-width: 40rem; }
 			.ct { font-size: 0.9rem; }
 			.ct-head { font-size: 1rem; }
 			.slide.only-n .seat-n, .slide.only-e .seat-e,
-			.slide.only-s .seat-s, .slide.only-w .seat-w { font-size: 4vh; }
+			.slide.only-s .seat-s, .slide.only-w .seat-w { font-size: length(nc-h400); }
 
 			/* `gap` -> margins on the children. The mid row's 1fr|auto|1fr grid becomes a horizontal flow
 			   whose W/E hands hold the centre table off the middle by a fixed margin. */
@@ -603,7 +648,7 @@
 			.cca-help { position: static; background: transparent; padding: 0; display: block; flow: vertical; }
 			.cca-help-card {
 				position: fixed; left: 1.5rem; top: 1.5rem; z-index: 41;
-				width: 40rem; max-width: 94%; max-height: 84vh; overflow: scroll-indicator;
+				width: 40rem; max-width: 94%; max-height: length(nc-h840); overflow: scroll-indicator;
 			}
 			/* Its close button is absolutely positioned, and an INLINE-LEVEL widget taken out of flow lays
 			   out 1x1 in this engine (measured: 0x0, so there was nothing to click). `display: block` is the
@@ -614,7 +659,7 @@
 			   the window: with the opponent-length grid open it grew past the bottom of the frame and the
 			   trick-target row was simply cut off. `scroll-indicator` is Sciter's own overlay scrollbar, and
 			   it DOES scroll a capped box. `vh` resolves against the view here, so the cap is honest. */
-			.cca-panel { max-height: 88vh; overflow: scroll-indicator; }
+			.cca-panel { max-height: length(nc-h880); overflow: scroll-indicator; }
 			/* And it has to size to its CONTENT, not to the space it was placed in. Measured on the two-hand
 			   advisor page (a wider trick table than a generated board carries): the panel came out 587px
 			   while its table wanted 607, and the overflow was NOT clipped — the foot row, the trick-target
@@ -652,8 +697,8 @@
 		@media (max-width: 640px) {
 			.opc, .shape { display: none; }
 			.seat { min-width: 0; padding: 0.7rem 0.6rem 0.35rem; }
-			.compass { gap: clamp(0.25rem, 0.8vh, 0.7rem); padding: clamp(0.4rem, 1vh, 0.9rem) clamp(0.4rem, 2vw, 1rem); }
-			.compass .mid { gap: clamp(0.3rem, 3vw, 1.2rem); }
+			:where(html) .compass { gap: clamp(0.25rem, 0.8vh, 0.7rem); padding: clamp(0.4rem, 1vh, 0.9rem) clamp(0.4rem, 2vw, 1rem); }
+			:where(html) .compass .mid { gap: clamp(0.3rem, 3vw, 1.2rem); }
 			.hcp { font-size: 0.95rem; margin-top: 0.15rem; }
 			/* Too narrow for a top-right overlay without covering North — flow it above the board as a
 			   centred header line instead. */
@@ -674,6 +719,8 @@
 			<button id="nc-prev" title="Previous (Left arrow / scroll)">&#9664;</button>
 			<span class="counter"><b id="nc-idx">1</b>/<span id="nc-total">0</span></span>
 			<button id="nc-next" title="Next (Right arrow / scroll)">&#9654;</button>
+			<!-- Beside the board it acts on, not among the page-wide settings. -->
+			<button id="nc-bbo" title="Copy a link that opens this board in BBO's hand viewer, to send to someone">BBO link</button>
 		</div>
 		<div class="group">
 			<span class="lbl-txt">seats</span>
@@ -683,7 +730,7 @@
 			<button data-seat="s">S</button>
 			<button data-seat="w">W</button>
 		</div>
-		<div class="group" title="Card size: the hands and the trick being played">
+		<div class="group" title="Card size: the hands and the trick being played (keys m, l, x)">
 			<span class="lbl-txt">cards</span>
 			<button data-cards="" class="sel">M</button>
 			<button data-cards="l">L</button>
@@ -692,6 +739,8 @@
 		<button id="nc-reset" title="Reset every board to the current seat default">Reset</button>
 		<button id="nc-par-toggle">Par</button>
 		<button id="nc-cca-toggle" title="Card Combination Analyser: open the full trick-chance table for the current board">CCA</button>
+		<!-- Every board on the page as ONE link, for the whole set rather than the board BBO link sends. -->
+		<button id="nc-share" title="Copy a link that opens all these deals, as this page, in any browser - nothing is uploaded">Share</button>
 	</div>
 	<h1 class="page-title">{{TITLE}}</h1>
 	<div class="viewport">

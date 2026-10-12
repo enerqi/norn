@@ -70,7 +70,8 @@ Mode :: union {
 // The default: emit `count` deals in `format` to `output`, optionally filtered by `scenario`.
 Generate :: struct {}
 
-// `--html-dir DIR`: batch-export scenarios to `<dir>/<name>.html` and exit (the equivalent of the
+// `--html-dir DIR`: batch-export scenarios to `<dir>/<name>.hv.html` (BBO hand viewers) or `<dir>/<name>.html`
+// (`--format html-cards`) and exit (the equivalent of the
 // regen-html-deals.py helper). Ignores --output. By default every scenario is exported; --scenario
 // narrows it to a comma-separated subset.
 Export_Html :: struct {

@@ -293,25 +293,45 @@ HANDVIEWER_VULNERABILITY_CODES := [Vulnerability]string {
 // vulnerability and dealer are drawn from `context.random_generator` (matching the Python tool's
 // practice-variety randomisation); otherwise they are fixed to `v=-`, `d=n` for deterministic output.
 render_deal_handviewer :: proc(builder: ^strings.Builder, deal: Deal, randomize_table := false) {
+	vulnerability := Vulnerability.None
+	dealer := Seat.North
+	if randomize_table {
+		vulnerability, dealer = random_table()
+	}
+	write_handviewer_query(builder, deal, vulnerability = vulnerability, dealer = dealer)
+}
+
+// The handviewer query itself, for the seats in `known` (a 2-hand deal names only its two; the viewer
+// leaves the others empty). `separator` is `&` in a URL and `&amp;` inside an HTML attribute, which is
+// where a card page carries it (`data-hv`, for the page's `BBO link` button).
+@(private = "file")
+write_handviewer_query :: proc(
+	builder: ^strings.Builder,
+	deal: Deal,
+	known := bit_set[Seat]{.North, .East, .South, .West},
+	vulnerability := Vulnerability.None,
+	dealer := Seat.North,
+	separator := "&",
+) {
 	for seat in HANDVIEWER_SEAT_ORDER {
+		if seat not_in known {
+			continue
+		}
 		strings.write_rune(builder, handviewer_seat_letter(seat))
 		strings.write_byte(builder, '=')
 		for suit in SUIT_OUTPUT_ORDER {
 			strings.write_rune(builder, handviewer_suit_letter(suit))
 			write_suit_ranks(builder, deal[seat], suit)
 		}
-		strings.write_byte(builder, '&')
+		strings.write_string(builder, separator)
 	}
-
-	vulnerability := Vulnerability.None
-	dealer := Seat.North
-	if randomize_table {
-		vulnerability, dealer = random_table()
-	}
-	// Empty auction, then the (fixed or random) vulnerability and dealer.
-	strings.write_string(builder, "a=_&v=")
+	// Empty auction, then the vulnerability and dealer.
+	strings.write_string(builder, "a=_")
+	strings.write_string(builder, separator)
+	strings.write_string(builder, "v=")
 	strings.write_string(builder, HANDVIEWER_VULNERABILITY_CODES[vulnerability])
-	strings.write_string(builder, "&d=")
+	strings.write_string(builder, separator)
+	strings.write_string(builder, "d=")
 	strings.write_rune(builder, handviewer_seat_letter(dealer))
 }
 
@@ -352,15 +372,33 @@ render_deal_html_cards :: proc(
 	randomize_table := false,
 	known := bit_set[Seat]{.North, .East, .South, .West},
 ) {
-	full := known == bit_set[Seat]{.North, .East, .South, .West}
 	// The seat labels are coloured by vulnerability. A 2-hand deal has no auction context, so it stays
 	// neutral: no vulnerability, and NO dealer at all — hence `Maybe(Seat)` rather than an empty string.
-	vulnerability := Vulnerability.None
-	dealer: Maybe(Seat)
+	table: Table
+	full := known == bit_set[Seat]{.North, .East, .South, .West}
 	if randomize_table && full {
-		v, d := random_table()
-		vulnerability, dealer = v, d
+		table.vulnerability, table.dealer = random_table()
 	}
+	render_deal_html_cards_at(builder, deal, table, known)
+}
+
+// Who deals and who is vulnerable at one board. `dealer = nil` is "no dealer": a 2-hand deal, or a card page
+// generated without a random table.
+Table :: struct {
+	vulnerability: Vulnerability,
+	dealer:        Maybe(Seat),
+}
+
+// `render_deal_html_cards` at a GIVEN table rather than a drawn one: for a caller that already knows it, such
+// as a page rebuilt from a shared link, which must draw the board exactly as the page it came from did.
+render_deal_html_cards_at :: proc(
+	builder: ^strings.Builder,
+	deal: Deal,
+	table: Table,
+	known := bit_set[Seat]{.North, .East, .South, .West},
+) {
+	full := known == bit_set[Seat]{.North, .East, .South, .West}
+	vulnerability, dealer := table.vulnerability, table.dealer
 	ns_vulnerable := vulnerable(vulnerability, .North)
 	ew_vulnerable := vulnerable(vulnerability, .East)
 	is_dealer :: proc(dealer: Maybe(Seat), seat: Seat) -> bool {
@@ -372,7 +410,12 @@ render_deal_html_cards :: proc(
 	// compass never reads those (they render face-down) and the stats box below skips them.
 	ds := summarize_deal(deal)
 
-	strings.write_string(builder, `<div class="compass">`)
+	// The board as a BBO handviewer query, drawn as this board is drawn (a 2-hand deal has no dealer: north
+	// stands in, which the viewer needs and nobody reads). The page's `BBO link` button hands it out, so
+	// one board can be sent to someone with nothing but a link.
+	strings.write_string(builder, `<div class="compass" data-hv="`)
+	write_handviewer_query(builder, deal, known, vulnerability, dealer.? or_else .North, separator = "&amp;")
+	strings.write_string(builder, `">`)
 
 	// Partnership high-card-point summary, pinned top-right (see the .stats CSS).
 	strings.write_string(builder, `<div class="stats">`)
@@ -766,9 +809,8 @@ HTML_HANDVIEWER_PAGE_HEADER :: `<!DOCTYPE html>
     <title>{{TITLE}}</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="https://fonts.googleapis.com/css?family=Open Sans" rel="stylesheet">
     <style>
-        body { font-family: 'Open Sans'; }
+        body { font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; }
         .content { margin: auto; max-width: 900px; }
         h1.page-title { text-align: center; }
         iframe { margin-top: 4rem; margin-bottom: 4rem; }
@@ -796,6 +838,21 @@ HTML_CARDS_PAGE_HEADER :: #load("html_cards_header.html.tmpl", string)
 @(private = "file")
 HTML_CARDS_PAGE_FOOTER :: #load("html_cards_footer.html.tmpl", string)
 
+// Where a card page's Share button sends its link: the address of a published shared-deals player page, written
+// into every card page's `<meta name="nc-share-player">`. Empty (the default) leaves the button to a page that
+// was itself opened from a link. Set once, by the program writing the pages (the workbench from its settings),
+// before any is written.
+share_player := ""
+
+// `text` with the characters that would end or break an HTML attribute value replaced.
+@(private = "file")
+attribute_safe :: proc(text: string) -> string {
+	out, _ := strings.replace_all(text, "&", "&amp;", context.temp_allocator)
+	out, _ = strings.replace_all(out, `"`, "&quot;", context.temp_allocator)
+	out, _ = strings.replace_all(out, "<", "&lt;", context.temp_allocator)
+	return out
+}
+
 // Write the once-per-run prologue for `format`. Only the HTML formats have one (the page header);
 // every other format opens with nothing. `page_title` (empty -> "Practice Deals") fills both the
 // document `<title>` and the on-page `<h1>` via the `{{TITLE}}` token baked into the header literals.
@@ -812,6 +869,7 @@ render_page_prologue :: proc(builder: ^strings.Builder, format: Output_Format, p
 	title := page_title if page_title != "" else "Practice Deals"
 	// replace_all into the temp allocator: no manual free, and the whole header is written this frame.
 	page, _ := strings.replace_all(header, "{{TITLE}}", title, context.temp_allocator)
+	page, _ = strings.replace_all(page, "{{SHARE_PLAYER}}", attribute_safe(share_player), context.temp_allocator)
 	stripped := strip_style_comments(page, context.temp_allocator)
 	strings.write_string(builder, split_oversized_style(stripped, context.temp_allocator))
 }

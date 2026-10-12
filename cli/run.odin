@@ -287,7 +287,12 @@ export_all_html :: proc(registry: []Scenario, opts: Options, mode: Export_Html) 
 				jobs[i].attempts,
 			)
 		}
-		path := fmt.tprintf("%s/%s.html", mode.dir, s.name)
+		// One name per page FORMAT: a card carousel is `<scenario>.html`, a page of BBO hand viewers
+		// `<scenario>.hv.html` - the names the bridge notes' workbench uses. Both were `.html`, so exporting one
+		// format silently replaced the other's pages (reported: a run of the BBO default turned a folder of
+		// card pages into hand viewers).
+		extension := ".hv.html" if export_format == .Html_Handviewer else ".html"
+		path := fmt.tprintf("%s/%s%s", mode.dir, s.name, extension)
 		if write_ok, write_msg := write_output(path, strings.to_string(builders[i])); !write_ok {
 			return false, write_msg
 		}

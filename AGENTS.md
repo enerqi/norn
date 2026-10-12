@@ -84,6 +84,7 @@ just diagnose              # verbose build of the CLI
 - Build artifacts go under `target/{debug,fast_debug,release_debug,release,release_nochecks}/` (like Cargo's `target/`), one directory per build profile so the profiles never clobber each other. `mktarget_dirs` auto-runs before builds.
 - `just --time <recipe>` reports a recipe's wall clock; pair it with `rerun*` when you want the figure to exclude the compile.
 - Always run `just lint`, `just format`, and `just test` before considering a change done — these are the quality gate. `lint` is the type-check + vet + strict-style check across all packages, `format` applies `odinfmt`, and `test` runs the package tests.
+- **Every `_test.odin` in `norn/` and `combo/` starts with `#+build !js`, and a new one must too.** `norn` and `combo` also build for `js_wasm32` (the card page rendered in a browser - the bridge notes repo's `just sims wasm-player-spike`), and this compiler resolves a test file's imports in an ordinary build: `core:testing` pulls in `core:os`, which panics at compile time on js/wasm. On wasm `combo` needs `-define:COMBO_THREADS=false` as well (no threads there; the serial path gives identical output).
 
 **Scenario flags need a registry — nothing in THIS repo has one.** `cmd/norn.odin` passes `nil` to `cli.main_program`, so every `just run*` / `rerun*` recipe is the PURE GENERATOR: `--count`, `--format`, `--output`, `--seed`, `--predeal`, `--smartstack`, `--fixed-table`. The scenario-dependent flags parse but have nothing to act on:
 
@@ -242,7 +243,15 @@ Conventions:
   draws at the same window rather than pinned to one window's worth. (An earlier note in this repository
   said `vh` was invalid in a `font-size`; that was the 32 KiB per-`<style>` cap below dropping the whole sheet,
   measured again since. `just sims page-check` in the consumer asserts the card text tracks the view
-  height, so a "fix" back to a constant fails.) The block repeats only
+  height, so a "fix" back to a constant fails.) **But no viewport unit may reach that engine at all**
+  (2026-10-10): one `vw`/`vh` in ANY matching rule - overridden, or inside the phone block it cannot parse -
+  made every step of a real window's resize restyle the whole page, hidden boards included (~150 ms a frame,
+  invisible to a windowless check). So the block's viewport terms are Sciter variables, `length(nc-h240)` =
+  2.4% of the view height, set by the footer's `setViewUnits` once a resize settles; and every BASE rule
+  carries its viewport lengths in a `:where(html) …` copy placed straight after it, which Sciter drops (one
+  "unrecognized css selector" warning each) and a browser applies at the same place and specificity. A new
+  `vw`/`vh` in this template goes in a `:where(html)` copy plus an `nc-…` variable, never bare. The
+  consumer's odin-sciter `docs/gotchas.md` #35-#37 has the measurements. The block repeats only
   those declarations, and a browser ignores all of it because an unknown media *type* never matches. It
   sits **above** the phone `@media (max-width: 640px)` because Sciter cannot parse that query and the
   parse error discards the remainder of the stylesheet: anything Sciter must read has to come first. The
