@@ -96,21 +96,44 @@ Output_Format :: enum {
 // handviewer-based formats: when true the vulnerability and dealer are drawn from
 // `context.random_generator`; when false they are fixed (`v=-`, `d=n`) so output stays deterministic.
 render_deal :: proc(builder: ^strings.Builder, deal: Deal, format: Output_Format, randomize_table := false) {
+	render_deal_at(builder, deal, format, draw_table(format, randomize_table))
+}
+
+// The table `render_deal` puts `deal` at: with `randomize_table`, drawn from `context.random_generator` for the
+// formats that show one (the handviewer formats, the card page and LIN), else the zero table - nobody
+// vulnerable, no dealer. A format that shows no table draws nothing, so a seeded run deals the same deals
+// whatever its format. Split from the rendering so a generator can hand the SAME table to its annotator: a par
+// caption is scored at the board's vulnerability.
+draw_table :: proc(format: Output_Format, randomize_table: bool) -> (table: Table) {
+	if !randomize_table {
+		return
+	}
+	switch format {
+	case .Handviewer, .Html_Handviewer, .Html_Cards, .Lin:
+		table.vulnerability, table.dealer = random_table()
+	case .Line, .Pretty, .Pbn, .Numeric:
+	}
+	return
+}
+
+// `render_deal` at a given table (see `draw_table`); the formats that show none ignore it. A table with no
+// dealer is dealt by North where the format must name one.
+render_deal_at :: proc(builder: ^strings.Builder, deal: Deal, format: Output_Format, table: Table) {
 	switch format {
 	case .Line:
 		render_deal_line(builder, deal)
 	case .Pretty:
 		render_deal_pretty(builder, deal)
 	case .Handviewer:
-		render_deal_handviewer(builder, deal, randomize_table)
+		write_handviewer_query(builder, deal, vulnerability = table.vulnerability, dealer = table.dealer.? or_else .North)
 	case .Html_Handviewer:
-		render_deal_html_iframe(builder, deal, randomize_table)
+		write_html_iframe(builder, deal, table)
 	case .Html_Cards:
-		render_deal_html_cards(builder, deal, randomize_table)
+		render_deal_html_cards_at(builder, deal, table)
 	case .Pbn:
 		render_deal_pbn(builder, deal)
 	case .Lin:
-		render_deal_lin(builder, deal, randomize_table)
+		write_lin(builder, deal, table.vulnerability, table.dealer.? or_else .North)
 	case .Numeric:
 		render_deal_numeric(builder, deal)
 	}
@@ -293,12 +316,7 @@ HANDVIEWER_VULNERABILITY_CODES := [Vulnerability]string {
 // vulnerability and dealer are drawn from `context.random_generator` (matching the Python tool's
 // practice-variety randomisation); otherwise they are fixed to `v=-`, `d=n` for deterministic output.
 render_deal_handviewer :: proc(builder: ^strings.Builder, deal: Deal, randomize_table := false) {
-	vulnerability := Vulnerability.None
-	dealer := Seat.North
-	if randomize_table {
-		vulnerability, dealer = random_table()
-	}
-	write_handviewer_query(builder, deal, vulnerability = vulnerability, dealer = dealer)
+	render_deal_at(builder, deal, .Handviewer, draw_table(.Handviewer, randomize_table))
 }
 
 // The handviewer query itself, for the seats in `known` (a 2-hand deal names only its two; the viewer
@@ -352,8 +370,13 @@ HTML_IFRAME_SUFFIX :: `"
 // and footer that surround a run of these are emitted by the generation driver, not here.
 // `randomize_table` is forwarded to the handviewer params in the iframe URL.
 render_deal_html_iframe :: proc(builder: ^strings.Builder, deal: Deal, randomize_table := false) {
+	write_html_iframe(builder, deal, draw_table(.Html_Handviewer, randomize_table))
+}
+
+@(private = "file")
+write_html_iframe :: proc(builder: ^strings.Builder, deal: Deal, table: Table) {
 	strings.write_string(builder, HTML_IFRAME_PREFIX)
-	render_deal_handviewer(builder, deal, randomize_table)
+	write_handviewer_query(builder, deal, vulnerability = table.vulnerability, dealer = table.dealer.? or_else .North)
 	strings.write_string(builder, HTML_IFRAME_SUFFIX)
 }
 
@@ -838,6 +861,15 @@ HTML_CARDS_PAGE_HEADER :: #load("html_cards_header.html.tmpl", string)
 @(private = "file")
 HTML_CARDS_PAGE_FOOTER :: #load("html_cards_footer.html.tmpl", string)
 
+// The QR encoder the footer's QR button uses: a JS port of the bridge repo's `qr/` package, kept as a file of its
+// own so a test can load it alone (held to `qr/`'s golden matrices there, `just sims test-qr-js`). The epilogue
+// writes it where the footer's script says `QR_JS_MARKER`.
+@(private = "file")
+HTML_CARDS_QR_JS :: #load("html_cards_qr.js", string)
+
+@(private = "file")
+QR_JS_MARKER :: "/*{{QR_JS}}*/"
+
 // Where a card page's Share button sends its link: the address of a published shared-deals player page, written
 // into every card page's `<meta name="nc-share-player">`. Empty (the default) leaves the button to a page that
 // was itself opened from a link. Set once, by the program writing the pages (the workbench from its settings),
@@ -1020,7 +1052,11 @@ render_page_epilogue :: proc(builder: ^strings.Builder, format: Output_Format) {
 	case .Html_Handviewer:
 		strings.write_string(builder, HTML_HANDVIEWER_PAGE_FOOTER)
 	case .Html_Cards:
-		strings.write_string(builder, HTML_CARDS_PAGE_FOOTER)
+		footer: string = HTML_CARDS_PAGE_FOOTER
+		at := strings.index(footer, QR_JS_MARKER)
+		strings.write_string(builder, footer[:at])
+		strings.write_string(builder, HTML_CARDS_QR_JS)
+		strings.write_string(builder, footer[at + len(QR_JS_MARKER):])
 	}
 }
 

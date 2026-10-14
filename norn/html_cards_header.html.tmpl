@@ -183,6 +183,7 @@
 		.playbar button.cur { border-color: var(--sel); color: var(--sel); font-weight: 700; }
 		.playbar button.costly { background: #fde2e2; }
 		.playbar .pnote { min-height: 1.5em; margin-top: 0.2rem; }
+		.playbar .pcalc { margin-top: 0.25rem; }
 		.playbar .bad { color: var(--red); }
 		/* The trick in the middle is sized like the hands (the same expression as `.seat`), and each card in
 		   it a little larger again: it is the thing being watched. Everything inside is in em of that. */
@@ -256,6 +257,9 @@
 		.cca-sim .recon { display: block; margin-top: 0.15rem; color: #4a7d5c; font-size: 0.82rem; font-variant-numeric: tabular-nums; }
 		.cca-head .help, .cca-head .x { align-self: flex-start; }
 		.cca-empty { color: #888; padding: 0.5rem 0.2rem; }
+		.cca-offer { max-width: 26rem; }
+		.cca-offer p { margin: 0 0 0.4rem; }
+		.cca-offer button { margin: 0.15rem 0.4rem 0 0; }
 		.cca-oppnote { color: var(--sel); font-size: 0.82rem; margin: 0 0 0.35rem; line-height: 1.3; }
 		.cca-oppnote.bad { color: #c66; }
 		.cca-opp { margin: 0.15rem 0 0.5rem; padding: 0.4rem 0.5rem; border: 1px solid var(--line); border-radius: 6px; background: rgba(0,0,0,0.02); }
@@ -277,6 +281,14 @@
 		.cca-help-card p { margin: 0.3rem 0; font-size: 0.9rem; }
 		.cca-help-card .x { position: absolute; top: 0.6rem; right: 0.7rem; }
 		.cca-help-card .sw { display: inline-block; width: 0.75em; height: 0.75em; border-radius: 2px; margin-right: 0.15em; position: relative; top: 0.05em; }
+		/* The QR modal: the help modal's shape, sized to the code. The svg is sized ON ITSELF: a size on the box
+		   around it laid the code out 1x1 in the desktop engine (the workbench's QR panel, measured). */
+		.nc-qr-card { text-align: center; }
+		.nc-qr-code svg { display: block; width: 20rem; height: 20rem; margin: 0.4rem auto; }
+		.nc-qr-facts { color: #555; }
+		.nc-qr-notes { color: #a15c00; }
+		.nc-qr-notes:empty { display: none; }
+		.nc-qr-btns button { margin: 0 0.25rem; }
 		/* Popup footer: the live P(>= target) headline on the left, and the PER-BOARD "tricks >="
 		   slider beside it (long, defaults to that board's NS par trick count). */
 		.cca-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 1rem; margin-top: 0.5rem; }
@@ -654,6 +666,7 @@
 			   out 1x1 in this engine (measured: 0x0, so there was nothing to click). `display: block` is the
 			   documented fix. */
 			.cca-help-card .x { display: block; }
+			.nc-qr-card { width: 24rem; }
 
 			/* The overlay panel, for the same reason, cannot rely on `overflow: auto` to keep itself inside
 			   the window: with the opponent-length grid open it grew past the bottom of the frame and the
@@ -696,6 +709,7 @@
 		   of the stylesheet, so nothing Sciter must read may be added below this point. */
 		@media (max-width: 640px) {
 			.opc, .shape { display: none; }
+			.nc-qr-code svg { width: 17rem; height: 17rem; }
 			.seat { min-width: 0; padding: 0.7rem 0.6rem 0.35rem; }
 			:where(html) .compass { gap: clamp(0.25rem, 0.8vh, 0.7rem); padding: clamp(0.4rem, 1vh, 0.9rem) clamp(0.4rem, 2vw, 1rem); }
 			:where(html) .compass .mid { gap: clamp(0.3rem, 3vw, 1.2rem); }
@@ -741,6 +755,7 @@
 		<button id="nc-cca-toggle" title="Card Combination Analyser: open the full trick-chance table for the current board">CCA</button>
 		<!-- Every board on the page as ONE link, for the whole set rather than the board BBO link sends. -->
 		<button id="nc-share" title="Copy a link that opens all these deals, as this page, in any browser - nothing is uploaded">Share</button>
+		<button id="nc-qr" title="The Share link as a QR code, for a phone to scan off this screen">QR</button>
 	</div>
 	<h1 class="page-title">{{TITLE}}</h1>
 	<div class="viewport">

@@ -107,10 +107,19 @@ filter_keeps :: proc(filter: Filter, deal: Deal) -> bool {
 // caption would corrupt a PBN tag or a machine-parsed `Line`. The annotator must emit only what is
 // valid for `format` (and emit nothing for formats it can't safely extend), so it fires for every
 // format but stays the annotator's responsibility to keep each one well-formed.
-Deal_Annotator :: proc(builder: ^strings.Builder, deal: Deal, format: Output_Format)
+//
+// `table` is the board's dealer and vulnerability as the deal was rendered (`draw_table`): a par caption is
+// scored at it. The zero table (nobody vulnerable, no dealer) when the run draws none.
+Deal_Annotator :: proc(builder: ^strings.Builder, deal: Deal, format: Output_Format, table: Table)
 
 // The data-carrying `Deal_Annotator`, and the sum of the two; see `Condition`.
-Contextual_Deal_Annotator :: proc(builder: ^strings.Builder, deal: Deal, format: Output_Format, userdata: rawptr)
+Contextual_Deal_Annotator :: proc(
+	builder: ^strings.Builder,
+	deal: Deal,
+	format: Output_Format,
+	table: Table,
+	userdata: rawptr,
+)
 
 Interpreted_Deal_Annotator :: struct {
 	call: Contextual_Deal_Annotator,
@@ -123,15 +132,15 @@ Annotator :: union {
 }
 
 // Write this deal's annotation, if there is one. nil writes nothing.
-annotate_deal :: proc(annotator: Annotator, builder: ^strings.Builder, deal: Deal, format: Output_Format) {
+annotate_deal :: proc(annotator: Annotator, builder: ^strings.Builder, deal: Deal, format: Output_Format, table: Table) {
 	switch v in annotator {
 	case Deal_Annotator:
 		if v != nil {
-			v(builder, deal, format)
+			v(builder, deal, format, table)
 		}
 	case Interpreted_Deal_Annotator:
 		if v.call != nil {
-			v.call(builder, deal, format, v.data)
+			v.call(builder, deal, format, table, v.data)
 		}
 	}
 }
@@ -229,8 +238,9 @@ generate_accepted :: proc(
 		if !filter_keeps(deal_filter, deal) {
 			continue
 		}
-		render_deal(builder, deal, format, randomize_table)
-		annotate_deal(annotate, builder, deal, format)
+		table := draw_table(format, randomize_table)
+		render_deal_at(builder, deal, format, table)
+		annotate_deal(annotate, builder, deal, format, table)
 		strings.write_byte(builder, '\n')
 		accepted += 1
 	}

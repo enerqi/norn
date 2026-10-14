@@ -44,6 +44,20 @@
 				</span>
 		  </div>
 	 </div>
+	 <!-- The QR button's code: the Share link, for a phone to scan off this screen. -->
+	 <div class="cca-help" id="nc-qr-modal" hidden>
+		  <div class="cca-help-card nc-qr-card">
+				<button class="x" id="nc-qr-close" title="Close (Esc)">&#10005;</button>
+				<h2>Scan to open these deals</h2>
+				<div class="nc-qr-code" id="nc-qr-code"></div>
+				<p class="nc-qr-facts" id="nc-qr-facts"></p>
+				<p class="nc-qr-notes" id="nc-qr-notes"></p>
+				<p class="nc-qr-btns">
+					 <button id="nc-qr-copy" title="Copy the link this code holds">copy link</button>
+					 <button id="nc-qr-par" title="Put par back in the code, or take it out" hidden>keep par (bigger code)</button>
+				</p>
+		  </div>
+	 </div>
 	 <div class="cca-help" id="nc-cca-help-modal" hidden>
 		  <div class="cca-help-card">
 				<button class="x" id="nc-cca-help-close" title="Close">&#10005;</button>
@@ -519,6 +533,20 @@
 		  var PLAY_KEYS = { ',': 'prev', '.': 'next', '[': 'tprev', ']': 'tnext',
 				Comma: 'prev', Period: 'next', BracketLeft: 'tprev', BracketRight: 'tnext' };
 		  function playOf(i) { return slides[i] ? slides[i]._play : null; }
+		  // WHAT EACH CARD COST, worked out on request. A page from a link (the shared-deals player) carries the play
+		  // without the costs - every position solved double dummy, a few seconds of the reader's processor a
+		  // board - so the bar offers them (`window.ncRequestPlay`, the player's) and the answer comes back through
+		  // `ncAddPlay`. Once asked, a board with a play is worked out as it is shown.
+		  var playCalcAgreed = false;
+		  function requestPlay(i) {
+				var P = playOf(i);
+				if (!P || P.d.dd || P.asked || typeof window.ncRequestPlay !== 'function') return;
+				P.asked = true;
+				playCalcAgreed = true;
+				var b = P.bar.querySelector('[data-p="calc"]');
+				if (b) { b.disabled = true; b.textContent = 'calculating…'; }
+				window.ncRequestPlay([i]);
+		  }
 		  function cardHTML(c) {
 				var su = c.charAt(1);
 				return '<span class="ssym ' + su.toLowerCase() + '">' + SUIT_SYM[su] + '</span>' + c.charAt(0);
@@ -551,7 +579,11 @@
 					 '<button data-p="tnext" title="Forward a trick (Ctrl+Right or ] )">|&#9654;</button>' +
 					 '<button data-p="end" title="To the end of the record">&#9654;&#9654;</button>' +
 					 (anyBad ? '<button data-p="mistake" class="costly" title="To the next card that cost a trick">!</button>' : '') +
-					 '</div><div class="ptricks">' + tricks + '</div><div class="pnote"></div>';
+					 '</div><div class="ptricks">' + tricks + '</div>' +
+					 (!d.dd && typeof window.ncRequestPlay === 'function' ? '<div class="pcalc"><button data-p="calc" ' +
+						  'title="Solves every position of this play double dummy, in this browser: a second or so on a desktop, ' +
+						  'a few on a phone">What did each card cost? (slow)</button></div>' : '') +
+					 '<div class="pnote"></div>';
 				var compass = s.querySelector('.compass');
 				s.insertBefore(bar, compass ? compass.nextSibling : null);
 				bar.addEventListener('click', function (e) {
@@ -563,6 +595,7 @@
 		  function playCmd(i, cmd) {
 				var P = playOf(i);
 				if (!P) return;
+				if (cmd === 'calc') { requestPlay(i); return; }
 				var n = P.d.c.length, st = P.step;
 				if (cmd === 'next') st += 1;
 				else if (cmd === 'prev') st -= 1;
@@ -654,6 +687,22 @@
 				for (var b = 0; b < bs.length; b++) bs[b].classList.toggle('cur', b === t);
 		  }
 		  slides.forEach(initPlay); // drawn by applyAll() at the end of the script, with the seats
+		  // A board's play WITH its costs, from the player (`html` is the `.play` element): it replaces the one the
+		  // page has, and the bar is built again at the card it was showing.
+		  window.ncAddPlay = function (i, html) {
+				var s = slides[i];
+				if (!s) return;
+				var holder = document.createElement('div');
+				holder.innerHTML = html;
+				var el = holder.querySelector('.play'), old = s.querySelector('.play');
+				if (!el || !old) return;
+				old.parentNode.replaceChild(el, old);
+				var P = s._play, step = P ? P.step : 0;
+				if (P && P.bar) P.bar.parentNode.removeChild(P.bar);
+				s._play = null;
+				initPlay(s, i);
+				if (s._play) { s._play.step = step; renderPlay(i); }
+		  };
 		  function applyAll() { for (var i = 0; i < total; i++) applySeat(i); }
 		  // A focus/reveal reflows the felt (font-size transition): re-centre now and after it settles.
 		  function recentre() { show(idx, true); setTimeout(function () { show(idx, true); }, 280); }
@@ -685,6 +734,7 @@
 				// scale(0.9->1) transition finishes — the par-caption geometry is still animating here, so
 				// positioning now would mis-place (drift) the panel. One reposition on the settled layout.
 				renderCca(false);
+				if (playCalcAgreed) requestPlay(idx);
 				clearTimeout(ccaPosT);
 				ccaPosT = setTimeout(function () { tuckLaidOut(); positionCca(); }, 380);
 		  }
@@ -894,7 +944,8 @@
 				bboT = setTimeout(function () { bboBtn.textContent = 'BBO link'; }, 1600);
 		  };
 
-		  // SHARE: every board on the page as ONE link, `<player>#v1.<payload>`, which a fixed player page (norn in
+		  // SHARE: every board on the page as ONE link, `<player>#v1.<payload>` (`v2.` with recorded plays, `v3.` with a
+		  // 2-hand board's named contract and defender inferences, its `.par`'s `data-contract`/`-held`/`-shape`), which a fixed player page (norn in
 		  // WebAssembly) turns back into this page in the reader's browser - nothing is uploaded. The format is
 		  // the notes repo's `share` package (deal-simulations/odin-sims/share/share.odin), and the parts of it
 		  // that are not trivial are NOT redone here: each board's deal and table come from its `data-hv` (as
@@ -927,7 +978,7 @@
 				return out;
 		  }
 		  var SHARE_SEAT = { n: 0, e: 1, s: 2, w: 3 }, SHARE_SUIT = { c: 0, d: 1, h: 2, s: 3 };
-		  function shareBoardBytes(slide) {
+		  function shareBoardBytes(slide, noPar) {
 				var compass = slide.querySelector('.compass');
 				var q = compass && compass.getAttribute('data-hv');
 				if (!q) return null;
@@ -970,7 +1021,7 @@
 				}
 				var extra = [];
 				if (sides === 0) {
-					 var parEl = slide.querySelector('[data-par]');
+					 var parEl = noPar ? null : slide.querySelector('[data-par]');
 					 if (parEl) extra = bytesOfB64url(parEl.getAttribute('data-par'));
 				} else {
 					 var tEl = slide.querySelector('.par[data-target]');
@@ -980,7 +1031,9 @@
 				bytes.push(vul | dealer << 2 | sides << 5 | (extra.length ? 0x80 : 0));
 				return bytes.concat(extra);
 		  }
-		  window.ncShareFragment = function () {
+		  // `noPar` leaves every board's par numbers out (the player then draws no caption): the QR code's
+		  // smaller link, as the workbench's `share_link_for(with_par = false)`.
+		  window.ncShareFragment = function (noPar) {
 				// The title as UTF-8, at most 255 bytes, never cut inside a character.
 				// `document.title` is empty in the desktop engine (measured, page-check): read the element too.
 				var titleEl = document.querySelector('title');
@@ -1002,13 +1055,61 @@
 					 while (end > 0 && (title[end] & 0xC0) === 0x80) end--;
 					 title = title.slice(0, end);
 				}
-				var bytes = [document.querySelector('.combo') ? 1 : 0, title.length].concat(title);
-				for (var i = 0; i < slides.length; i++) {
-					 var board = shareBoardBytes(slides[i]);
-					 if (!board) return null;
-					 bytes = bytes.concat(board);
+				var analysed = document.querySelector('.combo') || window.ncAnalysing;
+				// A 2-hand board's named contract (`data-contract`, `4h`/`3nt`) and the defender inferences its sampling
+				// was conditioned on (`data-held`, `W:3S E:KH`; `data-shape`, `E:S:0-0 W:H:5-13`), after its target in a
+				// `v3.` link: the contract byte (the level in bits 0-2, the strain s h d c nt in bits 3-5, 0 for none),
+				// a count byte (held cards in bits 0-3, lengths in bits 4-7), a byte a held card (the card plus one -
+				// suit c d h s, then rank 2..A - in bits 0-5, the seat in bits 6-7), two a length (the seat in bits
+				// 0-1, the suit c d h s in bits 2-3, the fewest in bits 4-7; then the most). Inferences that do not all
+				// read, or more than 15 of a kind, travel as none - as `share` reads the page.
+				function shareContract(slide) {
+					 var el = slide.querySelector('.par[data-target]');
+					 var m = el && /^([1-7])(s|h|d|c|nt)$/.exec(el.getAttribute('data-contract') || '');
+					 var contract = m ? parseInt(m[1], 10) | ['s', 'h', 'd', 'c', 'nt'].indexOf(m[2]) << 3 : 0;
+					 var keys = function (name) {
+						  return ((el && el.getAttribute(name)) || '').split(' ').filter(function (k) { return k; });
+					 };
+					 var held = [], shape = [], ok = true;
+					 keys('data-held').forEach(function (k) {
+						  var l = /^([NESW]):([2-9TJQKA])([CDHS])$/.exec(k);
+						  if (!l) { ok = false; return; }
+						  held.push(('CDHS'.indexOf(l[3]) * 13 + '23456789TJQKA'.indexOf(l[2]) + 1) | 'NESW'.indexOf(l[1]) << 6);
+					 });
+					 keys('data-shape').forEach(function (k) {
+						  var s = /^([NESW]):([CDHS]):(\d{1,2})-(\d{1,2})$/.exec(k);
+						  var least = s ? parseInt(s[3], 10) : 0, most = s ? parseInt(s[4], 10) : 0;
+						  if (!s || least > most || most > 13) { ok = false; return; }
+						  shape.push('NESW'.indexOf(s[1]) | 'CDHS'.indexOf(s[2]) << 2 | least << 4, most);
+					 });
+					 if (!ok || held.length > 15 || shape.length > 30) held = [], shape = [];
+					 return [contract, held.length | (shape.length / 2) << 4].concat(held, shape);
 				}
-				return 'v1.' + b64urlOfBytes(bytes);
+				var bytes = [analysed ? 1 : 0, title.length].concat(title);
+				// A board's recorded play travels as the bytes its `.play` element carries (`data-pack`, the
+				// `replay` package's), after the board, in a `v2.` link - only when some board has one.
+				var plays = [], anyPlay = false;
+				for (var p = 0; p < slides.length; p++) {
+					 var playEl = slides[p].querySelector('.play[data-pack]');
+					 plays.push(playEl ? bytesOfB64url(playEl.getAttribute('data-pack')) : [0]);
+					 if (playEl) anyPlay = true;
+				}
+				var boards = [], contracts = [], anyContract = false;
+				for (var i = 0; i < slides.length; i++) {
+					 var board = shareBoardBytes(slides[i], noPar);
+					 if (!board) return null;
+					 // A 2-hand board with a target: its table byte names a pair and says more follows.
+					 var twoHand = (board[13] & 0x60) !== 0 && (board[13] & 0x80) !== 0;
+					 contracts.push(twoHand ? shareContract(slides[i]) : null);
+					 if (twoHand && (contracts[i][0] || contracts[i][1])) anyContract = true; // a contract or an inference
+					 boards.push(board);
+				}
+				for (var k = 0; k < boards.length; k++) {
+					 bytes = bytes.concat(boards[k]);
+					 if (anyContract && contracts[k]) bytes = bytes.concat(contracts[k]);
+					 if (anyPlay || anyContract) bytes = bytes.concat(plays[k]);
+				}
+				return (anyContract ? 'v3.' : anyPlay ? 'v2.' : 'v1.') + b64urlOfBytes(bytes);
 		  };
 		  // Where the link opens, best first: the published player this page was written with; the player this
 		  // page was itself opened through; else `player.html` BESIDE this page - the workbench keeps a current
@@ -1020,7 +1121,7 @@
 				if (address) return { url: address.split('#')[0], local: false };
 				var here = '';
 				try { here = String(location.href || document.URL || ''); } catch (e) { here = ''; }
-				if (here.indexOf('#v1.') > 0) return { url: here.split('#')[0], local: false };
+				if (/#v\d+\./.test(here)) return { url: here.split('#')[0], local: false };
 				if (/^(file|https?):/.test(here)) {
 					 var base = here.split('#')[0].split('?')[0];
 					 return { url: base.slice(0, base.lastIndexOf('/') + 1) + 'player.html', local: true };
@@ -1051,6 +1152,79 @@
 					 : 'Copy a link that opens all these deals, as this page, in any browser - nothing is uploaded';
 				shareSay(!ok ? 'copy failed' : player.local ? 'link copied (this computer) ✓' : 'link copied ✓');
 		  };
+
+		  // --- QR: the same link as a code, for a phone at the table ------------------------------------------
+		  // The rule is the workbench's QR panel (`share_qr_for`): error correction L (a screen is clean, and L is
+		  // 3-4 versions smaller than M), and par is dropped when the code with it would be over version 25 - the
+		  // biggest a phone camera read comfortably off a screen (measured 2026-10-12: 26 slowly, 38 barely) -
+		  // unless the reader asks to keep it. The encoder is `NcQr` (html_cards_qr.js, pasted in below).
+/*{{QR_JS}}*/
+		  var QR_READABLE_VERSION = 25;
+		  var qrBtn = document.getElementById('nc-qr');
+		  var qrModal = document.getElementById('nc-qr-modal');
+		  var qrKeepPar = false, qrLink = '';
+		  function qrDraw() {
+				var player = sharePlayer();
+				var codeEl = document.getElementById('nc-qr-code'), facts = document.getElementById('nc-qr-facts');
+				var notes = document.getElementById('nc-qr-notes'), parBtn = document.getElementById('nc-qr-par');
+				var full = player && window.ncShareFragment(false), bare = player && window.ncShareFragment(true);
+				if (!full) {
+					 qrLink = '';
+					 codeEl.innerHTML = '';
+					 facts.textContent = '';
+					 notes.textContent = player ? 'These deals cannot be put in a link.'
+						  : 'This page does not say where the shared-deals player is, so it has no link to show. ' +
+							 'Set where the player is published (workbench Settings, Sharing) and generate the page again.';
+					 setHidden(parBtn, true);
+					 return;
+				}
+				var hasPar = full !== bare;
+				var link = player.url + '#' + full, code = NcQr.encode(link, { ecc: 'L' }), dropped = false;
+				if (hasPar && !qrKeepPar && !(code && code.version <= QR_READABLE_VERSION)) {
+					 link = player.url + '#' + bare;
+					 code = NcQr.encode(link, { ecc: 'L' });
+					 dropped = true;
+				}
+				qrLink = link;
+				codeEl.innerHTML = code ? NcQr.svg(code) : '';
+				// Sized by its MODULES in a browser: a fixed 20rem gave a version 33 code under 2px a module, too
+				// fine for a camera. 3px a module, never under 20rem, never wider than the window. (The desktop
+				// engine keeps the stylesheet's size: the workbench has its own QR panel.)
+				var svgEl = codeEl.querySelector('svg');
+				if (svgEl && code && !DESKTOP) {
+					 var px = Math.round(Math.min(Math.max(320, (code.size + 8) * 3), viewW() * 0.94 - 48));
+					 svgEl.style.width = px + 'px';
+					 svgEl.style.height = px + 'px';
+				}
+				facts.textContent = slides.length + (slides.length === 1 ? ' board' : ' boards') + (hasPar && !dropped ? ' with par' : '') +
+					 (code ? ' - version ' + code.version + ', ' + code.size + ' squares a side' : '') + ' - ' + link.length + ' characters';
+				var say = [];
+				if (!code) say.push('Too many boards for any QR code: copy the link instead.');
+				else if (code.version > QR_READABLE_VERSION) say.push('A big code: hold the phone steady and close, or zoom the page in.');
+				if (dropped) say.push('Par is left out to keep the code small enough to scan; the boards are all there.');
+				if (player.local) say.push('This code opens player.html beside this page, so only on this computer: set where the player is published to share it.');
+				notes.textContent = say.join(' ');
+				parBtn.textContent = dropped ? 'keep par (bigger code)' : 'drop par (smaller code)';
+				setHidden(parBtn, !(dropped || (qrKeepPar && hasPar)));
+		  }
+		  // The link the open code holds: for a test to hold the drawn code to the native encoder's.
+		  window.ncQrLink = function () { return qrLink; };
+		  if (qrBtn && qrModal) {
+				qrBtn.onclick = function () { qrKeepPar = false; qrDraw(); setHidden(qrModal, false); };
+				document.getElementById('nc-qr-par').onclick = function () { qrKeepPar = !qrKeepPar; qrDraw(); };
+				var qrCopy = document.getElementById('nc-qr-copy');
+				qrCopy.onclick = function () {
+					 if (!qrLink) return;
+					 qrCopy.textContent = copyText(qrLink) ? 'link copied ✓' : 'copy failed';
+					 setTimeout(function () { qrCopy.textContent = 'copy link'; }, 2200);
+				};
+				document.getElementById('nc-qr-close').onclick = function () { setHidden(qrModal, true); };
+				qrModal.onclick = function (e) { if (e.target === qrModal) setHidden(qrModal, true); };
+				// Escape closes it, as it closes the help.
+				document.addEventListener('keydown', function (e) {
+					 if ((e.key === 'Escape' || e.code === 'Escape') && !isHidden(qrModal)) setHidden(qrModal, true);
+				});
+		  }
 
 		  var parToggle = document.getElementById('nc-par-toggle');
 		  parToggle.onclick = function () {
@@ -1137,7 +1311,9 @@
 							aimPct: S.atl ? S.atl[aim] : tail(S.total, aim) };
 		  }
 		  var combos = Array.prototype.slice.call(document.querySelectorAll('.combo'));
-		  combos.forEach(function (el) {
+		  combos.forEach(readCombo);
+		  // One board's .combo read into its fields; also run on a .combo that arrives later (`ncAddAnalysis`).
+		  function readCombo(el) {
 				var ns = parseAttr(el, 'data-ns'); if (!ns) return;
 				function side(pfx) {
 					 var data = parseAttr(el, 'data-' + pfx);
@@ -1182,7 +1358,7 @@
 				// Full-deal BLIND advisor grids per side ({ns:{n,lvl,strain,g,ach,..}, ew:{..}}) baked when a
 				// known deal is sampled — lets the panel toggle exact double-dummy ↔ "play it blind".
 				el._blind = simEl ? parseAttr(simEl, 'data-sim-blind') : null;
-		  });
+		  }
 		  function sideData(el) { return el._sides ? el._sides[ccaSide] : null; }
 
 		  // --- Vacant-space / a-posteriori re-weight (Phase 3) --------------------------------------
@@ -1527,6 +1703,42 @@
 		  var ccaOpen = false;
 		  var ccaPosT; // pending "reposition after the slide transition settles" timer
 		  function activeCombo() { var s = slides[idx]; return s ? s.querySelector('.combo') : null; }
+		  // ANALYSIS ON REQUEST. A page opened from a link (the player) has no `.combo`s: the player can work them
+		  // out in the browser, ~0.1s a board on a desktop and longer on a phone, and does so ONLY when the reader
+		  // asks - nothing runs on the reader's processor otherwise. The CCA panel on a board without its analysis
+		  // offers the calculation; once the reader has said yes, a board opened with the panel showing is worked
+		  // out as it comes into view. `window.ncRequestAnalysis(boards)` is the player's; a generated page has none.
+		  var ccaCanRequest = typeof window.ncRequestAnalysis === 'function';
+		  var ccaCalcAgreed = false, ccaAsked = {};
+		  function ccaRequest(list) {
+				var fresh = [];
+				for (var i = 0; i < list.length; i++) if (!ccaAsked[list[i]]) { ccaAsked[list[i]] = true; fresh.push(list[i]); }
+				if (fresh.length) window.ncRequestAnalysis(fresh);
+		  }
+		  function ccaOffer() {
+				if (ccaCalcAgreed || ccaAsked[idx]) {
+					 ccaRequest([idx]);
+					 ccaBody.innerHTML = '<div class="cca-empty">Calculating board ' + (idx + 1) + '…</div>';
+					 return;
+				}
+				ccaBody.innerHTML = '<div class="cca-empty cca-offer"><p>The card-combination analysis (and, for a ' +
+					 'whole deal, the double-dummy contract explorer) is worked out in this browser, on this device\'s ' +
+					 'processor: a few tenths of a second a board on a computer, longer on a phone. Once started, each ' +
+					 'board you open with this panel showing is worked out as you go.</p>' +
+					 '<button id="nc-cca-calc">Calculate this board</button>' +
+					 '<button id="nc-cca-calc-all">Calculate all ' + slides.length + ' boards (slow)</button></div>';
+				document.getElementById('nc-cca-calc').onclick = function () {
+					 ccaCalcAgreed = true;
+					 renderCca(true);
+				};
+				document.getElementById('nc-cca-calc-all').onclick = function () {
+					 ccaCalcAgreed = true;
+					 var all = [];
+					 for (var i = 0; i < slides.length; i++) all.push(i);
+					 ccaRequest([idx].concat(all));
+					 renderCca(true);
+				};
+		  }
 		  // Rebuild the overlay for the active board. pos=true places it now (for the no-transition
 		  // callers: opening the panel, resize); during a slide NAV the caller instead waits for the
 		  // scale(0.9->1) transition to finish before positioning (measuring par mid-transition mis-placed
@@ -1567,6 +1779,14 @@
 				// on board nav BEFORE the input row syncs (so it blanks its cells for the new board).
 				if (ccaOppMin && ccaOppMin.board !== idx) ccaOppMin = null;
 				syncOppUI();
+				if (!el && ccaCanRequest) {
+					 ccaOffer();
+					 ccaSub.textContent = 'Board ' + (idx + 1);
+					 if (ccaFoot) ccaFoot.style.visibility = 'hidden';
+					 simBand();
+					 if (pos) positionCca();
+					 return;
+				}
 				if (!S || !S.total) {
 					 ccaBody.innerHTML = '<div class="cca-empty">No combination data for this board.</div>';
 					 ccaSub.textContent = '';
@@ -2007,10 +2227,44 @@
 				return condLead(el, { g: sim.g, n: sim.n, exact: false, lvl: sim.lvl, strain: sim.strain,
 								 ach: sim.ach, taxpts: sim.taxpts, pvt: sim.pvt, note: null });
 		  }
+		  // A 2-HAND BOARD'S SAMPLING, worked out on request. A page from a link has the board's hands and its
+		  // card-combination analysis but not the advisor's sampling (the unseen hands dealt hundreds of times and
+		  // solved double dummy): the band offers it (`window.ncRequestSample`, the player's), says how far it has
+		  // got (`ncSampleProgress`) and takes the answer (`ncAddSample`). Once asked, a 2-hand board shown with the
+		  // panel open is sampled as it comes into view.
+		  var sampleCan = typeof window.ncRequestSample === 'function';
+		  var sampleAgreed = false, sampleAsked = {}, sampleProgress = {};
+		  function requestSample(i) {
+				if (sampleAsked[i]) return;
+				sampleAsked[i] = true;
+				sampleAgreed = true;
+				window.ncRequestSample([i]);
+		  }
+		  function sampleOffer(el) {
+				if (!sampleCan || !el || (el._known !== 'ns' && el._known !== 'ew')) return false;
+				if (sampleAgreed) requestSample(idx);
+				var p = sampleProgress[idx];
+				if (sampleAsked[idx]) {
+					 ccaSimBand.innerHTML = '<b>Whole-hand (simulated):</b> sampling the hidden hands\u2026' +
+						  (p ? ' <span class="lead-note">' + p.done + ' of up to ' + p.cap + ' deals</span>' : '');
+				} else {
+					 ccaSimBand.innerHTML = '<b>Whole-hand (simulated):</b> not worked out. ' +
+						  '<button id="nc-sample" title="Deals the two hidden hands up to 300 times and solves each deal double dummy, in this browser">' +
+						  'Sample the hidden hands (slow)</button> <span class="lead-note">seconds on a computer, half a minute or more ' +
+						  'on a phone; then every contract\'s chances, each opening lead\'s and the cost of a blind guess</span>';
+					 document.getElementById('nc-sample').onclick = function () { requestSample(idx); simBand(); };
+				}
+				setHidden(ccaSimBand, false);
+				return true;
+		  }
+		  window.ncSampleProgress = function (i, done, cap) {
+				sampleProgress[i] = { done: done, cap: cap };
+				if (i === idx && ccaOpen) simBand();
+		  };
 		  function simBand() {
 				if (!ccaSimBand) return;
 				var el = activeCombo(), src = activeSimSrc(el);
-				if (!src) { setHidden(ccaSimBand, true); return; }
+				if (!src) { if (!sampleOffer(el)) setHidden(ccaSimBand, true); return; }
 				var g = src.g[ccaStrain] || [], t = el._target;
 				var mk = 0; for (var k = t; k < 14; k++) mk += g[k] || 0;
 				var se = Math.sqrt(Math.max(0, mk * (1 - mk)) / src.n) * 100;
@@ -2114,6 +2368,13 @@
 		  for (var ci = 0; ci < combos.length; ci++) { if (combos[ci]._sim) { simDefault = combos[ci]._sim; break; } }
 		  if (simDefault && ccaStrainWrap) { setHidden(ccaStrainWrap, false); }
 		  setStrain(simDefault && simDefault.strain ? simDefault.strain : 'nt');
+		  // A grid that arrives after the page (`ncAddSim`, or a .combo finding one) brings the picker with it,
+		  // starting at that board's contract, as one baked into the page would have at load.
+		  function ccaSimArrived(sim) {
+				if (!sim || !ccaStrainWrap || !isHidden(ccaStrainWrap)) return;
+				setHidden(ccaStrainWrap, false);
+				setStrain(sim.strain || 'nt');
+		  }
 
 		  // Help modal.
 		  var helpModal = document.getElementById('nc-cca-help-modal');
@@ -2138,13 +2399,85 @@
 		  document.addEventListener('mousemove', function (e) { if (tipEl && !isHidden(tipEl)) posTip(e); });
 		  document.addEventListener('mouseout', function (e) { if (tipTarget(e) && tipEl) setHidden(tipEl, true); });
 
-		  if (combos.length === 0 && ccaBtn) ccaBtn.style.display = 'none';
+		  if (combos.length === 0 && ccaBtn && !ccaCanRequest) ccaBtn.style.display = 'none';
 		  // Par toggles the par captions and the combo summary lines; a page with neither has nothing for it to
 		  // do. Without `--par` a board's `.par` is still there but EMPTY - only a holder for `data-target` /
 		  // `data-sim` - so it counts only when it has text (measured in the workbench: Par on such a page
 		  // flipped `display` on an empty caption and nothing on screen changed, which read as a repaint bug).
 		  var hasPar = Array.prototype.some.call(track.querySelectorAll('.par'), function (p) { return (p.textContent || '').trim() !== ''; });
 		  if (!hasPar && combos.length === 0) parToggle.style.display = 'none';
+
+		  // ANALYSIS THAT ARRIVES AFTER THE PAGE. A page opened from a link is shown at once, without the
+		  // card-combination analysis; the player computes a board's when the reader asks for it (`ccaOffer`), the
+		  // board in view first (`ncActiveBoard`), and hands each .combo here. It is read as the page's own were and
+		  // joins the board's captions; Par comes on with the first one. `window.ncAnalysing` is set by the player
+		  // until every board has it, so Share still says the page is analysed.
+		  window.ncActiveBoard = function () { return idx; };
+		  window.ncAddAnalysis = function (i, html) {
+				var slide = slides[i];
+				if (!slide || slide.querySelector('.combo')) return;
+				var holder = document.createElement('div');
+				holder.innerHTML = html;
+				var el = holder.querySelector('.combo');
+				if (!el) return;
+				slide.appendChild(el);
+				if (track.classList.contains('hide-par')) {
+					 el.classList.add('cap-off');
+					 if (DESKTOP) el.style.setProperty('display', 'none');
+				}
+				readCombo(el);
+				combos.push(el);
+				comboLine(el);
+				ccaSimArrived(el._sim);
+				if (ccaBtn) ccaBtn.style.removeProperty('display');
+				parToggle.style.removeProperty('display');
+				if (i === idx) {
+					 syncSideToggle();
+					 if (ccaOpen) renderCca(true);
+					 recentre();
+				}
+		  };
+		  // A whole deal's double-dummy grid, worked out after the page as well (the player runs DDS in the
+		  // browser): the `.sim-exact` element the advisor's page carries, which turns the contract picker into the
+		  // exact explorer. Put where the advisor puts it, before the board's .combo; a .combo already there takes
+		  // it now, one arriving later finds it as its own page's do (`readCombo`).
+		  window.ncAddSim = function (i, html) {
+				var slide = slides[i];
+				if (!slide || slide.querySelector('.sim-exact')) return;
+				var holder = document.createElement('div');
+				holder.innerHTML = html;
+				var el = holder.querySelector('.sim-exact');
+				if (!el) return;
+				var combo = slide.querySelector('.combo');
+				if (combo && combo.parentNode === slide) slide.insertBefore(el, combo);
+				else slide.appendChild(el);
+				if (combo) {
+					 combo._sim = parseAttr(el, 'data-sim');
+					 ccaSimArrived(combo._sim);
+					 if (i === idx && ccaOpen) renderCca(true);
+				}
+		  };
+
+		  // A 2-hand board's sampling, worked out after the page (`ncRequestSample`): its `.par` again, now carrying the
+		  // grid, the opening-lead sub-grids and the guess notes the advisor's page bakes into it. It replaces the one
+		  // the page has; a .combo already there reads it now, one arriving later reads it as its own page's do.
+		  window.ncAddSample = function (i, html) {
+				var slide = slides[i];
+				if (!slide) return;
+				var holder = document.createElement('div');
+				holder.innerHTML = html;
+				var el = holder.querySelector('.par'), old = slide.querySelector('.par');
+				if (!el || !old) return;
+				old.parentNode.replaceChild(el, old);
+				delete sampleProgress[i];
+				var combo = slide.querySelector('.combo');
+				if (!combo) return;
+				combo._sim = parseAttr(el, 'data-sim');
+				combo._leads = parseAttr(el, 'data-sim-leads');
+				combo._simGuess = parseAttr(el, 'data-sim-guess');
+				ccaSimArrived(combo._sim);
+				if (i === idx && ccaOpen) renderCca(true);
+		  };
 
 		  // Resize arrives once per mouse move while a window edge is dragged, and `show` is not free: it
 		  // re-renders the overlay table and re-places the panel. Re-centre on every event (one measurement and

@@ -179,3 +179,43 @@ test_parse_pbn_empty :: proc(t: ^testing.T) {
 	_, err := parse_pbn_deal("")
 	testing.expect_value(t, err, Pbn_Parse_Error.Missing_Deal_Tag)
 }
+
+// `[Dealer]` and `[Vulnerable]` give the board's conditions; without them there is no dealer and nobody is
+// vulnerable.
+@(test)
+test_parse_pbn_dealer_and_vulnerability :: proc(t: ^testing.T) {
+	DEAL :: `[Deal "N:AQ95.K82.T63.A74 - KJ6.AQJ93.A4.K52 -"]`
+	board, err := parse_pbn_deal(strings.concatenate({`[Dealer "S"]`, "\n", `[Vulnerable "NS"]`, "\n", DEAL}, context.temp_allocator))
+	testing.expect_value(t, err, Pbn_Parse_Error.None)
+	testing.expect_value(t, board.conditions.dealer, Maybe(Seat)(.South))
+	testing.expect_value(t, board.conditions.vulnerability, Vulnerability.North_South)
+	all, _ := parse_pbn_deal(strings.concatenate({`[Vulnerable "All"]`, "\n", DEAL}, context.temp_allocator))
+	testing.expect_value(t, all.conditions.vulnerability, Vulnerability.Both)
+	bare, _ := parse_pbn_deal(DEAL)
+	testing.expect_value(t, bare.conditions.dealer, Maybe(Seat)(nil))
+	testing.expect_value(t, bare.conditions.vulnerability, Vulnerability.None)
+}
+
+// A 2-hand board's recorded opening lead is a DEFENDER's card no known hand holds: its leader is the seat the
+// `[Play]` tag names, else the declarer's left-hand opponent. A leader that is a known seat gives no lead.
+@(test)
+test_parse_pbn_two_hand_opening_lead :: proc(t: ^testing.T) {
+	DEAL :: `[Deal "N:AQ95.K82.T63.A74 - KJ6.AQJ93.A4.K52 -"]` + "\n"
+	board, err := parse_pbn_deal(DEAL + `[Play "W"]` + "\nD5 D3 DQ DA\n*")
+	testing.expect_value(t, err, Pbn_Parse_Error.None)
+	lead, has := board.opening_lead.?
+	testing.expect(t, has, "the leader is named by the [Play] tag")
+	testing.expect_value(t, lead.leader, Seat.West)
+	testing.expect_value(t, lead.card, make_card(.Diamonds, .Five))
+
+	// No [Play] seat to go by: the declarer's left-hand opponent (South declares, West leads).
+	played := DEAL + `[Contract "4H"]` + "\n" + `[Declarer "S"]` + "\n" + `[Play ""]` + "\nD5 D3 DQ DA\n*"
+	by_contract, _ := parse_pbn_deal(played)
+	from_contract, has_contract := by_contract.opening_lead.?
+	testing.expect(t, has_contract)
+	testing.expect_value(t, from_contract.leader, Seat.West)
+
+	// A known seat cannot lead a card no known hand holds.
+	known, _ := parse_pbn_deal(DEAL + `[Play "N"]` + "\nD5 D3 DQ DA\n*")
+	testing.expect_value(t, known.opening_lead, Maybe(Opening_Lead)(nil))
+}

@@ -57,11 +57,14 @@ parse_lin_deal :: proc(text: string) -> (board: Board, err: Lin_Parse_Error) {
 		return {}, .Missing_Md_Tag
 	}
 
-	// Strip the leading dealer digit (1..4). We don't retain the dealer — Board has no such
-	// field — but a non-digit here means the value isn't a real `md` payload.
+	// The leading dealer digit (1..4); a non-digit here means the value isn't a real `md` payload.
 	if value[0] < '1' || value[0] > '4' {
 		return {}, .Bad_Dealer
 	}
+	if seat, ok := lin_dealer_seat(value[0]); ok {
+		board.conditions.dealer = seat
+	}
+	board.conditions.vulnerability = lin_vulnerability(text)
 	hands_str := value[1:]
 
 	// Split the comma-separated hand fields (3 or 4 of them), parsing each into its md-order seat.
@@ -120,6 +123,29 @@ parse_lin_deal :: proc(text: string) -> (board: Board, err: Lin_Parse_Error) {
 		}
 	}
 	return board, .None
+}
+
+// The `sv|` token: `o`/`0`/`-` nobody (or none at all), `n` north-south, `e` east-west, `b` both.
+@(private = "file")
+lin_vulnerability :: proc(text: string) -> Vulnerability {
+	at := -1
+	if strings.has_prefix(text, "sv|") {
+		at = 0
+	} else if i := strings.index(text, "|sv|"); i >= 0 {
+		at = i + 1
+	}
+	if at < 0 || at + 3 >= len(text) {
+		return .None
+	}
+	switch text[at + 3] {
+	case 'n', 'N':
+		return .North_South
+	case 'e', 'E':
+		return .East_West
+	case 'b', 'B':
+		return .Both
+	}
+	return .None
 }
 
 // Map BBO's dealer digit to a Seat: 1=South, 2=West, 3=North, 4=East (BBO's own numbering, NOT the seat
@@ -324,11 +350,13 @@ with the vulnerability. With `randomize_table` the dealer and vulnerability are 
 other format draws them, so a batch is not 48 boards all dealt by North with nobody vulnerable.
 */
 render_deal_lin :: proc(builder: ^strings.Builder, deal: Deal, randomize_table := false) {
-	vulnerability := Vulnerability.None
-	dealer := Seat.North
-	if randomize_table {
-		vulnerability, dealer = random_table()
-	}
+	table := draw_table(.Lin, randomize_table)
+	write_lin(builder, deal, table.vulnerability, table.dealer.? or_else .North)
+}
+
+// `render_deal_lin` at a given table.
+@(private)
+write_lin :: proc(builder: ^strings.Builder, deal: Deal, vulnerability: Vulnerability, dealer: Seat) {
 
 	strings.write_string(builder, "st||md|")
 	strings.write_byte(builder, lin_dealer_digit(dealer))

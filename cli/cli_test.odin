@@ -329,8 +329,8 @@ test_par_captions_the_scenarios_without_their_own :: proc(t: ^testing.T) {
 	testing.expectf(t, ok, "--par should parse: %s", msg)
 	testing.expect(t, opts.par, "--par sets par")
 
-	own := proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output_Format) {}
-	par := proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output_Format) {}
+	own := proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output_Format, table: norn.Table) {}
+	par := proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output_Format, table: norn.Table) {}
 	annotators := make(map[string]norn.Deal_Annotator)
 	defer delete(annotators)
 	annotators["captioned"] = own

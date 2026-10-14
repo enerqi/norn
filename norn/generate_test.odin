@@ -259,3 +259,41 @@ test_a_contextual_predicate_reads_its_rule_from_userdata :: proc(t: ^testing.T) 
 	// A nil condition keeps everything, which is the fourth state a union gives for nothing.
 	testing.expect_value(t, count_accepted_seeded(100, nil, 7), 100)
 }
+
+// The annotator is handed the table the deal was RENDERED at (a par caption is scored at its vulnerability):
+// each handviewer line's `v=`/`d=` tail must be what the annotator was given.
+@(test)
+test_the_annotator_gets_the_rendered_table :: proc(t: ^testing.T) {
+	state: rand.Xoshiro256_Random_State
+	context.random_generator = seeded_xoshiro(&state, 2026)
+	echo :: proc(builder: ^strings.Builder, deal: Deal, format: Output_Format, table: Table) {
+		CODES := [Vulnerability]string {
+			.None        = "-",
+			.North_South = "n",
+			.East_West   = "e",
+			.Both        = "b",
+		}
+		strings.write_string(builder, " v=")
+		strings.write_string(builder, CODES[table.vulnerability])
+		strings.write_string(builder, "&d=")
+		letters := "nesw"
+		strings.write_byte(builder, letters[int(table.dealer.? or_else .North)])
+	}
+	builder := strings.builder_make()
+	defer strings.builder_destroy(&builder)
+	generate_accepted(&builder, 16, .Handviewer, accept_all, randomize_table = true, annotate = Deal_Annotator(echo))
+	text := strings.to_string(builder)
+	lines := strings.split_lines(strings.trim_right(text, "\n"))
+	defer delete(lines)
+	testing.expect_value(t, len(lines), 16)
+	tables := map[string]bool{}
+	defer delete(tables)
+	for line in lines {
+		space := strings.last_index_byte(line, ' ')
+		testing.expect(t, space > 0, line)
+		given := line[space + 1:]
+		testing.expectf(t, strings.has_suffix(line[:space], given), "rendered %q, annotator given %q", line[:space], given)
+		tables[given] = true
+	}
+	testing.expect(t, len(tables) > 1, "a random table should vary over 16 deals")
+}

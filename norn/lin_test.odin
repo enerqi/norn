@@ -194,3 +194,19 @@ test_lin_writes_a_void_as_an_empty_suit :: proc(t: ^testing.T) {
 	_, again_err := parse_lin_deal(written)
 	testing.expectf(t, again_err == .None, "a deal with a void did not survive: %v (%s)", again_err, written)
 }
+
+// The dealer digit and `sv|` give the board's conditions: `md|3` is North dealing, `sv|e` east-west vulnerable.
+// A record without `sv|` has nobody vulnerable.
+@(test)
+test_parse_lin_dealer_and_vulnerability :: proc(t: ^testing.T) {
+	deal := "md|3SAKTHK96DKT65C973,SQ875HAQT4D97CKT5,S962H8752DQJ83CA6,SJ43HJ3DA42CQJ842|"
+	board, err := parse_lin_deal(strings.concatenate({"pn|a,b,c,d|", deal, "sv|e|"}, context.temp_allocator))
+	testing.expect_value(t, err, Lin_Parse_Error.None)
+	testing.expect_value(t, board.conditions.dealer, Maybe(Seat)(.North))
+	testing.expect_value(t, board.conditions.vulnerability, Vulnerability.East_West)
+	both, _ := parse_lin_deal(strings.concatenate({"sv|b|", deal}, context.temp_allocator))
+	testing.expect_value(t, both.conditions.vulnerability, Vulnerability.Both)
+	none, _ := parse_lin_deal(deal)
+	testing.expect_value(t, none.conditions.vulnerability, Vulnerability.None)
+	testing.expect_value(t, none.conditions.dealer, Maybe(Seat)(.North))
+}

@@ -33,9 +33,10 @@ import "core:strings"
 Board :: struct {
 	deal:         Deal,
 	known:        bit_set[Seat],
-	// The recorded opening lead, when the source carried a play sequence (LIN `pc|`, PBN `[Play]`) AND the
-	// led card sits in a KNOWN hand (so its leader is identifiable — always true for a full deal, never for
-	// a 2-hand board whose lead belongs to an unspecified defender); nil otherwise.
+	// The recorded opening lead, when the source carried a play sequence (LIN `pc|`, PBN `[Play]`) and its
+	// leader is identifiable: the seat holding the card in a full deal; on a 2-hand board, an UNKNOWN seat named
+	// by the `[Play "<seat>"]` tag (else the declarer's left-hand opponent) whose card no known hand holds - the
+	// card the advisor then knows that defender held. nil otherwise.
 	opening_lead: Maybe(Opening_Lead),
 	// The contract the record names, or nil when it names none — a bare `[Deal]` tag, a passed-out auction,
 	// or a 2-hand OCR board with no metadata. LIN: derived from the `mb|` auction (final bid + the
@@ -47,6 +48,9 @@ Board :: struct {
 	play:         Maybe(Play),
 	// Which board, which room, who played it and in what match, as far as the record says (`Board_Table`).
 	table:        Board_Table,
+	// The dealer and the vulnerability the record gives: LIN's `md|` dealer digit and `sv|`, PBN's `[Dealer]` and
+	// `[Vulnerable]`. A record that names neither leaves no dealer and nobody vulnerable.
+	conditions:   Table,
 }
 
 // An opening lead: the card led and the seat that led it. One value rather than two loose fields because
@@ -70,6 +74,31 @@ set_opening_lead :: proc(board: ^Board, card: Card) {
 				return
 			}
 		}
+	}
+}
+
+// A 2-hand board's opening lead, whose card is in no known hand: its leader is the seat the `[Play]` tag names,
+// else the declarer's left-hand opponent - and must be one of the unknown seats.
+@(private = "file")
+set_defender_lead :: proc(board: ^Board, card: Card, text: string) {
+	leader: Seat
+	if v, ok := pbn_tag_value(text, "Play"); ok && len(v) >= 1 {
+		seat, sok := seat_from_letter(v[0])
+		if !sok {
+			return
+		}
+		leader = seat
+	} else if contract, has := board.contract.?; has {
+		leader = Seat((int(contract.declarer) + 1) % SEAT_COUNT)
+	} else {
+		return
+	}
+	if leader in board.known {
+		return
+	}
+	board.opening_lead = Opening_Lead {
+		card   = card,
+		leader = leader,
 	}
 }
 
@@ -140,8 +169,9 @@ parse_pbn_deal :: proc(text: string) -> (board: Board, err: Pbn_Parse_Error) {
 	if board.known == {} {
 		return {}, .No_Hands
 	}
-	if card, ok := pbn_first_play_card(text); ok {
-		set_opening_lead(&board, card)
+	first_card, has_first_card := pbn_first_play_card(text)
+	if has_first_card {
+		set_opening_lead(&board, first_card)
 	}
 	// The contract, when the record carried both `[Contract]` and `[Declarer]` (a full PBN record, or the
 	// hand-ocr replay metadata). Both are required: the declarer fixes the declaring side. Absent or a
@@ -158,8 +188,34 @@ parse_pbn_deal :: proc(text: string) -> (board: Board, err: Pbn_Parse_Error) {
 	if contract, has := board.contract.?; has && board.known == {.North, .East, .South, .West} {
 		board.play = pbn_play(text, board.deal, contract)
 	}
+	if has_first_card && board.opening_lead == nil {
+		set_defender_lead(&board, first_card, text)
+	}
 	board.table = pbn_table(text)
+	board.conditions = pbn_conditions(text)
 	return board, .None
+}
+
+// The `[Dealer]` and `[Vulnerable]` tags. `[Vulnerable]` is `None`/`Love`/`-`, `NS`, `EW`, `All`/`Both`; an unknown
+// value reads as nobody vulnerable.
+@(private = "file")
+pbn_conditions :: proc(text: string) -> (table: Table) {
+	if v, ok := pbn_tag_value(text, "Dealer"); ok && len(v) >= 1 {
+		if seat, sok := seat_from_letter(v[0]); sok {
+			table.dealer = seat
+		}
+	}
+	if v, ok := pbn_tag_value(text, "Vulnerable"); ok {
+		switch strings.to_lower(strings.trim_space(v), context.temp_allocator) {
+		case "ns":
+			table.vulnerability = .North_South
+		case "ew":
+			table.vulnerability = .East_West
+		case "all", "both":
+			table.vulnerability = .Both
+		}
+	}
+	return table
 }
 
 // The board's identity tags: `[Board]`, `[Room]`, the four seats' names, `[Event]`, `[Stage]` (else `[Round]`),

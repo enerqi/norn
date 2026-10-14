@@ -1923,7 +1923,8 @@ cell :: proc(b: ^strings.Builder, s: string) {
 
 // --- Deal annotator (norn.Deal_Annotator) -----------------------------------------------------
 
-// A `norn.Deal_Annotator`: append the naive combined-holding trick table after a rendered deal.
+// The body of a `norn.Deal_Annotator` (it has no use for the table): append the naive combined-holding trick
+// table after a rendered deal.
 // Deliberately INDEPENDENT of the DDS `dd` package — no solver, no par — so it can run without `--dd`.
 // Pair it with `deal_solve.annotate` in the consumer (see sim.odin) to show BOTH the double-dummy par caption
 // and this make-chance guide. It emits only for the human-facing formats:
