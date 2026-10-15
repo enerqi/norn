@@ -189,7 +189,8 @@ Line_Joint :: struct {
 }
 
 // Gather, for each of the four suits, one `Line_Joint` per candidate line — the joint-model counterpart
-// of `gather_candidates`. Each table comes from `sd_line_joint_table` (enumerate every E/W split, play the
+// of `gather_candidates` — and the suit solver's line where its table has one and the book is silent
+// (`SOLVER_LINE`). Each table comes from `sd_line_joint_table` (enumerate every E/W split, play the
 // fixed line out double-dummy, tally raw counts by East's length and the trick result). Caller owns the
 // returned slices.
 @(private)
@@ -212,12 +213,18 @@ gather_candidate_tables :: proc(
 	}
 	defer if memo_in == nil {delete(local)}
 	for suit, i in DISPLAY_SUITS {
-		lj := make([]Line_Joint, len(lines), allocator)
+		n, s := norn.suit_mask(north, suit), norn.suit_mask(south, suit)
+		solver, has_solver := solver_candidate(n, s)
+		has_solver = has_solver && !book_covers(n, s)
+		lj := make([]Line_Joint, len(lines) + (1 if has_solver else 0), allocator)
 		for line, j in lines {
 			lj[j] = Line_Joint {
 				name = line.name,
-				tbl  = sd_line_joint_table(norn.suit_mask(north, suit), norn.suit_mask(south, suit), line, memo),
+				tbl  = sd_line_joint_table(n, s, line, memo),
 			}
+		}
+		if has_solver {
+			lj[len(lines)] = solver // last, so a tie keeps the fixed line (`pick_partnership_sd` is first-wins)
 		}
 		out[i] = lj
 	}

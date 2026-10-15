@@ -69,6 +69,7 @@ lint *args:
 	odin check combo -vet -vet-cast -strict-style -vet-tabs -no-entry-point {{args}}
 	odin check {{cli_pkg}} -vet -vet-cast -strict-style -vet-tabs {{args}}
 	odin check cmd/bench.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
+	odin check cmd/bake_suit_lines.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
 	odin check examples/strong-1c.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
 	odin check examples/1major-gf-support.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
 
@@ -274,6 +275,13 @@ examples-check:
 [group('docs')]
 doc *args:
 	odin doc norn {{args}}
+
+# bake the suit solver's table (combo/suit_solver_table_data.odin) from scratch: every class of holdings,
+# solved on all logical cores but four. A long run - args are name=value (budget, min-missing, max-missing,
+# threads, limit, out); see cmd/bake_suit_lines.odin
+[group('combo')]
+bake-suit-lines *args: mktarget_dirs
+	odin run cmd/bake_suit_lines.odin -file -o:speed -microarch:native -linker:{{linker}} -out:{{ target_path("release", "bake-suit-lines.exe") }} -- {{args}}
 
 # run the scan-vs-bitmask-index hand-evaluation benchmark (release, optimised)
 [group('perf')]

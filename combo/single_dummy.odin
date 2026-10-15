@@ -392,25 +392,68 @@ sd_census_gap :: proc(north, south: u16, line: Sd_Line) -> (sd_mean, census_mean
 
 // --- shipped reference line -------------------------------------------------------------------
 
-// `line_top_down` — a simple, honest reference line: every trick, lead the HIGHEST card NS holds
-// (from whichever hand holds it); declarer's partner always plays its LOWEST card. This "bang down
-// the top cards" strategy is NOT claimed optimal — it never finesses and never ducks — but it is a
-// well-defined blind line, useful as a baseline and to exercise the evaluator. Optimal / smarter
-// lines (finesse, safety play, and the search that chooses among them) are the next increment.
+// `line_top_down` — CASH THE SUIT, or ESTABLISH it, as a player does with free entries. Our TOP cards are
+// those with no card still out between them and our highest card: sure winners when nothing is out above,
+// otherwise the sequence that knocks out the honours missing above it (Q J T against the ace). Every trick
+// the short hand leads its highest card if that is a top card, else a low one; the other hand plays low
+// under a top card of ours, else its cheapest top card that beats the card winning so far, else low. It never
+// finesses and never ducks on purpose.
+//
+// It used to lead the highest card of either hand with the partner always low. That BLOCKED - in K Q 8 x
+// opposite A J 9 the jack fell under the queen on the third round, 3.54 tricks instead of 4 - and it could not
+// knock out an ace: T 4 opposite Q J 7 made 0.41 tricks for the line chosen instead of 1 (2026-10-15).
 line_top_down :: Sd_Line {
-	name = "top-down",
-	lead = proc(north, south, played: u16, trick_no: int) -> (seat: int, rank: int) {
-		if north == 0 {
-			return SEAT_S, highest_rank(south)
+	name    = "top-down",
+	lead    = cash_lead,
+	partner = cash_partner,
+}
+
+// Is `card` one of our top cards: no card still out lies between it and `our_top`, our highest card?
+@(private)
+top_card :: proc(card, our_top: int, out: u16) -> bool {
+	between := out >> uint(card + 1)
+	return between & (u16(1) << uint(our_top - card) - 1) == 0
+}
+
+// `line_top_down`'s lead: from the shorter hand (the hand whose highest card is lower, on equal length), its
+// highest card when that is a top card, else its lowest.
+@(private)
+cash_lead :: proc(north, south, played: u16, trick_no: int) -> (seat: int, rank: int) {
+	if north == 0 {
+		return SEAT_S, highest_rank(south)
+	}
+	if south == 0 {
+		return SEAT_N, highest_rank(north)
+	}
+	ln, ls := card_count(north), card_count(south)
+	short := SEAT_N if ln < ls || (ln == ls && highest_rank(north) < highest_rank(south)) else SEAT_S
+	hold := north if short == SEAT_N else south
+	out := FULL_SUIT & ~(north | south | played)
+	if top_card(highest_rank(hold), highest_rank(north | south), out) {
+		return short, highest_rank(hold)
+	}
+	return short, lowest_rank(hold)
+}
+
+// `line_top_down`'s second card: low under a top card of ours that is winning the trick; else the cheapest top
+// card that beats the card winning now; else low.
+@(private)
+cash_partner :: proc(v: Sd_View) -> int {
+	out := FULL_SUIT & ~(v.north | v.south | v.played)
+	our_top := highest_rank(v.north | v.south)
+	if v.win_ns {
+		our_top = max(our_top, v.win_rank)
+		if top_card(v.win_rank, our_top, out) {
+			return lowest_rank(v.own)
 		}
-		if south == 0 {
-			return SEAT_N, highest_rank(north)
+	}
+	m := v.own
+	for m != 0 {
+		r := lowest_rank(m)
+		m &= m - 1
+		if r > v.win_rank && top_card(r, our_top, out) {
+			return r
 		}
-		hn, hs := highest_rank(north), highest_rank(south)
-		if hn >= hs {
-			return SEAT_N, hn
-		}
-		return SEAT_S, hs
-	},
-	partner = proc(v: Sd_View) -> int {return lowest_rank(v.own)},
+	}
+	return lowest_rank(v.own)
 }

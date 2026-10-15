@@ -164,9 +164,10 @@ test_adaptive_bounds_and_linear :: proc(t: ^testing.T) {
 		fixed,
 	)
 
-	// For E[tricks] with no cap, the joint adaptive optimum equals the sum over suits of the best line's
-	// mean tricks (linearity of expectation; the joint length constraint reweights but does not shift any
-	// per-suit marginal mean, and with no cap the four means simply add).
+	// For E[tricks], the joint adaptive optimum is AT LEAST the sum over suits of the best line's mean
+	// tricks (linearity of expectation: playing each suit's best line is one adaptive strategy), and can be
+	// more - the DP picks a later suit's line after seeing how the earlier suits split, which tells it East's
+	// length there. It cannot pass the double-dummy census.
 	adaptive_et := optimal_adaptive_value(north, south, objective_expected_tricks())
 	best_mean_sum := f64(0)
 	for suit in DISPLAY_SUITS {
@@ -181,11 +182,16 @@ test_adaptive_bounds_and_linear :: proc(t: ^testing.T) {
 	}
 	testing.expectf(
 		t,
-		abs(adaptive_et - best_mean_sum) < 1e-9,
-		"for E[tricks], adaptive %.6f should equal the sum of best-mean lines %.6f",
+		adaptive_et >= best_mean_sum - 1e-9,
+		"for E[tricks], adaptive %.6f should be at least the sum of best-mean lines %.6f",
 		adaptive_et,
 		best_mean_sum,
 	)
+	census_sum := f64(0)
+	for suit in DISPLAY_SUITS {
+		census_sum += expected_tricks(suit_trick_distribution(norn.suit_mask(north, suit), norn.suit_mask(south, suit)).p)
+	}
+	testing.expectf(t, adaptive_et <= census_sum + 1e-9, "adaptive %.6f above the double-dummy census %.6f", adaptive_et, census_sum)
 }
 
 // The card-page make curve (`adaptive_at_least_curve`, the joint adaptive optimum at every target) is a

@@ -79,7 +79,9 @@
 					or <i>duck</i> (give up an early round). It is a simplified pick from a few standard plays &mdash;
 					a real best line can <i>combine</i> them (e.g. duck a round <i>then</i> finesse), which the one
 					word can't show, so read it as the general idea, not an exact recipe. <b>Hover the line word</b>
-					for a fuller, cards-specific plan.</p>
+					for a fuller, cards-specific plan. Where the suit solver knows a better line than those few, the
+					blue row is labelled <span style="color:#2f6fd8"><b>sv</b></span> and shows that line: its chances
+					against the best defence, <i>at least</i>.</p>
 				<h3>Two answers: ceiling vs. realistic</h3>
 				<p><span class="sw" style="background:#222"></span><b>tot</b> and <b>&ge;k</b> (black) &mdash; the
 					<b>double-dummy</b> ceiling: how it would go if you could <i>see all four hands</i>. Best case /
@@ -1515,7 +1517,7 @@
 		  // "≥sd" row is the ADAPTIVE optimum P(>=k) (best line per suit for that target) — the gap from
 		  // the black rows is the double-dummy tax.
 		  // Friendly labels for the recommended blind line per suit.
-		  function lineLabel(n) { return n === 'top-down' ? 'cash' : n === 'duck-one' ? 'duck' : n === 'finesse' ? 'finesse' : (n || ''); }
+		  function lineLabel(n) { return n === 'top-down' ? 'cash' : n === 'duck-one' ? 'duck' : n === 'toward' ? 'lead toward' : n === 'cash-then-finesse' ? 'cash, finesse' : n === 'duck-unless-covered' ? 'duck unless covered' : (n || ''); }
 		  function escAttr(s) { return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 		  function ctTableHTML(S) {
 				var data = S.data, total = S.total, totalSd = S.totalSd, atl = S.atl, sd = S.sd, lines = S.lines, tips = S.tips, notes = S.notes, book = S.book;
@@ -1551,8 +1553,15 @@
 					 // blind mean above, expanded to a per-trick shape). Shifted left of the black ceiling row
 					 // by the double-dummy tax. Distribution cells carry no data-k, so the target highlight
 					 // (cumulative rows only) ignores them, matching the black suit row above.
+					 // The SUIT SOLVER's line arrives in the book slot as {"sv": [...]}. It is then also this suit's
+					 // blind line, so the blue row IS its shape (a floor for the holding: its class's worst layout of
+					 // small cards, so "at least"); the row is labelled sv rather than repeated.
+					 var bkArr = book && book[i]; // book is an array in suit order (like lines/tips), not letter-keyed
+					 var bkSv = bkArr && !Array.isArray(bkArr);
 					 if (sdArr) {
-						  h += '<tr class="suit-sd"><td class="sl">sd</td>';
+						  h += bkSv
+								? '<tr class="suit-sd"><td class="sl" title="Solver line: chances vs best defence, at least">sv</td>'
+								: '<tr class="suit-sd"><td class="sl">sd</td>';
 						  for (var k = 0; k < 14; k++) h += '<td>' + pctCell(sdArr[k] || 0) + '</td>';
 						  h += '<td class="etr"></td><td class="ln"></td></tr>';
 					 }
@@ -1560,8 +1569,7 @@
 					 // present only where the book covers it. Sits below our blue engine sd row — the book's mass
 					 // usually sits higher (it plays the adaptive line our fixed lines can't), which is the line-gap
 					 // made visible. Cells are P(exactly k), blank where the book gives no target at that count.
-					 var bkArr = book && book[i]; // book is an array in suit order (like lines/tips), not letter-keyed
-					 if (bkArr) {
+					 if (bkArr && !bkSv) {
 						  h += '<tr class="suit-bk"><td class="sl" title="Textbook (published) chances vs best defence">bk</td>';
 						  for (var k = 0; k < 14; k++) h += '<td>' + pctCell(bkArr[k] || 0) + '</td>';
 						  h += '<td class="etr"></td><td class="ln"></td></tr>';

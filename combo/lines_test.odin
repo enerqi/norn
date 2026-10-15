@@ -178,23 +178,19 @@ test_duck_then_finesse_no_cost_when_solid :: proc(t: ^testing.T) {
 }
 
 // The compound line EARNS its place: on AKJ7 opposite 63 (missing the queen and a fistful of spots),
-// conceding the first round before running the jack-finesse strictly out-scores every single-phase line
-// by mean tricks — so `best_line_by_mean` (which drives the card-page recommendation and the DP fallback)
-// actually selects "duck-then-finesse". Regression guard that the phased candidate is reachable, not dead
-// weight. (Holding surfaced by a random-holding sweep of all five candidates.)
+// conceding the first round before running the jack-finesse strictly out-scores the plain finesse and
+// every other line of the first five by mean tricks. Regression guard that the phased candidate is
+// reachable, not dead weight. (Holding surfaced by a random-holding sweep of the first five candidates;
+// `line_run`, added since, does as well or better here.)
 @(test)
-test_duck_then_finesse_selected_by_mean :: proc(t: ^testing.T) {
+test_duck_then_finesse_earns_its_place :: proc(t: ^testing.T) {
 	n := mask(.Ace, .King, .Jack, .Seven)
 	s := mask(.Six, .Three)
+	dtf := expected_tricks(sd_line_distribution(n, s, line_duck_then_finesse).p)
+	for line in ([4]Sd_Line{line_top_down, line_finesse, line_duck_one, line_finesse_other}) {
+		other := expected_tricks(sd_line_distribution(n, s, line).p)
+		testing.expectf(t, dtf > other + 1e-9, "duck-then-finesse %.4f should beat %s %.4f", dtf, line.name, other)
+	}
 	best := best_line_by_mean(n, s)
-	testing.expectf(t, best.name == "duck-then-finesse", "best line by mean was %q, want duck-then-finesse", best.name)
-
-	fin := sd_line_distribution(n, s, line_finesse)
-	testing.expectf(
-		t,
-		expected_tricks(best.dist.p) > expected_tricks(fin.p) + 1e-9,
-		"duck-then-finesse mean %.4f should beat plain finesse %.4f",
-		expected_tricks(best.dist.p),
-		expected_tricks(fin.p),
-	)
+	testing.expect(t, expected_tricks(best.dist.p) >= dtf - 1e-9, "the best line is at least the compound one")
 }

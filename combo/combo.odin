@@ -1103,6 +1103,8 @@ display_line_name :: proc(north, south: u16, name: string) -> string {
 			return "top-down"
 		case "duck-then-finesse":
 			return "duck-one"
+		case "cash-then-finesse":
+			return "top-down"
 		}
 	}
 	return name
@@ -1324,8 +1326,47 @@ sd_bundle :: proc(north, south: norn.Hand_Summary, memo_in: ^map[u64]int = nil) 
 }
 
 // The number of candidate lines per suit (`candidate_lines` returns `[N_CANDIDATE_LINES]Sd_Line`); the SD
-// per-suit task writes exactly this many `Line_Joint`s by value.
-N_CANDIDATE_LINES :: 5
+// per-suit task writes this many `Line_Joint`s by value, plus the suit solver's line where it has one.
+N_CANDIDATE_LINES :: 9
+
+/*
+The SUIT SOLVER's line as a candidate (Phase 7): the baked table's line for the holding's class, as a joint
+table (`solver_table_joint`), joins the fixed lines wherever the published book does not cover the holding
+(the book's line is shown there, so its numbers should not come from another line). From there it is a line
+like the others: picked as the suit's blind line when its mean is the best (then its floor is the `sd` row,
+the `E` blind mean and part of the sd total), used by the adaptive DP wherever it helps, and offered to the
+page's a-posteriori re-pick. Its numbers are a floor, so every total stays one a declarer can reach.
+*/
+SOLVER_LINE :: "solver"
+
+// The solver's line for a holding as a candidate, if the table has one (the book is checked separately).
+@(private)
+solver_candidate :: proc(north, south: u16) -> (Line_Joint, bool) {
+	tbl, ok := solver_table_joint(north, south)
+	return Line_Joint{name = SOLVER_LINE, tbl = tbl}, ok
+}
+
+// Does the registered book cover this holding? Then its line is the one shown, and the solver's is left out.
+@(private)
+book_covers :: proc(north, south: u16) -> bool {
+	if g_book.lookup == nil {
+		return false
+	}
+	_, hit := g_book.lookup(north, south)
+	return hit
+}
+
+// The threaded gather's solver lines, dropped where the book covers the holding: the book is consulted on the
+// calling thread, as `suit_overrides` consults it. The solver's line is always the last candidate.
+@(private)
+drop_solver_where_book :: proc(cand: ^[4][]Line_Joint, north, south: norn.Hand_Summary) {
+	for suit, i in DISPLAY_SUITS {
+		c := cand[i]
+		if len(c) > 0 && c[len(c) - 1].name == SOLVER_LINE && book_covers(norn.suit_mask(north, suit), norn.suit_mask(south, suit)) {
+			cand[i] = c[:len(c) - 1]
+		}
+	}
+}
 
 // --- Fine-grained per-SUIT worker tasks (see `annotate`) ---------------------------------------
 //
@@ -1348,7 +1389,8 @@ Suit_Census_Task :: struct {
 @(private)
 Suit_Sd_Task :: struct {
 	north, south: u16,
-	out:          [N_CANDIDATE_LINES]Line_Joint,
+	out:          [N_CANDIDATE_LINES + 1]Line_Joint, // the fixed lines, then the solver's where it has one
+	n_out:        int,
 	wg:           ^sync.Wait_Group,
 }
 
@@ -1373,6 +1415,11 @@ suit_sd_task :: proc(t: thread.Task) {
 			name = line.name,
 			tbl  = sd_line_joint_table(task.north, task.south, line, sd),
 		}
+	}
+	task.n_out = len(lines)
+	if lj, ok := solver_candidate(task.north, task.south); ok {
+		task.out[task.n_out] = lj
+		task.n_out += 1
 	}
 	mem.free_all(context.temp_allocator)
 	sync.wait_group_done(task.wg)
@@ -1404,7 +1451,8 @@ sd_finish_task :: proc(t: thread.Task) {
 }
 
 // The Phase-2 ACHIEVABLE per-suit distributions, same JSON shape as `write_suits_json` but each suit's
-// `p[k]` is the best fixed single-dummy LINE by mean (brick 2), read from precomputed `ps.best_marg`.
+// `p[k]` is the best single-dummy LINE by mean (brick 2), read from precomputed `ps.best_marg`: a fixed line,
+// or the suit solver's where it does better (`SOLVER_LINE`; its floor).
 // Where `write_suits_json` is the double-dummy CEILING (census, hindsight), this is a concrete blind line
 // a declarer can actually adopt; the card page shows both so the gap (the double-dummy tax) is visible.
 // (The optimal search `sd_optimal_distribution` is only better on long holdings — rare on a random
@@ -1521,28 +1569,45 @@ book_pk_row :: proc(e: Book_Entry) -> (row: [RANKS + 1]f64) {
 // per partnership and shared by the label and tooltip emit: each entry costs a registered-book lookup (whose
 // `book_key` runs `sd_best_joint_table`), so precomputing halves that work vs the label and tip paths each
 // looking it up. Strings are arena-backed (allocated in the annotate temp, freed with it).
+//
+// Where the book is silent, the SUIT SOLVER's table (suit_solver_table.odin) may give the line instead: when
+// its line is the suit's blind line (`sd.best_name`, picked by mean against the fixed lines, Phase 7). `book`
+// then holds its floor, which is also the `sd` row, and `solver` is set.
 Suit_Override :: struct {
 	label, tip: string,
 	book:       [RANKS + 1]f64, // published per-trick shape (P(exactly k)), 0 where the book is silent
 	ok:         bool,
+	solver:     bool, // the line is the suit solver's; `book` is its floor (P(exactly k), at least)
 }
 
 @(private)
 suit_overrides :: proc(
 	north, south: norn.Hand_Summary,
+	sd: ^Sd_Bundle,
 	allocator := context.temp_allocator,
 ) -> (
 	out: [4]Suit_Override,
 ) {
 	for suit, i in DISPLAY_SUITS {
+		n, s := norn.suit_mask(north, suit), norn.suit_mask(south, suit)
 		e: Book_Entry
-		out[i].label, out[i].tip, e, out[i].ok = book_override(
-			norn.suit_mask(north, suit),
-			norn.suit_mask(south, suit),
-			allocator,
-		)
+		out[i].label, out[i].tip, e, out[i].ok = book_override(n, s, allocator)
 		if out[i].ok {
 			out[i].book = book_pk_row(e)
+			continue
+		}
+		if sd.best_name[i] != SOLVER_LINE {
+			continue
+		}
+		label, tip, _, hit := solver_table_lookup(n, s, allocator)
+		if hit {
+			out[i] = Suit_Override {
+				label  = label,
+				tip    = strings.concatenate({"Solver line: ", tip}, allocator),
+				book   = sd.best_marg[i].p,
+				ok     = true,
+				solver = true,
+			}
 		}
 	}
 	return
@@ -1551,15 +1616,23 @@ suit_overrides :: proc(
 // Write the per-suit published (book) per-trick shape as a JSON array `[<[p0..p13]>|null, ...]` in
 // suit order s,h,d,c: the book's row where it covers the holding, `null` on a miss. The card page shows it as
 // a per-suit "book" row beside our engine's blue single-dummy row (they diverge on the line-gap holdings).
+// A SOLVER override (`Suit_Override.solver`) writes `{"sv":[...]}` instead: its row is the solver table's
+// floor for the holding, and the page labels it `sv` ("at least") rather than `bk`.
 write_suits_book_json :: proc(b: ^strings.Builder, ov: ^[4]Suit_Override) {
 	strings.write_byte(b, '[')
 	for i in 0 ..< 4 {
 		if i > 0 {
 			strings.write_byte(b, ',')
 		}
-		if ov[i].ok {
+		switch {
+		case ov[i].solver:
+			// Marked, so the page labels the row as the solver's floor rather than the book's.
+			strings.write_string(b, `{"sv":`)
 			write_curve_json(b, ov[i].book)
-		} else {
+			strings.write_byte(b, '}')
+		case ov[i].ok:
+			write_curve_json(b, ov[i].book)
+		case:
 			strings.write_string(b, "null")
 		}
 	}
@@ -1618,6 +1691,9 @@ write_suits_joint_json :: proc(b: ^strings.Builder, north, south: norn.Hand_Summ
 				strings.write_byte(b, ',')
 			}
 			label := display_line_name(norn.suit_mask(north, suit), norn.suit_mask(south, suit), lj.name)
+			if lj.name == SOLVER_LINE {
+				label, _, _, _ = solver_table_lookup(norn.suit_mask(north, suit), norn.suit_mask(south, suit))
+			}
 			fmt.sbprintf(b, `["%s",`, label)
 			write_joint_matrix(b, lj.tbl)
 			strings.write_byte(b, ']')
@@ -1757,6 +1833,29 @@ describe_suit_line :: proc(north, south: u16, line_name: string, allocator := co
 		strings.write_string(&b, "Duck the first round (play low from both hands), then take the finesse. ")
 		describe_finesse(&b, combined, winners, insert_hold, top_missing, n_win, ns_len)
 		strings.write_string(&b, " Ducking first keeps an entry so the finesse can be repeated.")
+	case "cash-then-finesse":
+		top := highest_rank(combined)
+		strings.write_string(&b, "Cash the ")
+		strings.write_string(&b, RANK_NAMES[top])
+		strings.write_string(&b, " first, in case a defender has a singleton honour. Then ")
+		describe_finesse(&b, combined & ~rank_bit(top), winners & ~rank_bit(top), insert_hold & ~rank_bit(top), top_missing, n_win - 1, ns_len)
+	case "toward":
+		short := north if card_count(north) < card_count(south) || (card_count(north) == card_count(south) && highest_rank(north) < highest_rank(south)) else south
+		strings.write_string(&b, "Take your tricks, but lead low TOWARD the high cards in the short hand (")
+		write_cards_desc(&b, short)
+		strings.write_string(&b, ") rather than leading them: the second player shows a card first, and a bad split is caught.")
+	case "duck-unless-covered":
+		strings.write_string(&b, "Lead low and play low from the other hand too, unless the second player plays high: duck the rounds the defenders must win anyway and keep your high cards as stoppers. Then take your winners")
+		if n_win > 0 {
+			strings.write_string(&b, " (")
+			write_cards_desc(&b, winners)
+			strings.write_string(&b, ")")
+		}
+		strings.write_string(&b, ".")
+	case "run":
+		strings.write_string(&b, "Run your middle cards from ")
+		write_cards_desc(&b, weak_hold)
+		strings.write_string(&b, ": lead the highest and play low from the other hand unless the next player covers; if they cover, cover in turn. Each card led through a missing honour wins when that honour sits in front of it.")
 	case:
 		describe_cash(&b, combined, winners, top_missing, n_win, ns_len)
 	}
@@ -1960,7 +2059,7 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 		)
 		strings.write_string(builder, table)
 		sd := sd_bundle(ds[.North], ds[.South])
-		ov := suit_overrides(ds[.North], ds[.South]) // book line where covered, else the engine's best fixed line
+		ov := suit_overrides(ds[.North], ds[.South], &sd) // book or solver line where covered, else the engine's best fixed line
 		write_suit_lines_text(builder, ds[.North], ds[.South], &sd, &ov)
 		strings.write_string(builder, "</pre></div>")
 	case .Html_Cards:
@@ -2046,8 +2145,13 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 				ns_tables[suit] = ns_ct[suit].out
 				ew_tables[suit] = ew_ct[suit].out
 			}
-			ns_cand := [4][]Line_Joint{ns_st[0].out[:], ns_st[1].out[:], ns_st[2].out[:], ns_st[3].out[:]}
-			ew_cand := [4][]Line_Joint{ew_st[0].out[:], ew_st[1].out[:], ew_st[2].out[:], ew_st[3].out[:]}
+			ns_cand, ew_cand: [4][]Line_Joint
+			for i in 0 ..< 4 {
+				ns_cand[i] = ns_st[i].out[:ns_st[i].n_out]
+				ew_cand[i] = ew_st[i].out[:ew_st[i].n_out]
+			}
+			drop_solver_where_book(&ns_cand, ds[.North], ds[.South])
+			drop_solver_where_book(&ew_cand, ds[.East], ds[.West])
 
 			wg2: sync.Wait_Group
 			sync.wait_group_add(&wg2, 2)
@@ -2091,7 +2195,7 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 		write_curve_json(builder, ns_sd.totsd)
 		strings.write_string(builder, `' data-ns-atl='`)
 		write_curve_json(builder, ns_sd.atl)
-		ns_ov := suit_overrides(ds[.North], ds[.South]) // once per partnership; shared by lines + tips
+		ns_ov := suit_overrides(ds[.North], ds[.South], &ns_sd) // once per partnership; shared by lines + tips
 		strings.write_string(builder, `' data-ns-lines='`)
 		write_suits_lines_json(builder, &ns_sd, &ns_ov, ds[.North], ds[.South])
 		strings.write_string(builder, `' data-ns-tips='`)
@@ -2114,7 +2218,7 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 		write_curve_json(builder, ew_sd.totsd)
 		strings.write_string(builder, `' data-ew-atl='`)
 		write_curve_json(builder, ew_sd.atl)
-		ew_ov := suit_overrides(ds[.East], ds[.West]) // once per partnership; shared by lines + tips
+		ew_ov := suit_overrides(ds[.East], ds[.West], &ew_sd) // once per partnership; shared by lines + tips
 		strings.write_string(builder, `' data-ew-lines='`)
 		write_suits_lines_json(builder, &ew_sd, &ew_ov, ds[.East], ds[.West])
 		strings.write_string(builder, `' data-ew-tips='`)
@@ -2136,7 +2240,7 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 		strings.write_string(builder, "\n")
 		strings.write_string(builder, table)
 		sd := sd_bundle(ds[.North], ds[.South])
-		ov := suit_overrides(ds[.North], ds[.South]) // book line where covered, else the engine's best fixed line
+		ov := suit_overrides(ds[.North], ds[.South], &sd) // book or solver line where covered, else the engine's best fixed line
 		write_suit_lines_text(builder, ds[.North], ds[.South], &sd, &ov)
 	case .Line, .Numeric, .Handviewer, .Pbn, .Lin:
 	// unreachable: filtered out above

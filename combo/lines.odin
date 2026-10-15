@@ -49,8 +49,18 @@ Line_Result :: struct {
 // `Sd_Line`s) so callers needn't manage storage. Adding a line here makes it flow automatically through
 // the DP (brick 4), `best_line`/`best_line_by_mean`, the Pareto frontier, and the card-page emit — no
 // other wiring; add a matching case in `describe_suit_line` (combo.odin) for its tooltip.
-candidate_lines :: proc() -> [5]Sd_Line {
-	return {line_top_down, line_finesse, line_duck_one, line_finesse_other, line_duck_then_finesse}
+candidate_lines :: proc() -> [N_CANDIDATE_LINES]Sd_Line {
+	return {
+		line_top_down,
+		line_finesse,
+		line_duck_one,
+		line_finesse_other,
+		line_duck_then_finesse,
+		line_toward,
+		line_cash_then_finesse,
+		line_run,
+		line_duck_unless_covered,
+	}
 }
 
 // --- shared line building blocks --------------------------------------------------------------
@@ -157,20 +167,93 @@ line_duck_one :: Sd_Line {
 			}
 			return SEAT_N, lowest_rank(north)
 		}
-		// Thereafter behave like top-down: lead the highest NS card.
-		if north == 0 {
+		// Thereafter cash, as `line_top_down`.
+		return cash_lead(north, south, played, trick_no)
+	},
+	partner = proc(v: Sd_View) -> int {
+		if v.trick_no == 0 {
+			return lowest_rank(v.own) // the duck: low even when we could win
+		}
+		return cash_partner(v)
+	},
+}
+
+// `line_toward` - cash as `line_top_down` does, but lead LOW from the long hand TOWARD the short hand's top
+// cards instead of leading them: the short hand then plays after the second hand, and so takes its cheapest
+// top card that beats it. K J 3 opposite A Q 9 8 7: lead toward the K J, not the K, and a defender with
+// T 6 5 4 2 is caught.
+line_toward :: Sd_Line {
+	name = "toward",
+	lead = proc(north, south, played: u16, trick_no: int) -> (seat: int, rank: int) {
+		seat, rank = cash_lead(north, south, played, trick_no)
+		other := south if seat == SEAT_N else north
+		out := FULL_SUIT & ~(north | south | played)
+		if other != 0 && top_card(rank, highest_rank(north | south), out) {
+			// The short hand would lead a top card: lead low from the long hand toward it instead.
+			return SEAT_S if seat == SEAT_N else SEAT_N, lowest_rank(other)
+		}
+		return
+	},
+	partner = cash_partner,
+}
+
+// `line_cash_then_finesse` - cash the single highest card first (against a singleton honour), then finesse
+// toward the honour hand on every later round. A K T 4 opposite J 7: the king, then low toward the J.
+line_cash_then_finesse :: Sd_Line {
+	name = "cash-then-finesse",
+	lead = proc(north, south, played: u16, trick_no: int) -> (seat: int, rank: int) {
+		if trick_no == 0 {
+			if north != 0 && (south == 0 || highest_rank(north) > highest_rank(south)) {
+				return SEAT_N, highest_rank(north)
+			}
 			return SEAT_S, highest_rank(south)
 		}
-		if south == 0 {
-			return SEAT_N, highest_rank(north)
-		}
-		hn, hs := highest_rank(north), highest_rank(south)
-		if hn >= hs {
-			return SEAT_N, hn
-		}
-		return SEAT_S, hs
+		return finesse_lead_toward(north, south, strong_honour_seat(north, south))
 	},
-	partner = proc(v: Sd_View) -> int {return lowest_rank(v.own)},
+	partner = proc(v: Sd_View) -> int {
+		if v.trick_no == 0 {
+			return lowest_rank(v.own)
+		}
+		return finesse_insert(v)
+	},
+}
+
+// `line_run` - RUN the weak hand's cards: lead its highest card while that is a ten or better, and let it
+// ride (the other hand plays low) unless the second hand covers, then cover with the cheapest card that
+// beats it. J 10 7 opposite A K 6 5 3 runs the jack and the ten through the queen; A J 9 opposite 10 runs the
+// ten. Once the weak hand has no ten or better, it cashes as `line_top_down`.
+line_run :: Sd_Line {
+	name = "run",
+	lead = proc(north, south, played: u16, trick_no: int) -> (seat: int, rank: int) {
+		weak := SEAT_S if strong_honour_seat(north, south) == SEAT_N else SEAT_N
+		hold := north if weak == SEAT_N else south
+		if hold != 0 && highest_rank(hold) >= 8 && north != 0 && south != 0 {
+			return weak, highest_rank(hold)
+		}
+		return cash_lead(north, south, played, trick_no)
+	},
+	partner = proc(v: Sd_View) -> int {
+		if v.win_ns && v.win_rank >= 8 {
+			return lowest_rank(v.own) // our ten or better is winning: let it run
+		}
+		return cash_partner(v) // covered: cover in turn; or cashing, as `line_top_down`
+	},
+}
+
+// `line_duck_unless_covered` - lead as `line_top_down` does, but when our card is winning the trick after
+// the second hand, play LOW from the other hand and let it ride: the round is ducked unless the second hand
+// plays high, when we win it as cheaply as we can. Repeated every round it gives up the tricks the defenders'
+// small cards must win anyway while keeping our high cards as stoppers: K 9 6 5 2 opposite A, Q 7 6 3 2
+// opposite A.
+line_duck_unless_covered :: Sd_Line {
+	name = "duck-unless-covered",
+	lead = cash_lead,
+	partner = proc(v: Sd_View) -> int {
+		if v.win_ns {
+			return lowest_rank(v.own)
+		}
+		return cash_partner(v)
+	},
 }
 
 // --- comparing the candidates -----------------------------------------------------------------
