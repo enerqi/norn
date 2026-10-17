@@ -248,6 +248,123 @@ generate_accepted :: proc(
 	return
 }
 
+/*
+THE DEALING HALF of `generate_accepted`, for a caller that solves its deals in one batch before writing
+them (cli's export with a `prepare` hook): append the accepted deals and the tables they were drawn at to
+`deals` and `tables`, rendering nothing. There is no raw-deal filter here: a filter is a solve per deal
+while sampling, which is what batching avoids. The random stream is spent exactly as `generate_accepted`
+spends it (the deal, then its table), so `collect_accepted` then `render_accepted` writes the same page
+byte for byte.
+*/
+collect_accepted :: proc(
+	deals: ^[dynamic]Deal,
+	tables: ^[dynamic]Table,
+	count: int,
+	format: Output_Format,
+	accept: Condition,
+	max_attempts := 0,
+	randomize_table := false,
+	predeal: Maybe(Predeal) = nil,
+	smartstack: ^Smart_Stack = nil,
+) -> (
+	accepted: int,
+	attempts: int,
+) {
+	pd, has_predeal := predeal.?
+	for accepted < count {
+		if max_attempts > 0 && attempts >= max_attempts {
+			break
+		}
+		deal := next_deal(pd, has_predeal, smartstack)
+		attempts += 1
+		if !condition_holds(accept, summarize_deal(deal)) {
+			continue
+		}
+		append(deals, deal)
+		append(tables, draw_table(format, randomize_table))
+		accepted += 1
+	}
+	return
+}
+
+// How many deals the condition kept that `collect_filtered` solves at once: DDS's `CalcAllTables` takes 40.
+FILTER_BATCH :: 40
+
+/*
+`collect_accepted` with a raw-deal FILTER, solved in batches. Deals are dealt until `FILTER_BATCH` of them
+pass the cheap condition; `solve` is handed those, all at once (a consumer's batch solve, after which the
+filter reads what it solved rather than solving each deal itself); the filter then keeps what it keeps, in
+order, and the rounds go on until `count` are kept or `max_attempts` deals have been dealt. A round can keep
+more than are still wanted: the first ones are taken. `solve` failing costs only speed - the filter then
+solves its deals one by one.
+
+The tables are drawn after the dealing, one per deal kept, so the random stream is NOT spent as
+`generate_accepted` spends it: the same seed gives other tables (and, past a round that over-fills, other
+deals) than the deal-by-deal path.
+*/
+collect_filtered :: proc(
+	deals: ^[dynamic]Deal,
+	tables: ^[dynamic]Table,
+	count: int,
+	format: Output_Format,
+	accept: Condition,
+	filter: Filter,
+	solve: proc(deals: []Deal) -> bool,
+	max_attempts := 0,
+	randomize_table := false,
+	predeal: Maybe(Predeal) = nil,
+	smartstack: ^Smart_Stack = nil,
+) -> (
+	accepted: int,
+	attempts: int,
+) {
+	pd, has_predeal := predeal.?
+	round := make([dynamic]Deal, 0, FILTER_BATCH)
+	defer delete(round)
+	for accepted < count && (max_attempts == 0 || attempts < max_attempts) {
+		clear(&round)
+		for len(round) < FILTER_BATCH && (max_attempts == 0 || attempts < max_attempts) {
+			deal := next_deal(pd, has_predeal, smartstack)
+			attempts += 1
+			if condition_holds(accept, summarize_deal(deal)) {
+				append(&round, deal)
+			}
+		}
+		if len(round) == 0 {
+			break
+		}
+		solve(round[:])
+		for deal in round {
+			if accepted < count && filter_keeps(filter, deal) {
+				append(deals, deal)
+				accepted += 1
+			}
+		}
+	}
+	for _ in 0 ..< accepted {
+		append(tables, draw_table(format, randomize_table))
+	}
+	return
+}
+
+// THE WRITING HALF: the page `generate_accepted` would have written for these deals, each at its table.
+render_accepted :: proc(
+	builder: ^strings.Builder,
+	format: Output_Format,
+	deals: []Deal,
+	tables: []Table,
+	annotate: Annotator = nil,
+	page_title := "",
+) {
+	render_page_prologue(builder, format, page_title)
+	for deal, i in deals {
+		render_deal_at(builder, deal, format, tables[i])
+		annotate_deal(annotate, builder, deal, format, tables[i])
+		strings.write_byte(builder, '\n')
+	}
+	render_page_epilogue(builder, format)
+}
+
 // Measure how often `accept` keeps a deal, without rendering anything: deal `trials` deals and
 // return how many were accepted. This is the frequency-estimation counterpart to
 // `generate_accepted` — same dealing, no I/O and no builder, so a caller can profile a condition's

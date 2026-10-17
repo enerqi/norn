@@ -263,9 +263,8 @@ solver_table_joint :: proc(north, south: u16) -> (tbl: Suit_Joint_Table, ok: boo
 g_solver_table_off: bool
 
 /*
-Turn the table off (or back on) for this process. It is on by default; a js build has no table at all
-(suit_solver_table_js.odin), so a native program that must produce what the wasm player produces - its
-reference pages - turns it off. Set it before any analysis starts: it is not synchronised.
+Turn the table off (or back on) for this process. It is on by default, in the wasm player too (its page
+carries the table gzipped). Set it before any analysis starts: it is not synchronised.
 */
 set_suit_solver_table :: proc(on: bool) {
 	g_solver_table_off = !on

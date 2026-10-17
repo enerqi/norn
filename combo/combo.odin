@@ -1673,18 +1673,22 @@ write_joint_matrix :: proc(b: ^strings.Builder, tbl: Suit_Joint_Table) {
 //
 // `<matrix>` is `write_joint_matrix`; `label` is the honest display name of that line (`display_line_name`,
 // so a bogus finesse reads "cash"). Purely additive: consumed only when a constraint is entered, so a page
-// with none renders exactly the baked a-priori rows. NB recomputes the census + candidate tables here rather
-// than threading them out of the two `annotate` paths — a later perf pass can reuse them (PERFORMANCE.md).
-write_suits_joint_json :: proc(b: ^strings.Builder, north, south: norn.Hand_Summary) {
-	cand := gather_candidate_tables(north, south, context.temp_allocator)
+// with none renders exactly the baked a-priori rows. `census` (by suit) and `cand` (DISPLAY_SUITS order) are the
+// tables `annotate` already built for the totals and the adaptive curve.
+write_suits_joint_json :: proc(
+	b: ^strings.Builder,
+	north, south: norn.Hand_Summary,
+	census: ^[norn.Suit]Suit_Joint_Table,
+	cand: [4][]Line_Joint,
+) {
 	strings.write_byte(b, '[')
 	for suit, i in DISPLAY_SUITS {
 		if i > 0 {
 			strings.write_byte(b, ',')
 		}
-		cen := suit_joint_table(norn.suit_mask(north, suit), norn.suit_mask(south, suit))
+		cen := &census[suit]
 		fmt.sbprintf(b, `{{"m":%d,"l":%d,"cen":`, cen.m, cen.ns_len)
-		write_joint_matrix(b, cen)
+		write_joint_matrix(b, cen^)
 		strings.write_string(b, `,"ln":[`)
 		for lj, j in cand[i] {
 			if j > 0 {
@@ -2081,6 +2085,11 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 		// paths go through the same assembly seams, so the writers below see byte-identical values.
 		a, ew: Deal_Analysis
 		ns_sd, ew_sd: Sd_Bundle
+		// The tables both results were assembled from, kept for `data-*-joint`: the census table per suit and
+		// every candidate line's table, in DISPLAY_SUITS order. Writing that blob used to build them all again,
+		// on this thread alone, and that was most of the deal's cost (48 of 62 ms, measured 2026-10-16).
+		ns_tables, ew_tables: [norn.Suit]Suit_Joint_Table
+		ns_cand, ew_cand: [4][]Line_Joint
 
 		prof_a := prof_now() // phase profiling (COMBO_PROFILE): a=start, b=after parallel, c=after assemble, d=after JSON
 		prof_b: i64
@@ -2140,15 +2149,16 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 			// ends) in DISPLAY_SUITS / suit order. The two `finish_sd` calls carry the joint-DP cost (§10 #1A),
 			// and NS vs EW are independent, so dispatch BOTH to the pool and run the cheap `finish_census` pair
 			// on this thread meanwhile — overlapping the two ~2.6 ms adaptive curves instead of serialising them.
-			ns_tables, ew_tables: [norn.Suit]Suit_Joint_Table
 			for suit in norn.Suit {
 				ns_tables[suit] = ns_ct[suit].out
 				ew_tables[suit] = ew_ct[suit].out
 			}
-			ns_cand, ew_cand: [4][]Line_Joint
+			// Copied out of the task structs, which live only in this block, for the JSON writer below.
 			for i in 0 ..< 4 {
-				ns_cand[i] = ns_st[i].out[:ns_st[i].n_out]
-				ew_cand[i] = ew_st[i].out[:ew_st[i].n_out]
+				ns_cand[i] = make([]Line_Joint, ns_st[i].n_out, context.temp_allocator)
+				copy(ns_cand[i], ns_st[i].out[:ns_st[i].n_out])
+				ew_cand[i] = make([]Line_Joint, ew_st[i].n_out, context.temp_allocator)
+				copy(ew_cand[i], ew_st[i].out[:ew_st[i].n_out])
 			}
 			drop_solver_where_book(&ns_cand, ds[.North], ds[.South])
 			drop_solver_where_book(&ew_cand, ds[.East], ds[.West])
@@ -2178,10 +2188,17 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 			ew_sd = ew_sdt.out
 		} else {
 			prof_b = prof_now() // serial: no parallel phase; all compute lands in ASSEMBLE
-			a = analyse_ns(ds[.North], ds[.South])
-			ew = analyse_ns(ds[.East], ds[.West])
-			ns_sd = sd_bundle(ds[.North], ds[.South])
-			ew_sd = sd_bundle(ds[.East], ds[.West])
+			// `analyse_ns` and `sd_bundle`, unrolled to keep the tables for the JSON writer.
+			for suit in norn.Suit {
+				ns_tables[suit] = suit_joint_table(norn.suit_mask(ds[.North], suit), norn.suit_mask(ds[.South], suit))
+				ew_tables[suit] = suit_joint_table(norn.suit_mask(ds[.East], suit), norn.suit_mask(ds[.West], suit))
+			}
+			a = finish_census(ns_tables)
+			ew = finish_census(ew_tables)
+			ns_cand = gather_candidate_tables(ds[.North], ds[.South], context.temp_allocator)
+			ew_cand = gather_candidate_tables(ds[.East], ds[.West], context.temp_allocator)
+			ns_sd = finish_sd(ns_cand)
+			ew_sd = finish_sd(ew_cand)
 		}
 		prof_c := prof_now() // end of assemble; JSON writing follows
 
@@ -2207,7 +2224,7 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 		strings.write_string(builder, `' data-ns-floor='`)
 		write_suits_floor_json(builder, &ns_sd)
 		strings.write_string(builder, `' data-ns-joint='`)
-		write_suits_joint_json(builder, ds[.North], ds[.South])
+		write_suits_joint_json(builder, ds[.North], ds[.South], &ns_tables, ns_cand)
 		strings.write_string(builder, `' data-ew='`)
 		write_suits_json(builder, &ew)
 		strings.write_string(builder, `' data-ew-sd='`)
@@ -2230,7 +2247,7 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 		strings.write_string(builder, `' data-ew-floor='`)
 		write_suits_floor_json(builder, &ew_sd)
 		strings.write_string(builder, `' data-ew-joint='`)
-		write_suits_joint_json(builder, ds[.East], ds[.West])
+		write_suits_joint_json(builder, ds[.East], ds[.West], &ew_tables, ew_cand)
 		strings.write_string(builder, `'></div>`)
 		prof_add(prof_a, prof_b, prof_c, prof_now()) // parallel / assemble / JSON split
 		free_all(context.temp_allocator)

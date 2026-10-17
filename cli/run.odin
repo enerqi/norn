@@ -65,18 +65,59 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 	} else {
 		// Reject sampling: deal until `count` deals satisfy the scenario. Report the hit rate on
 		// stderr so a rare scenario's cost is visible (and a typo'd-rare one is obvious).
-		accepted, attempts := norn.generate_accepted(
-			&builder,
-			opts.count,
-			opts.format,
-			scenario.predicate,
-			randomize_table = opts.randomize_table,
-			predeal = opts.predeal,
-			smartstack = ss,
-			deal_filter = opts.dd_filters[scenario.name],
-			annotate = annotator_for(opts, scenario.name),
-			page_title = scenario_title(scenario),
-		)
+		accepted, attempts: int
+		filter := opts.dd_filters[scenario.name]
+		annotate := annotator_for(opts, scenario.name)
+		if (filter != nil || annotate != nil) && opts.prepare != nil {
+			// Batched (see `Export_Kind`): deal them all (a filter's in solved rounds), solve them in one call,
+			// then write them.
+			deals: [dynamic]norn.Deal
+			tables: [dynamic]norn.Table
+			defer delete(deals)
+			defer delete(tables)
+			if filter != nil {
+				accepted, attempts = norn.collect_filtered(
+					&deals,
+					&tables,
+					opts.count,
+					opts.format,
+					scenario.predicate,
+					filter,
+					opts.prepare,
+					randomize_table = opts.randomize_table,
+					predeal = opts.predeal,
+					smartstack = ss,
+				)
+			} else {
+				accepted, attempts = norn.collect_accepted(
+					&deals,
+					&tables,
+					opts.count,
+					opts.format,
+					scenario.predicate,
+					randomize_table = opts.randomize_table,
+					predeal = opts.predeal,
+					smartstack = ss,
+				)
+			}
+			if !opts.prepare(deals[:]) {
+				fmt.eprintln("norn: the batch solve failed - solving one deal at a time")
+			}
+			norn.render_accepted(&builder, opts.format, deals[:], tables[:], annotate, scenario_title(scenario))
+		} else {
+			accepted, attempts = norn.generate_accepted(
+				&builder,
+				opts.count,
+				opts.format,
+				scenario.predicate,
+				randomize_table = opts.randomize_table,
+				predeal = opts.predeal,
+				smartstack = ss,
+				deal_filter = filter,
+				annotate = annotate,
+				page_title = scenario_title(scenario),
+			)
+		}
 		fmt.eprintfln(
 			"norn: scenario %q - %d accepted from %d deals (%.3f%%)",
 			scenario.name,
@@ -118,6 +159,9 @@ Export_Task :: struct {
 	builder:         ^strings.Builder,
 	accepted:        int,
 	attempts:        int,
+	// A batched job's deals and their tables, between dealing and writing (see `Export_Kind`).
+	deals:           [dynamic]norn.Deal,
+	tables:          [dynamic]norn.Table,
 }
 
 // Thread-pool body: render one scenario's HTML page. Self-contained — it installs its OWN seeded
@@ -141,10 +185,89 @@ export_worker :: proc(t: thread.Task) {
 	)
 }
 
-// True if this export job invokes the DDS solver — via a per-scenario filter or the annotator — and
-// so must run serially rather than on the shared thread pool (DDS's global state is not reentrant).
-export_uses_dd :: proc(job: ^Export_Task) -> bool {
-	return job.deal_filter != nil || job.annotate != nil
+// Where an export job runs (see the partition in `export_all_html`).
+Export_Kind :: enum {
+	Pooled, // no solver: dealt and written on the pool
+	Batched, // an annotator, no filter, and a `prepare`: dealt on the pool, solved in one batch, written on the pool
+	Filtered, // a filter and a `prepare`: dealt in solved rounds one scenario at a time, then written on the pool
+	Serial, // a solver hook and no `prepare`: the solver is not reentrant, so one at a time, deal by deal
+}
+
+export_kind :: proc(job: ^Export_Task, prepare: Annotation_Prepare) -> Export_Kind {
+	switch {
+	case job.deal_filter == nil && job.annotate == nil:
+		return .Pooled
+	case prepare == nil:
+		return .Serial
+	case job.deal_filter != nil:
+		return .Filtered
+	}
+	return .Batched
+}
+
+// Run `task` for every job of the `kinds` on a pool of `thread_count` threads, and wait for them all.
+@(private)
+run_on_pool :: proc(
+	jobs: []Export_Task,
+	kinds: bit_set[Export_Kind],
+	prepare: Annotation_Prepare,
+	task: thread.Task_Proc,
+	thread_count: int,
+) {
+	pool: thread.Pool
+	thread.pool_init(&pool, context.allocator, thread_count)
+	defer thread.pool_destroy(&pool)
+	for &job, i in jobs {
+		if export_kind(&job, prepare) in kinds {
+			thread.pool_add_task(&pool, context.allocator, task, &job, i)
+		}
+	}
+	thread.pool_start(&pool)
+	thread.pool_finish(&pool) // processes remaining tasks on this thread too, then joins
+}
+
+// Thread-pool body for a BATCHED job, first half: deal its deals and draw their tables, writing nothing.
+collect_worker :: proc(t: thread.Task) {
+	job := cast(^Export_Task)t.data
+	state: rand.Xoshiro256_Random_State
+	context.random_generator = norn.seeded_xoshiro(&state, job.seed)
+	job.accepted, job.attempts = norn.collect_accepted(
+		&job.deals,
+		&job.tables,
+		job.count,
+		job.format,
+		job.predicate,
+		HTML_EXPORT_MAX_ATTEMPTS,
+		job.randomize_table,
+		job.predeal,
+		job.smartstack,
+	)
+}
+
+// A FILTERED job's first half, on the calling thread (each round calls the solver): deal in rounds, each
+// round's survivors solved at once by `prepare` and then filtered (`norn.collect_filtered`).
+collect_filtered :: proc(job: ^Export_Task, prepare: Annotation_Prepare) {
+	state: rand.Xoshiro256_Random_State
+	context.random_generator = norn.seeded_xoshiro(&state, job.seed)
+	job.accepted, job.attempts = norn.collect_filtered(
+		&job.deals,
+		&job.tables,
+		job.count,
+		job.format,
+		job.predicate,
+		job.deal_filter,
+		prepare,
+		HTML_EXPORT_MAX_ATTEMPTS,
+		job.randomize_table,
+		job.predeal,
+		job.smartstack,
+	)
+}
+
+// Second half, once `prepare` has solved its deals: write the page.
+render_worker :: proc(t: thread.Task) {
+	job := cast(^Export_Task)t.data
+	norn.render_accepted(job.builder, job.format, job.deals[:], job.tables[:], job.annotate, job.page_title)
 }
 
 // Batch-export every scenario in `registry` to `<mode.dir>/<name>.html`, each an HTML page of
@@ -161,11 +284,19 @@ export_all_html :: proc(registry: []Scenario, opts: Options, mode: Export_Html) 
 		return false, "no scenarios to export (registry is empty)"
 	}
 
-	selected, filter, sel_ok, sel_msg := select_scenarios(registry, opts.scenario)
+	chosen, filter, sel_ok, sel_msg := select_scenarios(registry, opts.scenario)
 	defer delete(filter)
 	if !sel_ok {
 		return false, sel_msg
 	}
+	// OUR OWN COPY of the list, because the pages are saved under its names after they are written, and
+	// writing them may RESET this thread's temp allocator: `pool_finish` runs tasks on this thread too, and a
+	// consumer's annotator can `free_all(context.temp_allocator)` per deal (combo's does). A registry the
+	// caller built on temp memory (sim's is) was then overwritten before the first page was saved - a crash
+	// on the whole-registry run, measured 2026-10-16.
+	selected := make([]Scenario, len(chosen))
+	defer delete(selected)
+	copy(selected, chosen)
 
 	// Best-effort: create the output directory if it does not already exist.
 	if !os.is_dir(mode.dir) {
@@ -232,47 +363,67 @@ export_all_html :: proc(registry: []Scenario, opts: Options, mode: Export_Html) 
 		}
 	}
 
-	// Partition: solver-free scenarios (no DD filter AND no annotator) are independent, so they run on
-	// the pool; scenarios that call DDS (via a filter or an annotator) share its process-global
-	// transposition tables and can't overlap, so they run serially AFTER the pool drains. Each DDS
-	// scenario still uses DDS's own internal threads, so "serial" is per-scenario, not per-core.
+	// Partition (`Export_Kind`). Solver-free scenarios (no DD filter AND no annotator) are independent, so
+	// they run on the pool. When the consumer supplies `prepare`, the solver's work is BATCHED: scenarios with
+	// only an annotator are dealt on the pool; scenarios with a filter are dealt on this thread, one at a
+	// time, in rounds of `norn.FILTER_BATCH` survivors that `prepare` solves at once before the filter reads
+	// them. Then every deal of both is solved in ONE `prepare` call (what a round solved is kept, not solved
+	// again) and the pages are written on the pool. The solver spreads a batch over its own threads, where
+	// one deal at a time left most of the machine idle. Without `prepare` a scenario with either hook runs
+	// serially after the pool drains, deal by deal: the solver's state is process-global.
 	//
 	// Both hooks are per-scenario (keyed by name in opts.dd_filters / opts.dd_annotators, plus the
-	// `--par` annotator for every scenario without one), so a scenario with neither stays on the pool. Annotate every scenario and the pool empties — they all
-	// serialize — which is fine: each is still DDS-parallel internally.
-	if thread_count <= 1 {
-		// Single core (or a lone scenario): skip the pool machinery and run everything inline.
-		for &job in jobs {
-			export_worker(thread.Task{data = &job})
-		}
-	} else {
-		pooled := 0
-		for &job in jobs {
-			if !export_uses_dd(&job) {pooled += 1}
-		}
+	// `--par` annotator for every scenario without one), so a scenario with neither stays on the pool.
+	counts: [Export_Kind]int
+	for &job in jobs {
+		counts[export_kind(&job, opts.prepare)] += 1
+	}
+	defer for &job in jobs {
+		delete(job.deals)
+		delete(job.tables)
+	}
+	if len(selected) > 1 {
 		fmt.eprintfln(
-			"norn: exporting %d scenarios (%d pooled on %d threads, %d DD serially)",
+			"norn: exporting %d scenarios (%d pooled on %d threads, %d solved in batches, %d DD serially)",
 			len(selected),
-			pooled,
+			counts[.Pooled],
 			thread_count,
-			len(selected) - pooled,
+			counts[.Batched] + counts[.Filtered],
+			counts[.Serial],
 		)
-		if pooled > 0 {
-			pool: thread.Pool
-			thread.pool_init(&pool, context.allocator, thread_count)
-			defer thread.pool_destroy(&pool)
-			for &job, i in jobs {
-				if !export_uses_dd(&job) {
-					thread.pool_add_task(&pool, context.allocator, export_worker, &job, i)
+	}
+	if counts[.Pooled] > 0 {
+		run_on_pool(jobs, {.Pooled}, opts.prepare, export_worker, thread_count)
+	}
+	if counts[.Batched] + counts[.Filtered] > 0 {
+		if counts[.Batched] > 0 {
+			run_on_pool(jobs, {.Batched}, opts.prepare, collect_worker, thread_count)
+		}
+		for &job in jobs {
+			if export_kind(&job, opts.prepare) == .Filtered {
+				collect_filtered(&job, opts.prepare)
+			}
+		}
+		everything := make([dynamic]norn.Deal, 0, (counts[.Batched] + counts[.Filtered]) * opts.count)
+		defer delete(everything)
+		for &job in jobs {
+			append(&everything, ..job.deals[:])
+		}
+		if opts.prepare(everything[:]) {
+			run_on_pool(jobs, {.Batched, .Filtered}, opts.prepare, render_worker, thread_count)
+		} else {
+			// Nothing was solved ahead, so the annotators solve deal by deal, one page at a time.
+			fmt.eprintln("norn: the batch solve failed - solving the batched scenarios one deal at a time")
+			for &job in jobs {
+				if kind := export_kind(&job, opts.prepare); kind == .Batched || kind == .Filtered {
+					render_worker(thread.Task{data = &job})
 				}
 			}
-			thread.pool_start(&pool)
-			thread.pool_finish(&pool) // processes remaining tasks on this thread too, then joins
 		}
-		for &job in jobs {
-			if export_uses_dd(&job) {
-				export_worker(thread.Task{data = &job})
-			}
+	}
+	for &job in jobs {
+		if export_kind(&job, opts.prepare) == .Serial {
+			export_worker(thread.Task{data = &job})
 		}
 	}
 

@@ -198,6 +198,76 @@ test_generate_accepted_filters :: proc(t: ^testing.T) {
 	}
 }
 
+// Dealing first and writing afterwards gives the page `generate_accepted` writes, byte for byte: the random
+// stream is spent in the same order (the deal, then its table), and the tables are drawn at random here.
+@(test)
+test_collect_then_render_matches_generate :: proc(t: ^testing.T) {
+	for format in ([]Output_Format{.Line, .Html_Cards}) {
+		state: rand.Xoshiro256_Random_State
+		context.random_generator = seeded_xoshiro(&state, 77)
+		want := strings.builder_make()
+		defer strings.builder_destroy(&want)
+		generate_accepted(&want, 6, format, north_18plus, 1_000_000, randomize_table = true, page_title = "t")
+
+		context.random_generator = seeded_xoshiro(&state, 77)
+		deals: [dynamic]Deal
+		tables: [dynamic]Table
+		defer delete(deals)
+		defer delete(tables)
+		accepted, _ := collect_accepted(&deals, &tables, 6, format, north_18plus, 1_000_000, randomize_table = true)
+		got := strings.builder_make()
+		defer strings.builder_destroy(&got)
+		render_accepted(&got, format, deals[:], tables[:], page_title = "t")
+
+		testing.expect_value(t, accepted, 6)
+		testing.expect(t, strings.to_string(got) == strings.to_string(want), "collect + render differs from generate_accepted")
+	}
+}
+
+@(private = "file")
+g_solved_batches: [dynamic]int
+
+@(private = "file")
+record_batch :: proc(deals: []Deal) -> bool {
+	append(&g_solved_batches, len(deals))
+	return true
+}
+
+@(private = "file")
+north_18plus_deal :: proc(deal: Deal) -> bool {
+	return hcp(summarize_deal(deal)[.North]) >= 18
+}
+
+// The filtered collect solves the condition's survivors in rounds of at most FILTER_BATCH, hands the filter
+// every survivor of a round after that round is solved, and keeps exactly `count` deals the filter keeps.
+@(test)
+test_collect_filtered_solves_in_rounds :: proc(t: ^testing.T) {
+	state: rand.Xoshiro256_Random_State
+	context.random_generator = seeded_xoshiro(&state, 5)
+	defer delete(g_solved_batches)
+	clear(&g_solved_batches)
+
+	deals: [dynamic]Deal
+	tables: [dynamic]Table
+	defer delete(deals)
+	defer delete(tables)
+	accepted, attempts := collect_filtered(&deals, &tables, 6, .Html_Cards, accept_all, north_18plus_deal, record_batch)
+
+	testing.expect_value(t, accepted, 6)
+	testing.expect_value(t, len(deals), 6)
+	testing.expect_value(t, len(tables), 6)
+	testing.expect(t, attempts >= 6, "at least as many dealt as kept")
+	for deal in deals {
+		testing.expect(t, north_18plus_deal(deal), "kept a deal the filter refuses")
+	}
+	solved := 0
+	for n in g_solved_batches {
+		testing.expect(t, n > 0 && n <= FILTER_BATCH, "a round is at most FILTER_BATCH deals")
+		solved += n
+	}
+	testing.expect_value(t, solved, attempts) // the condition keeps every deal, so every deal was solved
+}
+
 /*
 AN INTERPRETED CONDITION: a predicate that reads its rule out of `userdata` rather than having it compiled.
 

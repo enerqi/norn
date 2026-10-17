@@ -128,7 +128,22 @@ Options :: struct {
 	// what lets the batch export pool the scenarios that touch no solver — see `export_uses_dd`.
 	dd_filters:      map[string]norn.Deal_Filter,
 	dd_annotators:   map[string]norn.Deal_Annotator,
+	// Solves a batch of deals ahead of their annotators, so an annotated scenario without a filter need not
+	// run serially (see `Annotation_Prepare`). nil = no batching.
+	prepare:         Annotation_Prepare,
 }
+
+/*
+A consumer's BATCH SOLVE, run once on the calling thread with every deal the annotators are about to be
+given (all of them, across every scenario of an export). After it returns true, those annotators may be
+called for those deals from several threads at once: whatever they would have solved deal by deal is
+already done. False means it could not, and the annotators are then called one at a time, as without it.
+
+Why: an annotator that calls a non-reentrant solver forces its scenario off the export's thread pool, and
+a solver given one deal at a time leaves most of the machine idle. One call over hundreds of deals is
+what it parallelises well.
+*/
+Annotation_Prepare :: proc(deals: []norn.Deal) -> bool
 
 // The defaults applied before any flags are read.
 default_options :: proc() -> Options {

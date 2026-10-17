@@ -39,6 +39,9 @@ Gen_Hooks :: struct {
 	dd_filters:    map[string]norn.Deal_Filter,
 	dd_annotators: map[string]norn.Deal_Annotator,
 	par_annotator: norn.Deal_Annotator,
+	// Optional: solve a batch of deals ahead of their annotators (see `Annotation_Prepare`). nil leaves every
+	// annotated scenario serial, one solve per deal.
+	prepare:       Annotation_Prepare,
 }
 
 // Parse arguments and run against `registry`. Kept thin: parse -> (usage / list) -> generate -> map
@@ -62,6 +65,7 @@ main_program :: proc(registry: []Scenario, hooks := Gen_Hooks{}, argv: []string 
 	// consumer to have supplied the annotator it means.
 	opts.dd_filters = hooks.dd_filters
 	opts.dd_annotators = hooks.dd_annotators
+	opts.prepare = hooks.prepare
 	if opts.par {
 		if hooks.par_annotator == nil {
 			fmt.eprintln("norn: --par needs a double-dummy solver, and this program does not supply one")
