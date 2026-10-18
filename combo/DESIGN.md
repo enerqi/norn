@@ -4,6 +4,13 @@
 > the published-table data rather than this engine: `COMBO_ANALYSER.md` (the implementation/handoff narrative
 > for the analyser + the 2-hand advisor — source comments citing it mean that file) and
 > `SUIT_COMBINATION_ENCYCLOPEDIA_HANDOFF.md` (the `suit_book` corpus registered through `book.odin`).
+>
+> **Changing a line?** Run `just test-combo` and `just combo-line-sweep`. The fixed lines are held to the textbook
+> combinations, to a rule no line may break, and to the exact single-dummy optimum (a ratchet in
+> `lines_test.odin`); the sweep lists where they still fall short, and `just combo-line-probe J3/KT9842` plays one
+> holding layout by layout against the optimum, to show where. A line may read only what the evaluator's memo
+> key holds (holdings, trick, who has shown out): `test_the_shared_memo_matches_a_fresh_one`. Why those guards exist: the finesse lines
+> were broken unnoticed until 2026-10-17 - "The finesse lines were broken" in the consumer's `COMBO_ANALYSER.md`.
 
 Naive card combination analyser
 

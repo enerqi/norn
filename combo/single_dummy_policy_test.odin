@@ -62,8 +62,9 @@ test_certified_finesse_is_optimal :: proc(t: ^testing.T) {
 	testing.expect(t, c.optimal, "the finesse should be proven optimal")
 }
 
-// T86 opposite AQ972: the searched line takes 3.896 against the best defence, against 3.760 for the best
-// fixed line - but not the search's own 3.980, which assumed declarer knew the defence's scheme.
+// T86 opposite AQ972: the searched line takes 3.896 against the best defence, against 3.857 for the best
+// fixed line (3.760 before the finesse lines were repaired, 2026-10-17) - but not the search's own 3.980,
+// which assumed declarer knew the defence's scheme.
 @(test)
 test_certified_search_line_beats_the_fixed_lines :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
@@ -72,7 +73,7 @@ test_certified_search_line_beats_the_fixed_lines :: proc(t: ^testing.T) {
 	fixed := mean_of(best_line_by_mean(0x0150, 0x14a1).dist)
 	testing.expect_value(t, c.source, Line_Source.Search)
 	testing.expectf(t, abs(mean_of(c.dist) - 3.8957) < 1e-3, "T86/AQ972 line %.4f, expected 3.8957", mean_of(c.dist))
-	testing.expectf(t, mean_of(c.dist) > fixed + 0.1, "line %.4f should beat the fixed %.4f", mean_of(c.dist), fixed)
+	testing.expectf(t, mean_of(c.dist) > fixed + 0.03, "line %.4f should beat the fixed %.4f", mean_of(c.dist), fixed)
 	testing.expect(t, !c.optimal, "the line falls short of the search's value, so it is not proven optimal")
 	testing.expect(t, c.policy != nil, "a searched line carries its policy")
 }

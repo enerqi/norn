@@ -134,18 +134,40 @@ test_opt_solves_nine_missing :: proc(t: ^testing.T) {
 	testing.expectf(t, abs(opt - best_candidate_mean(n, s)) < 1e-9, "the finesse is the optimum, got %.4f", opt)
 }
 
-// AQT9542 opposite J6 (K873 missing): none of the fixed lines is the best play, and the search - which only
-// finishes since the layouts are merged by interval - finds better (6.45 against 6.27; by a third of a trick
-// before the fixed lines learnt to run a card and to lead toward honours, 2026-10-15).
+// K74 opposite Q9865 (A J T 3 2 missing): the search beats every fixed line by a fifth of a trick (3.12 against
+// 2.92), the biggest gap a sweep of random holdings finds (`just combo-line-sweep`, 2026-10-18): it ducks the
+// first round unless West plays the J or T, then leads toward the Q, then the K - a play that depends on which
+// card West showed, which no fixed line reads.
+//
+// The earlier holdings here were BUGS, not limits of fixed lines, and are pinned below as ties so a gap reopening
+// shows. AQT9542 opposite J6 (0.18, until 2026-10-17): the finesse lines put in the cheapest card beating the
+// second hand rather than the finesse card, overtook a partner's winning ace, and switched sides halfway.
+// AQJ64 opposite 9852 (0.32, until 2026-10-18, recorded as "the best play leads the nine"): the only finesse
+// line took the deep finesse of the 9 against the ten before, and after, the J against the king; `finesse-high`
+// finesses against the king alone and takes the optimum. J3 opposite KT9842 (0.20, the next): `line_finesse`
+// overtook the J run on the second round with the K, and `line_run` ran it on the first; `finesse-then-run` puts
+// in the 8, then runs the J, and takes the optimum on every layout.
 @(test)
 test_opt_beats_the_fixed_lines :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
-	n, s := mask(.Ace, .Queen, .Ten, .Nine, .Five, .Four, .Two), mask(.Jack, .Six)
+	n, s := mask(.King, .Seven, .Four), mask(.Queen, .Nine, .Eight, .Six, .Five)
 	opt, exact := sd_optimal_expected_tricks(n, s)
 	testing.expect(t, exact, "should solve exactly within the default budget")
 	best := best_candidate_mean(n, s)
 	testing.expectf(t, opt > best + 0.15, "optimal %.3f should beat the best fixed line %.3f", opt, best)
 	testing.expectf(t, opt <= expected_tricks(suit_trick_distribution(n, s).p) + 1e-9, "and stay under the census")
+
+	ties := [][2]u16 {
+		{mask(.Ace, .Queen, .Ten, .Nine, .Five, .Four, .Two), mask(.Jack, .Six)},
+		{mask(.Ace, .Queen, .Jack, .Six, .Four), mask(.Nine, .Eight, .Five, .Two)},
+		{mask(.Jack, .Three), mask(.King, .Ten, .Nine, .Eight, .Four, .Two)},
+	}
+	for h in ties {
+		opt, exact = sd_optimal_expected_tricks(h[0], h[1])
+		testing.expectf(t, exact, "%04x/%04x should solve exactly", h[0], h[1])
+		best = best_candidate_mean(h[0], h[1])
+		testing.expectf(t, abs(opt - best) < 1e-9, "%04x/%04x: the finesse lines take the optimum %.4f, got %.4f", h[0], h[1], opt, best)
+	}
 }
 
 // A defender may cover an honour: with K986432 opposite J75 (A Q T missing), the jack led from North is

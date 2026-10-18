@@ -16,11 +16,19 @@ package bake_suit_lines
 	  redo=0                                  1 = re-solve only the table's entries, each at the tier it
 	                                          records (minutes, not hours): after a change to what an entry
 	                                          stores, not to the solver. Says how many lines changed.
+	  searches=1                              0 = search every class, not deciding any from its record
 
 	RESUMABLE. Every class solved is appended to `<out>.partial` as it finishes; a bake started again with the
 	same `out` reads that file and solves only what is missing, and deletes it once the table is written. A full
 	bake at every tier is hours, so an interrupted one should not start over. (The partial file is only valid
 	for the solver and narration that wrote it - delete it after changing either.)
+
+	SEARCH RECORDS. What each class's searches found is kept in `<out>.searches` (`combo.Solver_Search_Record`),
+	across bakes. None of it depends on the fixed lines, so after a change to them alone a bake decides most
+	classes from their records (`combo.solver_table_replay`) and searches only where a search's line may beat
+	the new fixed ones - above all, the classes that ran out of every budget, most of a full bake, are not
+	searched again. The file is stamped (`combo.solver_search_stamp`); records under another stamp are ignored
+	and replaced. A class with no record is searched, and gets one.
 
 	Progress goes to stderr; the summary at the end counts each tier's outcomes.
 */
@@ -46,6 +54,8 @@ Job :: struct {
 	outcome: combo.Solver_Table_Outcome,
 	cells:   []u16, // the line's joint table (`combo.solver_joint_cells`), for an entry
 	done:    bool,
+	rec:     combo.Solver_Search_Record,
+	has_rec: bool,
 }
 
 jobs: []Job
@@ -54,6 +64,9 @@ done: int
 max_tier := len(combo.SOLVER_TABLE_TIERS) - 1
 partial_mu: sync.Mutex
 partial: ^os.File
+use_records := true
+searches: ^os.File
+replayed: int // classes decided from their records, without a search
 
 // One finished class as a line of the partial file: key, outcome, tier, the distribution, label, tooltip,
 // joint cells. The words never hold a tab or a newline.
@@ -77,6 +90,74 @@ write_partial :: proc(j: ^Job) {
 	sync.mutex_lock(&partial_mu)
 	defer sync.mutex_unlock(&partial_mu)
 	os.write(partial, b.buf[:])
+}
+
+// One class's search record as a line of the searches file: key, a letter per tier (`-` not run, `?` the fixed
+// line reached the census, `R` ran out, `S` searched), the search's value and the best line's mean as f64 bits,
+// whether the latter is exact.
+TIER_LETTERS := [combo.Solver_Tier_Search]u8 {
+	.Not_Run  = '-',
+	.Unknown  = '?',
+	.Ran_Out  = 'R',
+	.Searched = 'S',
+}
+
+record_line :: proc(b: ^strings.Builder, key: u32, rec: combo.Solver_Search_Record) {
+	fmt.sbprintf(b, "%05x\t", key)
+	for t in rec.tiers {
+		strings.write_byte(b, TIER_LETTERS[t])
+	}
+	fmt.sbprintf(b, "\t%016x\t%016x\t%d\n", transmute(u64)rec.value, transmute(u64)rec.line, 1 if rec.line_exact else 0)
+}
+
+write_search :: proc(j: ^Job) {
+	b := strings.builder_make(context.temp_allocator)
+	record_line(&b, j.key, j.rec)
+	sync.mutex_lock(&partial_mu)
+	defer sync.mutex_unlock(&partial_mu)
+	os.write(searches, b.buf[:])
+}
+
+// The records in the searches file, if it has today's stamp; a class's last line wins.
+read_searches :: proc(path: string) -> (records: map[u32]combo.Solver_Search_Record, stamped: bool) {
+	records = make(map[u32]combo.Solver_Search_Record)
+	data, err := os.read_entire_file_from_path(path, context.allocator)
+	if err != nil {
+		return
+	}
+	text := string(data)
+	header, _ := strings.split_lines_iterator(&text)
+	if header != strings.concatenate({"# ", combo.solver_search_stamp()}, context.temp_allocator) {
+		fmt.eprintfln("%s has another stamp (%q): its records are not used", path, header)
+		return
+	}
+	line: for l in strings.split_lines_iterator(&text) {
+		f := strings.split(l, "\t", context.temp_allocator)
+		if len(f) != 5 || len(f[1]) != len(combo.SOLVER_TABLE_TIERS) {
+			continue // a line cut short by an interruption
+		}
+		key, kok := strconv.parse_uint(f[0], 16)
+		value_bits, vok := strconv.parse_u64_of_base(f[2], 16)
+		mean_bits, bok := strconv.parse_u64_of_base(f[3], 16)
+		if !kok || !vok || !bok {
+			continue
+		}
+		rec: combo.Solver_Search_Record
+		for c, i in transmute([]u8)f[1] {
+			found := false
+			for letter, t in TIER_LETTERS {
+				if letter == c {
+					rec.tiers[i], found = t, true
+				}
+			}
+			if !found {
+				continue line
+			}
+		}
+		rec.value, rec.line, rec.line_exact = transmute(f64)value_bits, transmute(f64)mean_bits, f[4] == "1"
+		records[u32(key)] = rec
+	}
+	return records, true
 }
 
 read_partial :: proc(path: string, by_key: map[u32]int) -> (read: int) {
@@ -129,10 +210,21 @@ worker :: proc() {
 		if j.done {
 			continue
 		}
-		joint: combo.Suit_Joint_Table
-		j.entry, j.outcome, joint = combo.solver_table_solve(j.key, j.first, j.last)
-		if j.outcome == .Entry {
-			j.cells = combo.solver_joint_cells(joint)
+		from, search := j.first, true
+		if j.has_rec && use_records {
+			j.outcome, from, search = combo.solver_table_replay(j.key, j.rec, j.first, j.last)
+			if !search {
+				sync.atomic_add(&replayed, 1)
+			}
+		}
+		if search {
+			joint: combo.Suit_Joint_Table
+			j.entry, j.outcome, joint = combo.solver_table_solve(j.key, from, j.last, record = &j.rec)
+			if j.outcome == .Entry {
+				j.cells = combo.solver_joint_cells(joint)
+			}
+			j.has_rec = true
+			write_search(j)
 		}
 		write_partial(j)
 		free_all(context.temp_allocator)
@@ -162,8 +254,10 @@ main :: proc() {
 			limit = n
 		case "redo":
 			redo = n != 0
+		case "searches":
+			use_records = n != 0
 		case:
-			fmt.eprintfln("unknown argument %q (out, max-tier, min-missing, max-missing, threads, limit, redo)", arg)
+			fmt.eprintfln("unknown argument %q (out, max-tier, min-missing, max-missing, threads, limit, redo, searches)", arg)
 			os.exit(2)
 		}
 	}
@@ -210,6 +304,40 @@ main :: proc() {
 		os.exit(1)
 	}
 	partial = f
+
+	// A redo re-solves its entries whatever their records say: what an entry stores has changed.
+	use_records = use_records && !redo
+	searches_path := strings.concatenate({out, ".searches"})
+	records, stamped := read_searches(searches_path)
+	from_records := 0
+	for &j in jobs {
+		if rec, ok := records[j.key]; ok {
+			j.rec, j.has_rec = rec, true
+			if !j.done {
+				from_records += 1
+			}
+		}
+	}
+	if !stamped {
+		// Begun again under today's stamp; the records are written out in full at the end.
+		header := fmt.tprintf("# %s\n", combo.solver_search_stamp())
+		if werr := os.write_entire_file(searches_path, transmute([]u8)header); werr != nil {
+			fmt.eprintfln("could not write %s: %v", searches_path, werr)
+			os.exit(1)
+		}
+	}
+	sf, serr := os.open(searches_path, os.O_WRONLY | os.O_CREATE | os.O_APPEND)
+	if serr != nil {
+		fmt.eprintfln("could not open %s: %v", searches_path, serr)
+		os.exit(1)
+	}
+	searches = sf
+	fmt.eprintfln(
+		"%d of the classes to solve have a search record in %s%s",
+		from_records,
+		searches_path,
+		"" if use_records else " (not used: searches=0 or redo)",
+	)
 	tiers := combo.SOLVER_TABLE_TIERS
 	fmt.eprintfln(
 		"%d classes (%d already solved in %s), %d threads, tiers 0..%d (last: budget %d%s)",
@@ -228,17 +356,45 @@ main :: proc() {
 	for &t in pool {
 		t = thread.create_and_start(worker)
 	}
-	for sync.atomic_load(&done) < todo {
-		time.sleep(30 * time.Second)
+	for last := time.now(); sync.atomic_load(&done) < todo; {
+		time.sleep(250 * time.Millisecond) // a bake decided from its records can be over in a second
+		if time.since(last) < 30 * time.Second {
+			continue
+		}
+		last = time.now()
 		d := sync.atomic_load(&done)
 		el := time.duration_seconds(time.since(start))
 		eta := el / f64(max(d, 1)) * f64(todo - d)
-		fmt.eprintfln("%d / %d  %.0fs elapsed, about %.0fs left", d, todo, el, eta)
+		fmt.eprintfln("%d / %d  %.0fs elapsed, about %.0fs left (%d from their records)", d, todo, el, eta, sync.atomic_load(&replayed))
 	}
 	for t in pool {
 		thread.join(t)
 	}
 	os.close(partial)
+	os.close(searches)
+
+	// The records compacted, one line a class: today's, and those kept from before (classes outside this bake's
+	// range keep theirs).
+	for j in jobs {
+		if j.has_rec {
+			records[j.key] = j.rec
+		}
+	}
+	{
+		keys := make([dynamic]u32, 0, len(records))
+		for k in records {
+			append(&keys, k)
+		}
+		slice.sort(keys[:])
+		sb := strings.builder_make()
+		fmt.sbprintf(&sb, "# %s\n", combo.solver_search_stamp())
+		for k in keys {
+			record_line(&sb, k, records[k])
+		}
+		if werr := os.write_entire_file(searches_path, sb.buf[:]); werr != nil {
+			fmt.eprintfln("could not write %s: %v", searches_path, werr)
+		}
+	}
 
 	entries: [dynamic]combo.Solver_Table_Entry
 	cells_of := make(map[u32][]u16)
@@ -343,4 +499,5 @@ main :: proc() {
 		fmt.eprintfln("  tier %d (budget %d%s): %d entries", tier, tiers[tier].budget, ", coarse" if tiers[tier].coarse else "", c)
 	}
 	fmt.eprintfln("  nothing better than the fixed line: %d; out of every budget: %d", no_gain, out_of_budget)
+	fmt.eprintfln("  decided from their search records, without a search: %d", replayed)
 }

@@ -53,7 +53,7 @@ Sd_Policy :: struct {
 	north, south: u16,
 	root:         ^Policy_Node,
 	solver:       Opt_Solver,
-	scratch:      virtual.Arena, // the search's per-node scratch
+	scratch:      mem.Arena, // the search's per-node scratch (`opt_scratch_init`)
 	nodes:        virtual.Arena, // the tree
 	overflow:     bool,
 }
@@ -62,7 +62,7 @@ Sd_Policy :: struct {
 sd_policy_make :: proc(north, south: u16, budget := DEFAULT_OPT_BUDGET) -> ^Sd_Policy {
 	pol := new(Sd_Policy)
 	pol.north, pol.south = north, south
-	_ = virtual.arena_init_growing(&pol.scratch)
+	_ = opt_scratch_init(&pol.scratch)
 	_ = virtual.arena_init_growing(&pol.nodes)
 	pol.solver = Opt_Solver {
 		budget  = budget,
@@ -78,8 +78,9 @@ sd_policy_make :: proc(north, south: u16, budget := DEFAULT_OPT_BUDGET) -> ^Sd_P
 
 sd_policy_destroy :: proc(pol: ^Sd_Policy) {
 	delete(pol.solver.memo)
+	delete(pol.solver.vals)
 	delete(pol.solver.dd)
-	virtual.arena_destroy(&pol.scratch)
+	opt_scratch_destroy(&pol.scratch)
 	virtual.arena_destroy(&pol.nodes)
 	free(pol)
 }
@@ -108,9 +109,9 @@ policy_decide :: proc(pol: ^Sd_Policy, node: ^Policy_Node) -> bool {
 		return true
 	}
 	sv := &pol.solver
-	context.temp_allocator = virtual.arena_allocator(&pol.scratch)
-	mark := virtual.arena_temp_begin(&pol.scratch)
-	defer virtual.arena_temp_end(mark)
+	context.temp_allocator = mem.arena_allocator(&pol.scratch)
+	mark := pol.scratch.offset
+	defer pol.scratch.offset = mark
 
 	// Searched over the merged layouts, as `opt_solve` searches: unmerged, a defender turn places every one
 	// separately. Mid-trick, declarer's cards on the trick still separate the defenders' (`opt_canonical`
@@ -498,6 +499,17 @@ Sd_Certified :: struct {
 	// verdict, not a search that gave up (a bake escalates only the latter).
 	searched: bool,
 	perm:    [RANKS]int, // the holding's ranks to the policy's
+	// What the search found whatever the fixed lines are, for a bake to decide the class again after a change to
+	// them alone (`Solver_Search_Record`). `shortcut`: the fixed line reached the double-dummy census, so
+	// nothing was searched. `search_value`: the search's own value's mean, which no line exceeds (see the
+	// header). `search_line`: the mean of the best line the searches valued in the holding (their
+	// own or the relabelled one; -1 if neither was). `search_line_exact`: no line was left untried because of
+	// the fixed line - false when the relabelled search was skipped since the fixed line already reached the
+	// search's value.
+	shortcut:          bool,
+	search_value:      f64,
+	search_line:       f64,
+	search_line_exact: bool,
 }
 
 sd_certified_destroy :: proc(c: ^Sd_Certified) {
@@ -520,9 +532,10 @@ sd_certified_line :: proc(north, south: u16, budget := DEFAULT_OPT_BUDGET) -> (b
 	best.dist, best.source = fixed.dist, .Fixed
 	census := expected_tricks(suit_trick_distribution(north, south).p)
 	if expected_tricks(fixed.dist.p) >= census - 1e-9 {
-		best.optimal, best.searched = true, true
+		best.optimal, best.searched, best.shortcut = true, true, true
 		return
 	}
+	best.search_line = -1
 	EPS :: 1e-9
 	consider :: proc(best: ^Sd_Certified, pol: ^Sd_Policy, dist: Suit_Trick_Dist, source: Line_Source, perm: [RANKS]int) -> bool {
 		if expected_tricks(dist.p) <= expected_tricks(best.dist.p) + EPS {
@@ -537,6 +550,7 @@ sd_certified_line :: proc(north, south: u16, budget := DEFAULT_OPT_BUDGET) -> (b
 	search, own_ok := sd_policy_search_value(own)
 	if own_ok {
 		if dist, ok := sd_policy_evaluate(own, north, south, SD_POLICY_IDENTITY); ok {
+			best.search_line = expected_tricks(dist.p)
 			if !consider(&best, own, dist, .Search, SD_POLICY_IDENTITY) {
 				sd_policy_destroy(own)
 			}
@@ -548,18 +562,27 @@ sd_certified_line :: proc(north, south: u16, budget := DEFAULT_OPT_BUDGET) -> (b
 		sd_policy_destroy(own)
 	}
 	best.searched = own_ok
+	if own_ok {
+		best.search_value = expected_tricks(search.p)
+	}
 	if own_ok && expected_tricks(best.dist.p) >= expected_tricks(search.p) - EPS {
 		best.optimal = true
+		best.search_line_exact = best.search_line >= expected_tricks(search.p) - EPS
 		return
 	}
 
 	perm := small_spot_perm(north, south, SMALL_SPOTS_BELOW)
 	if perm != SD_POLICY_IDENTITY {
 		rel := sd_policy_make(perm_mask(north, perm), perm_mask(south, perm), budget)
-		if dist, ok := sd_policy_evaluate(rel, north, south, perm); !ok || !consider(&best, rel, dist, .Relabel, perm) {
+		dist, ok := sd_policy_evaluate(rel, north, south, perm)
+		if ok {
+			best.search_line = max(best.search_line, expected_tricks(dist.p))
+		}
+		if !ok || !consider(&best, rel, dist, .Relabel, perm) {
 			sd_policy_destroy(rel)
 		}
 	}
+	best.search_line_exact = true
 	best.optimal = own_ok && expected_tricks(best.dist.p) >= expected_tricks(search.p) - EPS
 	return
 }

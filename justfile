@@ -70,6 +70,8 @@ lint *args:
 	odin check {{cli_pkg}} -vet -vet-cast -strict-style -vet-tabs {{args}}
 	odin check cmd/bench.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
 	odin check cmd/bake_suit_lines.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
+	odin check cmd/line_sweep.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
+	odin check cmd/line_probe.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
 	odin check examples/strong-1c.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
 	odin check examples/1major-gf-support.odin -file -vet -vet-cast -strict-style -vet-tabs {{args}}
 
@@ -282,6 +284,18 @@ doc *args:
 [group('combo')]
 bake-suit-lines *args: mktarget_dirs
 	odin run cmd/bake_suit_lines.odin -file -o:speed -microarch:native -linker:{{linker}} -out:{{ target_path("release", "bake-suit-lines.exe") }} -- {{args}}
+
+# hold combo's fixed lines to the exact single-dummy optimum over random holdings: the average shortfall and the
+# worst holdings (the work list for new lines). count= seed= min= max= top= pin=1; see cmd/line_sweep.odin
+[group('combo')]
+combo-line-sweep *args: mktarget_dirs
+	odin run cmd/line_sweep.odin -file -o:speed -microarch:native -linker:{{linker}} -out:{{ target_path("release", "line-sweep.exe") }} -- {{args}}
+
+# one holding played layout by layout: the exact optimum against the fixed lines, on the layouts where a line falls
+# short (where to trace it). `just combo-line-probe J3/KT9842 [all=1] [line ...]`; see cmd/line_probe.odin
+[group('combo')]
+combo-line-probe *args: mktarget_dirs
+	odin run cmd/line_probe.odin -file -o:speed -microarch:native -linker:{{linker}} -out:{{ target_path("release", "line-probe.exe") }} -- {{args}}
 
 # run the scan-vs-bitmask-index hand-evaluation benchmark (release, optimised)
 [group('perf')]

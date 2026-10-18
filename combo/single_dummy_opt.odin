@@ -52,9 +52,9 @@ package combo
 
 import "base:intrinsics"
 import "core:hash/xxhash"
+import "core:mem"
 import "core:mem/virtual"
 import "core:slice"
-import "core:strings"
 
 // Work before we give up and fall back: declarer positions plus the defence's placings, about a
 // microsecond each - so the default is ~0.3s at worst, for a caller that is waiting (the advisor's
@@ -73,11 +73,44 @@ Opt_Solver :: struct {
 	budget:   int,
 	overflow: bool,
 	// Transposition table, keyed on a 128-bit hash of the canonical belief (`opt_canonical`): the keys
-	// themselves run to a kilobyte, and a solve can store a million of them.
+	// themselves run to a kilobyte, and a solve can store a million of them. The distributions are kept
+	// apart, in `vals` (see `Opt_Memo`).
 	memo:     map[u128]Opt_Memo,
+	vals:     [dynamic]f64,
 	// Every node's scratch, given back when the node returns (`opt_solve`): only the memo outlives one.
-	scratch:  ^virtual.Arena,
+	scratch:  ^mem.Arena,
 	dd:       map[Suit_Layout]int, // `suit_dd_tricks`' memo, for the ceiling at each declarer node
+}
+
+/*
+THE SEARCH'S SCRATCH: `mem.Arena`, a bump allocator, over one block of address space. A node takes a mark
+(the arena's `offset`) and puts it back when it returns, so everything it allocated goes at once.
+
+`virtual.Arena` with `arena_temp_begin`/`_end` did the same, but took a lock on every allocation and every
+release (one solver is one thread, so nothing to lock against) and zeroed every byte given back. Measured
+on the bake's own searches (2026-10-18): 8-10% of a solve. `mem.Arena` zeroes what it hands out instead,
+as `.Alloc` promises, and does not lock.
+
+Its block cannot grow, so it is sized far past need: the bake's searches used about 1 MB. It is committed
+whole, which costs address space and commit charge, not memory: Windows gives a page memory when it is
+first touched. Running out panics in the search (a nil allocation), it does not answer wrongly.
+*/
+@(private)
+OPT_SCRATCH_SIZE :: 128 << 20
+
+@(private)
+opt_scratch_init :: proc(sc: ^mem.Arena) -> mem.Allocator_Error {
+	data := virtual.reserve_and_commit(OPT_SCRATCH_SIZE) or_return
+	mem.arena_init(sc, data)
+	return nil
+}
+
+@(private)
+opt_scratch_destroy :: proc(sc: ^mem.Arena) {
+	if sc.data != nil {
+		virtual.release(raw_data(sc.data), uint(len(sc.data)))
+	}
+	sc^ = {}
 }
 
 /*
@@ -102,54 +135,41 @@ opt_canonical :: proc(n, s: u16, worlds: []Opt_World) -> (canon: []Opt_World, ke
 	for w in worlds {
 		live |= w.e | w.w
 	}
-	// Each missing rank's interval: the number of declarer's cards above it.
-	interval: [RANKS]int
-	nonempty: [RANKS + 1]bool
+	// Each interval's missing ranks as a mask (interval `j`: the ranks with `j` of declarer's cards above
+	// them), and those some defender still holds a card in, from the top.
+	imask: [RANKS + 1]u16
 	above := 0
 	for r := RANKS - 1; r >= 0; r -= 1 {
 		if sep & rank_bit(r) != 0 {
 			above += 1
-			continue
+		} else {
+			imask[above] |= rank_bit(r)
 		}
-		interval[r] = above
-		if live & rank_bit(r) != 0 {
-			nonempty[above] = true
+	}
+	held: [RANKS + 1]u16
+	nh := 0
+	for m in imask {
+		if m & live != 0 {
+			held[nh] = m
+			nh += 1
 		}
 	}
 
 	packed := make([]Opt_World, len(worlds), context.temp_allocator)
 	for w, i in worlds {
-		ce, cw: [RANKS + 1]int
-		for r in 0 ..< RANKS {
-			if w.e & rank_bit(r) != 0 {
-				ce[interval[r]] += 1
-			}
-			if w.w & rank_bit(r) != 0 {
-				cw[interval[r]] += 1
-			}
-		}
 		e, west: u16
-		for r := RANKS - 1; r >= 0; r -= 1 {
-			if sep & rank_bit(r) != 0 {
-				continue
-			}
-			j := interval[r]
-			if ce[j] > 0 {
-				e |= rank_bit(r)
-				ce[j] -= 1
-			} else if cw[j] > 0 {
-				west |= rank_bit(r)
-				cw[j] -= 1
-			}
+		for m in held[:nh] {
+			ce := card_count(w.e & m)
+			top := top_ranks(m, ce + card_count(w.w & m))
+			east := top_ranks(m, ce)
+			e |= east
+			west |= top & ~east
 		}
 		packed[i] = Opt_World{e, west, w.wt}
 	}
 	// Packing preserves the order of the counts (a higher interval is higher bits, more cards in it a
 	// bigger number), so two positions with the same structure sort their worlds the same way.
-	slice.sort_by(packed, proc(a, b: Opt_World) -> bool {
-		if a.e != b.e {return a.e < b.e}
-		return a.w < b.w
-	})
+	sort_worlds(packed)
 	merged := make([dynamic]Opt_World, 0, len(packed), context.temp_allocator)
 	for w in packed {
 		if l := len(merged); l > 0 && merged[l - 1].e == w.e && merged[l - 1].w == w.w {
@@ -159,44 +179,83 @@ opt_canonical :: proc(n, s: u16, worlds: []Opt_World) -> (canon: []Opt_World, ke
 		}
 	}
 
-	b := strings.builder_make(context.temp_allocator)
+	// The key is written into one buffer of its exact size, then hashed: it is built for every position the
+	// search reaches, and nearly all of them are memo hits, so this is most of a solve's time.
+	small: [1024]u8 = ---
+	need := RANKS + 1 + len(merged) * (2 * nh + 8)
+	buf := small[:need] if need <= len(small) else make([]u8, need, context.temp_allocator)
+	k := 0
 	// The shape: declarer's cards high to low, with a mark for each interval some defender still has a
 	// card in. Empty intervals vanish - the declarer cards either side of one are then equals.
+	above = 0
 	last := -1
 	for r := RANKS - 1; r >= 0; r -= 1 {
 		switch {
 		case n & rank_bit(r) != 0:
-			strings.write_byte(&b, 'N')
+			buf[k] = 'N'
+			k += 1
+			above += 1
 		case s & rank_bit(r) != 0:
-			strings.write_byte(&b, 'S')
-		case nonempty[interval[r]] && interval[r] != last:
-			strings.write_byte(&b, 'g')
-			last = interval[r]
+			buf[k] = 'S'
+			k += 1
+			above += 1
+		case imask[above] & live != 0 && above != last:
+			buf[k] = 'g'
+			k += 1
+			last = above
 		}
 	}
-	strings.write_byte(&b, '#')
+	buf[k] = '#'
+	k += 1
 	for w in merged {
-		ce, cw: [RANKS + 1]u8
-		for r in 0 ..< RANKS {
-			if w.e & rank_bit(r) != 0 {
-				ce[interval[r]] += 1
-			}
-			if w.w & rank_bit(r) != 0 {
-				cw[interval[r]] += 1
-			}
+		for m in held[:nh] {
+			buf[k] = u8(card_count(w.e & m))
+			buf[k + 1] = u8(card_count(w.w & m))
+			k += 2
 		}
-		for j in 0 ..= RANKS {
-			if nonempty[j] {
-				strings.write_byte(&b, ce[j])
-				strings.write_byte(&b, cw[j])
-			}
-		}
-		bits := transmute(u64)w.wt
-		for i in 0 ..< 8 {
-			strings.write_byte(&b, u8(bits >> uint(8 * i)))
-		}
+		intrinsics.unaligned_store((^u64)(&buf[k]), transmute(u64)w.wt) // little-endian, as the bytes were
+		k += 8
 	}
-	return merged[:], u128(xxhash.XXH3_128(b.buf[:]))
+	key = u128(xxhash.XXH3_128(buf[:k]))
+	return merged[:], key
+}
+
+// Worlds in key order: East's cards, West's, then the weight.
+@(private)
+world_less :: #force_inline proc(a, b: Opt_World) -> bool {
+	ka, kb := u32(a.e) << 16 | u32(a.w), u32(b.e) << 16 | u32(b.w)
+	return ka < kb || (ka == kb && a.wt < b.wt)
+}
+
+// Sorted by `world_less`. A belief is a handful of worlds (four on average in a bake), where a general sort's
+// set-up costs more than the sorting: an insertion sort, up to a size where that stops being true.
+@(private)
+sort_worlds :: proc(ws: []Opt_World) {
+	if len(ws) > 32 {
+		slice.sort_by(ws, world_less)
+		return
+	}
+	for i in 1 ..< len(ws) {
+		x := ws[i]
+		j := i
+		for j > 0 && world_less(x, ws[j - 1]) {
+			ws[j] = ws[j - 1]
+			j -= 1
+		}
+		ws[j] = x
+	}
+}
+
+// The `k` highest ranks of `m` (which has at least `k`).
+@(private)
+top_ranks :: #force_inline proc "contextless" (m: u16, k: int) -> u16 {
+	r, x := u16(0), m
+	for _ in 0 ..< k {
+		high := u16(0x8000) >> intrinsics.count_leading_zeros(x)
+		r |= high
+		x &~= high
+	}
+	return r
 }
 
 // --- vector helpers ---------------------------------------------------------------------------
@@ -307,19 +366,22 @@ sd_optimal_distribution :: proc(
 		east = (east - 1) & missing
 	}
 
-	scratch: virtual.Arena
-	_ = virtual.arena_init_growing(&scratch)
-	defer virtual.arena_destroy(&scratch)
+	scratch: mem.Arena
+	if opt_scratch_init(&scratch) != nil {
+		return best.dist, false
+	}
+	defer opt_scratch_destroy(&scratch)
 	sv := Opt_Solver {
 		budget  = budget,
 		memo    = make(map[u128]Opt_Memo),
 		scratch = &scratch,
 	}
 	defer delete(sv.memo)
+	defer delete(sv.vals)
 	defer delete(sv.dd)
 	v: Vec
 	{
-		context.temp_allocator = virtual.arena_allocator(&scratch)
+		context.temp_allocator = mem.arena_allocator(&scratch)
 		v, _ = opt_solve(&sv, north, south, worlds[:], -INF, INF)
 	}
 	if sv.overflow {
@@ -379,9 +441,23 @@ Bound :: enum u8 {
 	Upper,
 }
 
+/*
+One remembered answer: its distribution is `span` values in `Opt_Solver.vals` from `off`, tricks 0 to
+span - 1. No more tricks than that are left to win (`memo_span`), so the rest are zero and not kept: a
+whole `Vec` is 112 bytes, and most positions in a solve are deep, with two or three tricks to go. This
+entry is 8 bytes; a million of them had cost 136 MB a solve, doubled while the map grew.
+*/
 Opt_Memo :: struct {
-	v:     Vec,
+	off:   u32,
+	span:  u8,
 	bound: Bound,
+}
+
+// How many of a distribution's values a position can make non-zero: tricks 0 to the most still to win -
+// one per round while either declarer hand has a card, and the trick in progress (a defender's turn).
+@(private)
+memo_span :: proc "contextless" (n, s: u16) -> int {
+	return min(RANKS, max(card_count(n), card_count(s)) + 1) + 1
 }
 
 @(private)
@@ -389,25 +465,53 @@ INF :: 1e300
 
 // Does a remembered answer settle a search over this window?
 @(private)
-memo_answers :: proc(e: Opt_Memo, alpha, beta: f64) -> bool {
-	switch e.bound {
+memo_answers :: proc(v: Vec, bound: Bound, alpha, beta: f64) -> bool {
+	switch bound {
 	case .Exact:
 		return true
 	case .Lower:
-		return vec_mean(e.v) >= beta
+		return vec_mean(v) >= beta
 	case .Upper:
-		return vec_mean(e.v) <= alpha
+		return vec_mean(v) <= alpha
 	}
 	return false
 }
 
-// Remember an answer; an exact one is never replaced by a bound.
+// A remembered answer at `key`, if there is one and it settles a search over this window.
 @(private)
-memo_store :: proc(sv: ^Opt_Solver, key: u128, v: Vec, bound: Bound) {
-	if old, ok := sv.memo[key]; ok && old.bound == .Exact {
+memo_lookup :: proc(sv: ^Opt_Solver, key: u128, alpha, beta: f64) -> (v: Vec, bound: Bound, ok: bool) {
+	e, found := sv.memo[key]
+	if !found {
 		return
 	}
-	sv.memo[key] = Opt_Memo{v, bound}
+	copy(v[:e.span], sv.vals[e.off:][:e.span])
+	if !memo_answers(v, e.bound, alpha, beta) {
+		return {}, {}, false
+	}
+	return v, e.bound, true
+}
+
+// Remember an answer at the position `n`/`s`; an exact one is never replaced by a bound. A key is one
+// position, so a replaced answer has the same span and is rewritten where it is.
+@(private)
+memo_store :: proc(sv: ^Opt_Solver, key: u128, n, s: u16, v: Vec, bound: Bound) {
+	v := v
+	span := memo_span(n, s)
+	for k in span ..= RANKS {
+		assert(v[k] == 0, "a trick distribution beyond the tricks left")
+	}
+	if old, ok := sv.memo[key]; ok {
+		if old.bound == .Exact {
+			return
+		}
+		assert(int(old.span) == span)
+		copy(sv.vals[old.off:][:span], v[:span])
+		sv.memo[key] = Opt_Memo{old.off, old.span, bound}
+		return
+	}
+	off := len(sv.vals)
+	append(&sv.vals, ..v[:span])
+	sv.memo[key] = Opt_Memo{u32(off), u8(span), bound}
 }
 
 // A vector standing for a bound: its mean is `mean`, and nothing else about it means anything.
@@ -437,13 +541,13 @@ opt_solve :: proc(sv: ^Opt_Solver, n, s: u16, belief: []Opt_World, alpha, beta: 
 		return r, .Exact
 	}
 
-	mark := virtual.arena_temp_begin(sv.scratch)
-	defer virtual.arena_temp_end(mark)
+	mark := sv.scratch.offset
+	defer sv.scratch.offset = mark
 
 	// Transposition memo: a hit is free (no budget spent).
 	worlds, key := opt_canonical(n, s, belief)
-	if e, ok := sv.memo[key]; ok && memo_answers(e, alpha, beta) {
-		return e.v, e.bound
+	if v, bound, ok := memo_lookup(sv, key, alpha, beta); ok {
+		return v, bound
 	}
 	sv.budget -= 1
 	if sv.budget < 0 {
@@ -460,7 +564,7 @@ opt_solve :: proc(sv: ^Opt_Solver, n, s: u16, belief: []Opt_World, alpha, beta: 
 		ceiling += w.wt * f64(suit_dd_tricks(Suit_Layout{n, w.e, s, w.w}, &sv.dd))
 	}
 	if ceiling <= alpha {
-		memo_store(sv, key, bound_vec(ceiling), .Upper)
+		memo_store(sv, key, n, s, bound_vec(ceiling), .Upper)
 		return bound_vec(ceiling), .Upper
 	}
 
@@ -515,7 +619,7 @@ opt_solve :: proc(sv: ^Opt_Solver, n, s: u16, belief: []Opt_World, alpha, beta: 
 	} else if best_mean <= alpha {
 		bound = .Upper
 	}
-	memo_store(sv, key, best, bound)
+	memo_store(sv, key, n, s, best, bound)
 	return best, bound
 }
 
@@ -632,12 +736,12 @@ opt_defender :: proc(
 	Bound,
 ) {
 	key := opt_defender_key(n, s, worlds, order[0], idx, is_ns(win_seat), win_rank, played)
-	if e, ok := sv.memo[key]; ok && memo_answers(e, alpha, beta) {
-		return e.v, e.bound
+	if v, bound, ok := memo_lookup(sv, key, alpha, beta); ok {
+		return v, bound
 	}
 	v, bound := opt_defender_search(sv, n, s, worlds, order, idx, win_seat, win_rank, seat, played, alpha, beta)
 	if !sv.overflow {
-		memo_store(sv, key, v, bound)
+		memo_store(sv, key, n, s, v, bound)
 	}
 	return v, bound
 }
@@ -778,8 +882,8 @@ opt_place :: proc(pl: ^Opt_Placing, i: int) {
 		return
 	}
 
-	mark := virtual.arena_temp_begin(sv.scratch)
-	defer virtual.arena_temp_end(mark)
+	mark := sv.scratch.offset
+	defer sv.scratch.offset = mark
 
 	Option :: struct {
 		g, r:  int,
@@ -868,33 +972,35 @@ opt_defender_key :: proc(
 	win_rank: int,
 	played: u16,
 ) -> u128 {
-	ws := make([]Opt_World, len(worlds), context.temp_allocator)
-	copy(ws, worlds)
-	slice.sort_by(ws, proc(a, b: Opt_World) -> bool {
-		if a.e != b.e {return a.e < b.e}
-		if a.w != b.w {return a.w < b.w}
-		return a.wt < b.wt
-	})
-	b := strings.builder_make(context.temp_allocator)
-	strings.write_byte(&b, 0xFF) // never the first byte of an `opt_canonical` key, which share the map
-	put16 :: proc(b: ^strings.Builder, v: u16) {
-		strings.write_byte(b, u8(v))
-		strings.write_byte(b, u8(v >> 8))
-	}
-	put16(&b, n)
-	put16(&b, s)
-	put16(&b, played)
-	strings.write_byte(&b, u8(leader))
-	strings.write_byte(&b, u8(idx))
-	strings.write_byte(&b, 1 if ns_winning else 0)
-	strings.write_byte(&b, u8(win_rank + 1))
-	for w in ws {
-		put16(&b, w.e)
-		put16(&b, w.w)
-		bits := transmute(u64)w.wt
-		for i in 0 ..< 8 {
-			strings.write_byte(&b, u8(bits >> uint(8 * i)))
+	// The worlds often arrive sorted (a canonical belief, or a group placed in order).
+	ws := worlds
+	for i in 1 ..< len(ws) {
+		if world_less(ws[i], ws[i - 1]) {
+			ws = slice.clone(worlds, context.temp_allocator)
+			sort_worlds(ws)
+			break
 		}
 	}
-	return u128(xxhash.XXH3_128(b.buf[:]))
+	// Written into one buffer of its exact size, then hashed (see `opt_canonical`).
+	small: [1024]u8 = ---
+	need := 11 + 12 * len(ws)
+	buf := small[:need] if need <= len(small) else make([]u8, need, context.temp_allocator)
+	buf[0] = 0xFF // never the first byte of an `opt_canonical` key, which share the map
+	intrinsics.unaligned_store((^u16)(&buf[1]), n) // little-endian, as all of it
+	intrinsics.unaligned_store((^u16)(&buf[3]), s)
+	intrinsics.unaligned_store((^u16)(&buf[5]), played)
+	buf[7] = u8(leader)
+	buf[8] = u8(idx)
+	buf[9] = 1 if ns_winning else 0
+	buf[10] = u8(win_rank + 1)
+	k := 11
+	for w in ws {
+		intrinsics.unaligned_store((^u16)(&buf[k]), w.e)
+		intrinsics.unaligned_store((^u16)(&buf[k + 2]), w.w)
+		intrinsics.unaligned_store((^u64)(&buf[k + 4]), transmute(u64)w.wt)
+		k += 12
+	}
+	key := u128(xxhash.XXH3_128(buf))
+	return key
 }
+

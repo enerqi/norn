@@ -32,10 +32,21 @@ Contract_Strain :: enum {
 // value, held as `Maybe(Contract)` by `Board` rather than as loose fields behind a bool flag.
 // `declarer` is the seat that FIRST named the final denomination for its side (bridge's rule), not merely
 // whoever made the last bid.
+//
+// `doubling` is what the auction or the tag says; a scorer needs it, nothing that plays the cards does. A share
+// link does not carry it, so a contract read back from one is undoubled.
 Contract :: struct {
 	level:    int, // 1..7
 	strain:   Contract_Strain,
 	declarer: Seat,
+	doubling: Doubling,
+}
+
+// Whether the final contract was doubled or redoubled.
+Doubling :: enum u8 {
+	None,
+	Doubled,
+	Redoubled,
 }
 
 // Parse a contract denomination token: notrumps (`NT` or a lone `N`, either case) or a single suit letter
@@ -131,13 +142,25 @@ derive_contract :: proc(dealer: Seat, calls: []string) -> (contract: Contract, o
 	last_level := 0
 	last_strain := Contract_Strain.NoTrumps
 	last_side := -1
+	doubling := Doubling.None
 
 	for tok, i in calls {
-		// Passes, doubles, redoubles and junk do not change the denomination — only a bid does.
-		bid, is_bid := parse_auction_call(tok).(Auction_Bid)
-		if !is_bid {
+		// Passes, doubles, redoubles and junk do not change the denomination — only a bid does. A double or a
+		// redouble stands until the next bid.
+		bid: Auction_Bid
+		#partial switch call in parse_auction_call(tok) {
+		case Auction_Bid:
+			bid = call
+		case Auction_Double:
+			doubling = .Doubled
+			continue
+		case Auction_Redouble:
+			doubling = .Redoubled
+			continue
+		case:
 			continue
 		}
+		doubling = .None
 		seat := Seat((int(dealer) + i) % SEAT_COUNT)
 		side := int(seat) % 2
 		if first_namer[side][bid.strain] == nil {
@@ -151,5 +174,5 @@ derive_contract :: proc(dealer: Seat, calls: []string) -> (contract: Contract, o
 	// The winning side bid the final denomination at least once, so its first namer is necessarily set.
 	declarer, named := first_namer[last_side][last_strain].?
 	assert(named, "derive_contract: a side won the auction in a denomination it never named")
-	return {level = last_level, strain = last_strain, declarer = declarer}, true
+	return {level = last_level, strain = last_strain, declarer = declarer, doubling = doubling}, true
 }

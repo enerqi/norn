@@ -37,41 +37,129 @@ has_rank_above :: proc "contextless" (m: u16, r: int) -> bool {
 	return (m >> uint(r + 1)) != 0
 }
 
-// Name the standard suit-combination PATTERN in the two known holdings, or "" when none applies. Read
-// purely from card geometry (no distribution, no solving). Priority: two-way finesse (the costliest blind
+// The missing honours (Ten..King, as rank bits) declarer can finesse for EITHER WAY in one suit: THE definition
+// of a two-way finesse, which the pattern note names and the misguess tax (`sampled.two_way_guess_pivots`)
+// prices - one definition, so the two cannot drift apart (they were two copies of one rule, and the copies
+// shared its bug). A missing honour C is two-way when declarer holds both its neighbours (a tight tenace) and
+// EACH hand holds a card above C and a card of the run held just below it, to finesse with: AJx opposite KTx.
+// A card above C in each hand is not enough - KJ85 opposite A4 has one finesse, low to the jack.
+two_way_finesse_ranks :: proc "contextless" (north, south: u16) -> (ranks: u16) {
+	ns := north | south
+	for r := RANK_TEN; r <= RANK_KING; r += 1 {
+		if ns & rank_bit(r) != 0 || ns & rank_bit(r + 1) == 0 || ns & rank_bit(r - 1) == 0 {
+			continue // we hold C, or it is not trapped between two of our cards
+		}
+		if has_rank_above(north, r) &&
+		   has_rank_above(south, r) &&
+		   holds_run_below(north, ns, r) &&
+		   holds_run_below(south, ns, r) {
+			ranks |= rank_bit(r)
+		}
+	}
+	return
+}
+
+// The two-way finesses that are real GUESSES: `two_way_finesse_ranks`, kept only when playing blind costs
+// something in the suit - its best fixed line takes fewer tricks than double dummy on average. QJ86 opposite
+// AK972 has the geometry for the ten but no guess: a 4-0 split shows on the first round, and either way is then
+// covered. What the pattern note names and the misguess tax prices.
+two_way_guesses :: proc(north, south: u16) -> u16 {
+	ranks := two_way_finesse_ranks(north, south)
+	if ranks == 0 {
+		return 0
+	}
+	return ranks if blind_costs(north, south) else 0
+}
+
+// Whether playing the suit blind costs anything: its best fixed line takes fewer tricks on average than double
+// dummy, by more than `GUESS_MIN_COST`. Where it does not, there is no finesse to name and no guess to price,
+// whatever the cards look like (AJ opposite KT: the ace and king, two tricks, however it is played).
+blind_costs :: proc(north, south: u16) -> bool {
+	fixed := fixed_line_tables(north, south)
+	return blind_costs_in(suit_joint_table(north, south), fixed[:])
+}
+
+// The same from tables already built: the suit's census table and each fixed line's (`annotate` has them all
+// for the page, and valuing every line again for the note was 40% of a deal's analysis, measured 2026-10-18).
+// `fixed` may run on past the fixed lines (the solver's line, last): only the first `N_CANDIDATE_LINES` count.
+blind_costs_in :: proc(census: Suit_Joint_Table, fixed: []Line_Joint) -> bool {
+	blind := f64(-1)
+	for c in fixed[:min(len(fixed), N_CANDIDATE_LINES)] {
+		blind = max(blind, expected_tricks(marginal_from_table(c.tbl).p))
+	}
+	return expected_tricks(marginal_from_table(census).p) - blind > GUESS_MIN_COST
+}
+
+// Each fixed line's joint table in a holding, in `candidate_lines` order.
+@(private)
+fixed_line_tables :: proc(north, south: u16) -> (out: [N_CANDIDATE_LINES]Line_Joint) {
+	memo := make(map[u64]int)
+	defer delete(memo)
+	for line, i in candidate_lines() {
+		out[i] = Line_Joint{line.name, sd_line_joint_table(north, south, line, &memo)}
+	}
+	return
+}
+
+// The smallest blind cost (tricks a deal, against double dummy) that counts as a guess.
+GUESS_MIN_COST :: 0.005
+
+// True iff `hand` holds a card of the run the partnership `held` holds directly below rank `r` (r-1, r-2, ...
+// down to the first rank neither hand has): a card to finesse WITH against a missing `r`.
+@(private)
+holds_run_below :: proc "contextless" (hand, held: u16, r: int) -> bool {
+	for k := r - 1; k >= 0 && held & rank_bit(k) != 0; k -= 1 {
+		if hand & rank_bit(k) != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// Name the standard suit-combination PATTERN in the two known holdings, or "" when none applies. Read from
+// card geometry, and only for a suit with something to play for: double dummy takes more tricks on some layouts
+// than others, or playing blind costs something (AJ2 opposite KT3 is always three tricks double dummy, but a
+// guess blind). AJ opposite KT, and QJ86 opposite AK972, take the same tricks every way: no finesse to name. Priority: two-way finesse (the costliest blind
 // guess) → 8-ever/9-never (a length-decided hook) → one-way finesse. The two-way test mirrors
 // `deal_solve/tax.odin` exactly, so the phrase aligns with the priced misguess tax.
 combination_note :: proc(north, south: u16) -> string {
+	if north | south == 0 {
+		return ""
+	}
+	fixed := fixed_line_tables(north, south)
+	return combination_note_in(north, south, suit_joint_table(north, south), fixed[:])
+}
+
+// `combination_note` from tables already built (`blind_costs_in`).
+combination_note_in :: proc(north, south: u16, census_table: Suit_Joint_Table, fixed: []Line_Joint) -> string {
 	ns := north | south
 	ns_len := card_count(ns)
 	if ns_len == 0 {
 		return ""
 	}
 
-	// Two-way finesse: a missing honour C (Ten..King) trapped by a tight tenace (C+1 AND C-1 both held)
-	// that declarer can attack from EITHER hand (a card above C in each). Name the top such guess. Same
-	// geometry as deal_solve/tax.odin `two_way_guess_pivots`.
+	census := marginal_from_table(census_table)
+	costs := blind_costs_in(census_table, fixed)
+	if census.p[sure_tricks(census.p)] > 1 - 1e-12 && !costs {
+		return ""
+	}
+	// Two-way finesse (`two_way_guesses`): name the top such guess.
+	two_way := two_way_finesse_ranks(north, south) if costs else 0
 	for r := RANK_KING; r >= RANK_TEN; r -= 1 {
-		if ns & rank_bit(r) != 0 {
-			continue // we hold C — not a defender card, no guess
-		}
-		above := ns & rank_bit(r + 1) != 0
-		below := r > 0 && ns & rank_bit(r - 1) != 0
-		if !above || !below {
-			continue // not a tight two-sided tenace around C
-		}
-		if has_rank_above(north, r) && has_rank_above(south, r) {
+		if two_way & rank_bit(r) != 0 {
 			return fmt.tprintf("two-way finesse — guess which defender holds the %s", RANK_NAMES[r])
 		}
 	}
 
 	// 8-ever / 9-never: A, K and J held with the queen missing — a one-way hook whose right answer flips on
 	// combined length (nine cards → play for the drop; eight → finesse the jack).
-	if ns & rank_bit(RANK_ACE) != 0 &&
+	// Only at eight and nine cards: shorter is a plain finesse (below), longer a plain drop.
+	if (ns_len == 8 || ns_len == 9) &&
+	   ns & rank_bit(RANK_ACE) != 0 &&
 	   ns & rank_bit(RANK_KING) != 0 &&
 	   ns & rank_bit(RANK_JACK) != 0 &&
 	   ns & rank_bit(RANK_QUEEN) == 0 {
-		if ns_len >= 9 {
+		if ns_len == 9 {
 			return "9-never — cash A K and play for the queen to drop"
 		}
 		return "8-ever — finesse the jack for the missing queen"

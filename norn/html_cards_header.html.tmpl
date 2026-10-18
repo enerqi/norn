@@ -23,6 +23,7 @@
 		}
 		.toolbar button { font: inherit; font-size: 0.9rem; padding: 0.15rem 0.45rem; cursor: pointer; border: 1px solid var(--line); background: #f7f7f7; border-radius: 4px; }
 		.toolbar button:hover { background: #ececec; }
+		.toolbar button[hidden], .match-table[hidden] { display: none; }
 		.toolbar .sel { background: var(--sel); color: #fff; border-color: var(--sel); }
 		.toolbar .off { opacity: 0.5; }
 		.toolbar .group { display: flex; gap: 0.2rem; align-items: center; }
@@ -289,6 +290,20 @@
 		.nc-qr-notes { color: #a15c00; }
 		.nc-qr-notes:empty { display: none; }
 		.nc-qr-btns button { margin: 0 0.25rem; }
+		/* The match table: the help modal's shape, as wide as the table needs. A row opens its board. */
+		.nc-match-card { width: auto; }
+		:where(html) .nc-match-card { max-width: min(96vw, 66rem); }
+		.match-table table { border-collapse: collapse; font-size: 0.85rem; line-height: 1.3; }
+		.match-table th, .match-table td { padding: 0.18rem 0.45rem; text-align: right; white-space: nowrap; }
+		.match-table th { border-bottom: 1px solid var(--line); font-weight: 600; color: #555; }
+		.match-table th.l, .match-table td.l { text-align: left; }
+		.match-table [data-board] { cursor: pointer; }
+		.match-table [data-board]:hover { background: #e8f0fb; }
+		.match-table .cur { background: #f3f6fb; }
+		.match-table .rooms { margin-top: 0.2rem; }
+		.match-table .neg { color: var(--red); }
+		.match-table .pos { color: #1a7f37; }
+		.match-table .match-sum { font-size: 0.78rem; line-height: 1.35; color: #444; margin: 0.8rem 0 0; white-space: pre-wrap; }
 		/* Popup footer: the live P(>= target) headline on the left, and the PER-BOARD "tricks >="
 		   slider beside it (long, defaults to that board's NS par trick count). */
 		.cca-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem 1rem; margin-top: 0.5rem; }
@@ -667,6 +682,7 @@
 			   documented fix. */
 			.cca-help-card .x { display: block; }
 			.nc-qr-card { width: 24rem; }
+			.nc-match-card { width: 60rem; }
 
 			/* The overlay panel, for the same reason, cannot rely on `overflow: auto` to keep itself inside
 			   the window: with the opponent-length grid open it grew past the bottom of the frame and the
@@ -756,6 +772,8 @@
 		<!-- Every board on the page as ONE link, for the whole set rather than the board BBO link sends. -->
 		<button id="nc-share" title="Copy a link that opens all these deals, as this page, in any browser - nothing is uploaded">Share</button>
 		<button id="nc-qr" title="The Share link as a QR code, for a phone to scan off this screen">QR</button>
+		<!-- Shown only on a page that carries a match table (a set of played boards judged against double dummy). -->
+		<button id="nc-match" hidden title="Every board in one table, judged against double dummy: click a row to open its play">Table</button>
 	</div>
 	<h1 class="page-title">{{TITLE}}</h1>
 	<div class="viewport">

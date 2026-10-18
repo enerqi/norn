@@ -58,6 +58,14 @@
 				</p>
 		  </div>
 	 </div>
+	 <!-- The Table button's match table, moved in here from the carousel by the script. -->
+	 <div class="cca-help" id="nc-match-modal" hidden>
+		  <div class="cca-help-card nc-match-card">
+				<button class="x" id="nc-match-close" title="Close (Esc)">&#10005;</button>
+				<h2>The boards against double dummy</h2>
+				<div id="nc-match-body"></div>
+		  </div>
+	 </div>
 	 <div class="cca-help" id="nc-cca-help-modal" hidden>
 		  <div class="cca-help-card">
 				<button class="x" id="nc-cca-help-close" title="Close">&#10005;</button>
@@ -373,6 +381,13 @@
 		  // Each accepted deal wrote a .compass and (with --dd) one or more following caption siblings
 		  // (a .par par-summary, a .combo trick table, ...). Group each compass with every sibling up to
 		  // the next board into one .slide, so the carousel moves them together.
+		  // A match table (`.match-table`, written after the boards) belongs to the page, not to the last board:
+		  // it goes to its modal before the boards are grouped.
+		  var matchTable = track.querySelector(':scope > .match-table');
+		  if (matchTable) {
+				document.getElementById('nc-match-body').appendChild(matchTable);
+				setHidden(matchTable, false);
+		  }
 		  var comps = Array.prototype.slice.call(track.querySelectorAll(':scope > .compass'));
 		  var slides = comps.map(function (c) {
 				var slide = document.createElement('div');
@@ -1225,6 +1240,37 @@
 				// Escape closes it, as it closes the help.
 				document.addEventListener('keydown', function (e) {
 					 if ((e.key === 'Escape' || e.code === 'Escape') && !isHidden(qrModal)) setHidden(qrModal, true);
+				});
+		  }
+
+		  // The Table button: every board in one table. A row opens its board with the play at the step the row
+		  // names (just after the first card that cost a trick); in the two rooms' table, so does each room's
+		  // contract. What opens the board on show is marked.
+		  var matchBtn = document.getElementById('nc-match');
+		  var matchModal = document.getElementById('nc-match-modal');
+		  if (matchTable && matchBtn && matchModal) {
+				setHidden(matchBtn, false);
+				matchBtn.onclick = function () {
+					 var rows = matchTable.querySelectorAll('[data-board]');
+					 for (var r = 0; r < rows.length; r++) rows[r].classList.toggle('cur', parseInt(rows[r].getAttribute('data-board'), 10) === idx);
+					 setHidden(matchModal, false);
+				};
+				matchTable.onclick = function (e) {
+					 var row = e.target && e.target.closest ? e.target.closest('[data-board]') : null;
+					 if (!row) return;
+					 setHidden(matchModal, true);
+					 var i = parseInt(row.getAttribute('data-board'), 10);
+					 show(i);
+					 var P = playOf(idx);
+					 if (P) {
+						  P.step = Math.max(0, Math.min(P.d.c.length, parseInt(row.getAttribute('data-step') || '0', 10)));
+						  renderPlay(idx);
+					 }
+				};
+				document.getElementById('nc-match-close').onclick = function () { setHidden(matchModal, true); };
+				matchModal.onclick = function (e) { if (e.target === matchModal) setHidden(matchModal, true); };
+				document.addEventListener('keydown', function (e) {
+					 if ((e.key === 'Escape' || e.code === 'Escape') && !isHidden(matchModal)) setHidden(matchModal, true);
 				});
 		  }
 

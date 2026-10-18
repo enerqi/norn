@@ -8,14 +8,21 @@ package combo
 	  * the seats swap in a lookup from the other side;
 	  * DRIFT GUARD: a few entries re-solved now, at the tier each records, must match the baked table - a
 	    solver or narration change without a re-bake (`just bake-suit-lines`) fails here;
+	  * a class decided from its search record is decided as a search decides it;
 	  * THE FLOOR: the worst holding's line, played in other members of its class, takes at least as much;
 	  * the card page's override takes the table's line where its floor beats the holding's fixed line.
 */
 
 import "core:slice"
+import "core:sync"
 import "core:testing"
 
 import "../norn"
+
+// Held by the tests that read the table and the one that turns it off (`set_suit_solver_table` is for the whole
+// process): run in parallel, a lookup in one fell in the other's switched-off moment.
+@(private = "file")
+table_switch: sync.Mutex
 
 @(test)
 test_table_keys :: proc(t: ^testing.T) {
@@ -44,6 +51,8 @@ test_seats_swap :: proc(t: ^testing.T) {
 
 @(test)
 test_the_table_matches_the_solver :: proc(t: ^testing.T) {
+	sync.mutex_lock(&table_switch)
+	defer sync.mutex_unlock(&table_switch)
 	defer free_all(context.temp_allocator)
 	n := len(SUIT_SOLVER_TABLE)
 	if n == 0 {
@@ -111,6 +120,40 @@ The worst holding's line, played in other holdings of its class, takes at least 
 opposite AK653 is the class "N J T + 1 small, S A K + 3 small"; its worst holding gives the defenders the
 6 and 7. Two members with the small cards placed otherwise are played through the card map.
 */
+// A class decided again from its search record (`solver_table_replay`) is decided as a search decides it: the
+// same outcome without searching, or a search from the tier it names reaching the same outcome. The bake's
+// own check is wider - a bake with fixed lines removed, from records and from scratch, wrote the same table.
+@(test)
+test_a_class_decided_from_its_search_record :: proc(t: ^testing.T) {
+	defer free_all(context.temp_allocator)
+	tried, replayed := 0, 0
+	for key in u32(0) ..< 1 << 20 {
+		if tried == 60 {
+			break
+		}
+		if !solver_table_valid(key) || solver_table_mirror(key) < key || key % 37 != 0 {
+			continue
+		}
+		north, south := solver_table_holding(key)
+		if RANKS - card_count(north | south) != 4 {
+			continue
+		}
+		tried += 1
+		rec: Solver_Search_Record
+		_, want, _ := solver_table_solve(key, 0, 0, context.temp_allocator, &rec)
+		got, from, search := solver_table_replay(key, rec, 0, 0)
+		if search {
+			_, got, _ = solver_table_solve(key, from, 0, context.temp_allocator)
+		} else {
+			replayed += 1
+		}
+		testing.expectf(t, got == want, "class %05x: %v from its record, %v searched", key, got, want)
+		free_all(context.temp_allocator)
+	}
+	testing.expect_value(t, tried, 60)
+	testing.expectf(t, replayed > 30, "only %d of %d classes decided from their records", replayed, tried)
+}
+
 @(test)
 test_the_worst_holding_is_a_floor :: proc(t: ^testing.T) {
 	defer free_all(context.temp_allocator)
@@ -173,32 +216,35 @@ holding :: proc(ranks: ..norn.Rank) -> norn.Rank_Set {
 	return h
 }
 
-// A J T 8 7 3 opposite 9 2 in spades: the table's floor (duck, then run the nine through the K Q) beats the
-// best fixed line, so the override is the solver's, its row the floor. The hearts, A K Q opposite 5 4 3, are
+// A K T 6 opposite J 9 7 5 in spades: the table's floor (the king, then finesse the ten) beats the best fixed
+// line, so the override is the solver's, its row the floor. (It was A J T 8 7 3 opposite 9 2 until the finesse
+// lines were repaired on 2026-10-17 and a fixed line took that one.) The hearts, A K Q opposite 5 4 3, are
 // a cash with nothing to override.
 @(test)
 test_the_override_takes_the_solver_line :: proc(t: ^testing.T) {
+	sync.mutex_lock(&table_switch)
+	defer sync.mutex_unlock(&table_switch)
 	defer free_all(context.temp_allocator)
 	north := norn.Hand_Summary {
 		suits = {
-			.Spades = holding(.Ace, .Jack, .Ten, .Eight, .Seven, .Three),
+			.Spades = holding(.Ace, .King, .Ten, .Six),
 			.Hearts = holding(.Ace, .King, .Queen),
 			.Diamonds = holding(.Four, .Three, .Two),
-			.Clubs = holding(.Two),
+			.Clubs = holding(.Four, .Three, .Two),
 		},
 	}
 	south := norn.Hand_Summary {
 		suits = {
-			.Spades = holding(.Nine, .Two),
+			.Spades = holding(.Jack, .Nine, .Seven, .Five),
 			.Hearts = holding(.Five, .Four, .Three),
 			.Diamonds = holding(.Ace, .King, .Five),
-			.Clubs = holding(.Seven, .Six, .Five, .Four, .Three),
+			.Clubs = holding(.Seven, .Six, .Five),
 		},
 	}
 	sd := sd_bundle(north, south)
 	ov := suit_overrides(north, south, &sd)
-	label, _, floor, hit := solver_table_lookup(0x1362, 0x0081)
-	testing.expect(t, hit, "AJT873/92 should be in the table")
+	label, _, floor, hit := solver_table_lookup(0x1910, 0x02a8)
+	testing.expect(t, hit, "AKT6/J975 should be in the table")
 	testing.expect(t, ov[0].ok && ov[0].solver, "the spades should take the solver line")
 	testing.expect_value(t, ov[0].label, label)
 	// The solver line is the spades' blind line now (Phase 7): its floor is the sd row, and the row the page
@@ -208,7 +254,7 @@ test_the_override_takes_the_solver_line :: proc(t: ^testing.T) {
 	for k in 0 ..= RANKS {
 		testing.expect(t, abs(sd.best_marg[0].p[k] - floor.p[k]) < 1e-6)
 	}
-	fixed := best_line_by_mean(0x1362, 0x0081)
+	fixed := best_line_by_mean(0x1910, 0x02a8)
 	testing.expect(t, expected_tricks(floor.p) > expected_tricks(fixed.dist.p))
 	testing.expect(t, !ov[1].ok, "the hearts are a cash: no override")
 

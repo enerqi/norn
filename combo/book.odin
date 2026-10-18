@@ -88,23 +88,40 @@ book_shutdown :: proc() {
 // serialised. Deterministic and identical whether called on a book entry's holding or a live one, so
 // equal-behaviour holdings map together. Allocated in `allocator` (temp for lookups; the persistent heap when
 // interned as a provider's map key).
+//
+// THE SAME KEY EITHER WAY ROUND. The holding with North and South exchanged takes the same tricks, but with the
+// defenders' roles exchanged too: its table is this one read from West's length rather than East's. A line that
+// plays the same whatever the split (cash the A and K) has a table symmetric in East's length and never showed
+// it; a line that reads which defender shows out does (AK982 opposite J43, best since the discovery play,
+// 2026-10-18), and the book's entries are stored one way round. So the key is the smaller of the two readings.
 book_key :: proc(n, s: u16, allocator := context.temp_allocator) -> string {
-	b := strings.builder_make(allocator)
-	strings.write_int(&b, card_count(n | s))
-	strings.write_byte(&b, ':')
 	tbl := sd_best_joint_table(n, s)
-	for a in 0 ..= tbl.m {
-		for k in 0 ..= RANKS {
-			c := tbl.count[a][k]
-			if c > 0.5 {
-				strings.write_int(&b, a)
-				strings.write_byte(&b, '-')
-				strings.write_int(&b, k)
-				strings.write_byte(&b, '=')
-				strings.write_int(&b, int(c + 0.5))
-				strings.write_byte(&b, ',')
+	write :: proc(b: ^strings.Builder, tbl: ^Suit_Joint_Table, ns_len: int, mirrored: bool) {
+		strings.write_int(b, ns_len)
+		strings.write_byte(b, ':')
+		for a in 0 ..= tbl.m {
+			row := tbl.m - a if mirrored else a
+			for k in 0 ..= RANKS {
+				c := tbl.count[row][k]
+				if c > 0.5 {
+					strings.write_int(b, a)
+					strings.write_byte(b, '-')
+					strings.write_int(b, k)
+					strings.write_byte(b, '=')
+					strings.write_int(b, int(c + 0.5))
+					strings.write_byte(b, ',')
+				}
 			}
 		}
+	}
+	ns_len := card_count(n | s)
+	b := strings.builder_make(allocator)
+	write(&b, &tbl, ns_len, false)
+	m := strings.builder_make(context.temp_allocator)
+	write(&m, &tbl, ns_len, true)
+	if strings.to_string(m) < strings.to_string(b) {
+		strings.builder_reset(&b)
+		strings.write_string(&b, strings.to_string(m))
 	}
 	return strings.to_string(b)
 }

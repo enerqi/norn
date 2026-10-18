@@ -1065,29 +1065,17 @@ pick_partnership_sd :: proc(cand: [4][]Line_Joint) -> Partnership_Sd {
 	return ps
 }
 
-// Does a genuine finesse exist in this holding — an HONOUR (Ten or higher) sitting below a missing honour it
-// can trap? A finesse promotes a card past a missing honour; that card must itself be an honour. On solid
-// tops (AKQ...) the only card below the top missing rank is a spot (e.g. the 7), which can never win a
-// finesse — the line is really a cash. Used to keep the recommended-line LABEL and tooltip honest (a
+// Does a genuine finesse exist in this holding — a card of ours sitting just below a missing honour (Ten or
+// higher) it can trap (`finesse_card`)? On solid tops (AKQ7 opposite xxx, the J missing) the card below the
+// missing jack is the 7, under the 8 and 9 still out: no finesse, the line is really a cash. Used to keep the recommended-line LABEL and tooltip honest (a
 // finesse-family line with no real tenace is shown/narrated as a cash), independent of WHY the SD model
 // ranked it first (free-entry timing can inch a "finesse" ahead on a blocked suit like KQ opposite Axxx).
 @(private)
 holding_has_real_finesse :: proc(north, south: u16) -> bool {
-	combined := north | south
-	missing := FULL_SUIT & ~combined
-	top_missing := -1
-	for r := RANKS - 1; r >= 0; r -= 1 {
-		if missing & rank_bit(r) != 0 {top_missing = r; break}
-	}
-	if top_missing < 0 {
-		return false // no missing card at all -> nothing to finesse
-	}
-	fc := -1
-	for r := top_missing - 1; r >= 0; r -= 1 {
-		if combined & rank_bit(r) != 0 {fc = r; break}
-	}
-	// A real finesse card is an honour: Ten or higher. RANK_TEN is the lowest rank worth finessing with.
-	return fc >= RANK_TEN
+	// The lines' own rule (`finesse_card`): one definition of a finesse card, so the label, the tooltip and the
+	// line played cannot disagree about whether there is a finesse.
+	out := FULL_SUIT & ~(north | south)
+	return holds_finesse_card(north, out) || holds_finesse_card(south, out)
 }
 
 // The line name to SHOW and NARRATE for a holding: a finesse-family pick with no real tenace is presented as
@@ -1099,11 +1087,15 @@ holding_has_real_finesse :: proc(north, south: u16) -> bool {
 display_line_name :: proc(north, south: u16, name: string) -> string {
 	if !holding_has_real_finesse(north, south) {
 		switch name {
-		case "finesse", "finesse-other":
+		case "finesse", "finesse-other", "finesse-high":
 			return "top-down"
 		case "duck-then-finesse":
 			return "duck-one"
 		case "cash-then-finesse":
+			return "top-down"
+		case "finesse-then-run":
+			return "run"
+		case "cash-then-discover":
 			return "top-down"
 		}
 	}
@@ -1327,7 +1319,7 @@ sd_bundle :: proc(north, south: norn.Hand_Summary, memo_in: ^map[u64]int = nil) 
 
 // The number of candidate lines per suit (`candidate_lines` returns `[N_CANDIDATE_LINES]Sd_Line`); the SD
 // per-suit task writes this many `Line_Joint`s by value, plus the suit solver's line where it has one.
-N_CANDIDATE_LINES :: 9
+N_CANDIDATE_LINES :: 12
 
 /*
 The SUIT SOLVER's line as a candidate (Phase 7): the baked table's line for the holding's class, as a joint
@@ -1803,25 +1795,24 @@ describe_suit_line :: proc(north, south: u16, line_name: string, allocator := co
 	n_win := card_count(winners)
 
 	// The hand the recommended finesse line leads TOWARD and inserts from — the source of the card actually
-	// run. `line_finesse`/`line_duck_then_finesse` lead toward the strong honour hand; `line_finesse_other`
-	// leads toward the WEAKER hand, so on a two-way holding whose touching honours straddle the hands (AJ
-	// opposite KT, missing the Q) the card run is the LOWER honour from the weak hand (the ten), not the
-	// higher honour describe_finesse would otherwise name off `combined`. Narrating from this hand keeps the
-	// tooltip's card in step with the recommended line.
+	// run: the lines' own target (`finesse_target`, the hand with the tenace: the KJ of KJ85 opposite A4), and
+	// the other hand for `line_finesse_other` (on AJ2 opposite KT3, the ten). Narrating from the hand the line
+	// plays keeps the tooltip's card in step with it; it named South's 4 on KJ85 opposite A4 while the lines
+	// aimed at the hand with the highest card.
 	disp := display_line_name(north, south, line_name)
 	strong := strong_honour_seat(north, south)
-	strong_hold := north if strong == SEAT_N else south
 	weak_hold := south if strong == SEAT_N else north
-	insert_hold := strong_hold
+	target := finesse_target({north, south})
 	if disp == "finesse-other" {
-		insert_hold = weak_hold
+		target = other_seat(target)
 	}
+	insert_hold := north if target == SEAT_N else south
 
 	// Present a finesse with no real tenace as the cash it actually is (see display_line_name), so the tooltip
 	// matches the relabelled cell and never narrates a bogus finesse of a spot card.
 	switch disp {
-	case "finesse", "finesse-other":
-		describe_finesse(&b, combined, winners, insert_hold, top_missing, n_win, ns_len)
+	case "finesse", "finesse-other", "finesse-high":
+		describe_finesse(&b, combined, winners, insert_hold, top_missing, n_win, ns_len, missing, disp == "finesse-high")
 	case "duck-one":
 		strings.write_string(
 			&b,
@@ -1835,14 +1826,29 @@ describe_suit_line :: proc(north, south: u16, line_name: string, allocator := co
 		strings.write_string(&b, ". Ducking keeps a guard and can set up your long cards.")
 	case "duck-then-finesse":
 		strings.write_string(&b, "Duck the first round (play low from both hands), then take the finesse. ")
-		describe_finesse(&b, combined, winners, insert_hold, top_missing, n_win, ns_len)
+		describe_finesse(&b, combined, winners, insert_hold, top_missing, n_win, ns_len, missing)
 		strings.write_string(&b, " Ducking first keeps an entry so the finesse can be repeated.")
+	case "cash-then-discover":
+		_, top := discovery_cash({north, south})
+		strings.write_string(&b, "Cash the ")
+		strings.write_string(&b, RANK_NAMES[top])
+		strings.write_string(&b, " first. If an opponent shows out, the other holds the ")
+		strings.write_string(&b, RANK_NAMES[top_missing])
+		strings.write_string(&b, ": finesse through them, leading toward the hand that plays after them. If both follow, cash your winners.")
+	case "finesse-then-run":
+		describe_finesse(&b, combined, winners, insert_hold, top_missing, n_win, ns_len, missing)
+		run_hold := weak_hold // the hand `line_run` runs
+		if run_hold != 0 && highest_rank(run_hold) >= RANK_TEN {
+			strings.write_string(&b, " Then lead the ")
+			strings.write_string(&b, RANK_NAMES[highest_rank(run_hold)])
+			strings.write_string(&b, " and let it run unless the next player covers it.")
+		}
 	case "cash-then-finesse":
 		top := highest_rank(combined)
 		strings.write_string(&b, "Cash the ")
 		strings.write_string(&b, RANK_NAMES[top])
 		strings.write_string(&b, " first, in case a defender has a singleton honour. Then ")
-		describe_finesse(&b, combined & ~rank_bit(top), winners & ~rank_bit(top), insert_hold & ~rank_bit(top), top_missing, n_win - 1, ns_len)
+		describe_finesse(&b, combined & ~rank_bit(top), winners & ~rank_bit(top), insert_hold & ~rank_bit(top), top_missing, n_win - 1, ns_len, missing)
 	case "toward":
 		short := north if card_count(north) < card_count(south) || (card_count(north) == card_count(south) && highest_rank(north) < highest_rank(south)) else south
 		strings.write_string(&b, "Take your tricks, but lead low TOWARD the high cards in the short hand (")
@@ -1866,27 +1872,40 @@ describe_suit_line :: proc(north, south: u16, line_name: string, allocator := co
 	return strings.to_string(b)
 }
 
-// Narrate the finesse line in terms of the actual cards: lead low toward the INSERTING hand's top cards and
-// run its highest honour below the opponents best card. `insert_hold` is the hand the recommended line leads
-// toward (see describe_suit_line) — narrating the finesse card from THAT hand keeps the tooltip in step with
-// the line, which on a straddled two-way (AJ opposite KT: `finesse-other` runs the ten from the weak hand)
-// differs from the highest honour in `combined`. Falls back to a cash narration when the inserting hand holds
-// no card below the top missing rank (nothing to finesse with there). Shared by the plain and compound
-// finesse cases. NO apostrophes / double quotes (single-quoted HTML attribute).
+// Narrate the finesse line in terms of the actual cards: lead low toward the INSERTING hand's top cards, put in
+// the card the line puts in, and name every defenders' card that must sit in front of it. `insert_hold` is the
+// hand the recommended line leads toward (see describe_suit_line), `out` the defenders' cards at the start,
+// `high` the rule of `line_finesse_high`. Falls back to a cash narration when the inserting hand holds no
+// finesse card. Shared by the plain and compound finesse cases. NO apostrophes / double quotes (single-quoted
+// HTML attribute).
 @(private)
-describe_finesse :: proc(b: ^strings.Builder, combined, winners, insert_hold: u16, top_missing, n_win, ns_len: int) {
-	finesse_card := -1
-	if top_missing >= 0 {
-		for r := top_missing - 1; r >= 0; r -= 1 {
-			if insert_hold & rank_bit(r) != 0 {finesse_card = r; break}
+describe_finesse :: proc(
+	b: ^strings.Builder,
+	combined, winners, insert_hold: u16,
+	top_missing, n_win, ns_len: int,
+	out: u16,
+	high := false,
+) {
+	// The card the line puts in when the second hand plays low - the lines' own rule, so the words cannot name
+	// another card: the cheapest finesse card (`finesse_insert`: the 8 of KT9842 opposite J3, the T of AQT
+	// opposite 432), or for `line_finesse_high` the card against the top honour (`top_finesse_card`). It named
+	// the highest card below the top missing honour, which is neither (the K and the Q there).
+	card := -1
+	if high {
+		card = top_finesse_card(insert_hold, FULL_SUIT & ~out, {FULL_SUIT & ~out, 0}, -1)
+	} else {
+		for r := 0; r < RANKS; r += 1 {
+			if insert_hold & rank_bit(r) != 0 && finesse_card(r, out) {card = r; break}
 		}
 	}
-	if finesse_card < 0 {
+	if card < 0 {
 		describe_cash(b, combined, winners, top_missing, n_win, ns_len)
 		return
 	}
 	tops: u16
-	for r := 12; r > finesse_card; r -= 1 {tops |= insert_hold & rank_bit(r)}
+	for r := 12; r > card; r -= 1 {tops |= insert_hold & rank_bit(r)}
+	above: u16 // the defenders' cards that beat it: all of them must sit before the finesse
+	for r := 12; r > card; r -= 1 {above |= out & rank_bit(r)}
 	strings.write_string(b, "Lead a low card toward your ")
 	if tops != 0 {
 		write_cards_desc(b, tops)
@@ -1894,13 +1913,22 @@ describe_finesse :: proc(b: ^strings.Builder, combined, winners, insert_hold: u1
 		strings.write_string(b, "high cards")
 	}
 	strings.write_string(b, ", then finesse: play the ")
-	strings.write_string(b, RANK_NAMES[finesse_card])
-	strings.write_string(b, ". It wins when the ")
-	strings.write_string(b, RANK_NAMES[top_missing])
-	strings.write_string(
-		b,
-		" sits with the opponent who plays before your high hand (about even money); if not, it loses.",
-	)
+	strings.write_string(b, RANK_NAMES[card])
+	strings.write_string(b, ". It wins the trick when the ")
+	n := card_count(above)
+	k := 0
+	for r := 12; r > card; r -= 1 {
+		if above & rank_bit(r) == 0 {continue}
+		if k > 0 {strings.write_string(b, " and " if k == n - 1 else ", ")}
+		strings.write_string(b, RANK_NAMES[r])
+		k += 1
+	}
+	if n == 1 {
+		strings.write_string(b, " sits with the opponent who plays before your high hand (about even money); if not, it loses.")
+	} else {
+		strings.write_string(b, " both sit" if n == 2 else " all sit")
+		strings.write_string(b, " with the opponent who plays before your high hand.")
+	}
 }
 
 // Emit the per-suit line NARRATIONS as a JSON array of strings (one per suit s,h,d,c), pairing each
@@ -1943,13 +1971,19 @@ write_suits_tips_json :: proc(
 // e.g. `["two-way finesse — guess ...","","",""]`. The card page appends each to that suit's line tooltip.
 // Purely combo geometry (`combination_note`), so it needs no --sample. The phrases carry no quotes or
 // backslashes, but are escaped defensively (they sit in a single-quoted HTML attribute as JSON strings).
-write_suits_notes_json :: proc(b: ^strings.Builder, north, south: norn.Hand_Summary) {
+// `tables` (by suit) and `cand` (in DISPLAY_SUITS order) are the census and line tables the analysis built.
+write_suits_notes_json :: proc(
+	b: ^strings.Builder,
+	north, south: norn.Hand_Summary,
+	tables: ^[norn.Suit]Suit_Joint_Table,
+	cand: [4][]Line_Joint,
+) {
 	strings.write_byte(b, '[')
 	for suit, i in DISPLAY_SUITS {
 		if i > 0 {
 			strings.write_byte(b, ',')
 		}
-		note := combination_note(norn.suit_mask(north, suit), norn.suit_mask(south, suit))
+		note := combination_note_in(norn.suit_mask(north, suit), norn.suit_mask(south, suit), tables[suit], cand[i])
 		strings.write_byte(b, '"')
 		for c in transmute([]u8)note {
 			switch c {
@@ -2220,7 +2254,7 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 		strings.write_string(builder, `' data-ns-book='`)
 		write_suits_book_json(builder, &ns_ov)
 		strings.write_string(builder, `' data-ns-notes='`)
-		write_suits_notes_json(builder, ds[.North], ds[.South])
+		write_suits_notes_json(builder, ds[.North], ds[.South], &ns_tables, ns_cand)
 		strings.write_string(builder, `' data-ns-floor='`)
 		write_suits_floor_json(builder, &ns_sd)
 		strings.write_string(builder, `' data-ns-joint='`)
@@ -2243,7 +2277,7 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 		strings.write_string(builder, `' data-ew-book='`)
 		write_suits_book_json(builder, &ew_ov)
 		strings.write_string(builder, `' data-ew-notes='`)
-		write_suits_notes_json(builder, ds[.East], ds[.West])
+		write_suits_notes_json(builder, ds[.East], ds[.West], &ew_tables, ew_cand)
 		strings.write_string(builder, `' data-ew-floor='`)
 		write_suits_floor_json(builder, &ew_sd)
 		strings.write_string(builder, `' data-ew-joint='`)

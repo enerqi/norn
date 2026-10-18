@@ -38,6 +38,7 @@ package combo
 	each: East's length (4 bits), tricks (4 bits), layouts (7 bits; at most C(9,4) = 126 with nine missing).
 */
 
+import "core:fmt"
 import "core:math"
 import "core:slice"
 import "core:strings"
@@ -77,6 +78,48 @@ Solver_Table_Outcome :: enum u8 {
 	Entry, // a line better than the fixed one
 	No_Gain, // a search finished, and found nothing better than the fixed line
 	Out_Of_Budget, // no tier's search finished
+}
+
+/*
+THE SEARCH RECORD: what a class's searches found, none of it depending on the fixed lines. A full bake is hours,
+and almost all of it is searching - most of that in the classes that run out of every budget, each paying for
+every tier. A change to the fixed lines does not change any search, so a bake that keeps each class's record
+(cmd/bake_suit_lines.odin) decides most classes again from it (`solver_table_replay`) and searches only where a
+line may beat the new fixed ones.
+
+Valid only for the search that wrote it: bump `SOLVER_SEARCH_VERSION` on any change to what a search finds -
+the search, the policy built from it and its valuation, the relabelled search, or the tiers.
+*/
+SOLVER_SEARCH_VERSION :: 1
+
+// The search records' stamp: the version and everything else a search depends on. Records under another stamp
+// are not used.
+solver_search_stamp :: proc(allocator := context.temp_allocator) -> string {
+	return fmt.aprintf(
+		"v%d tiers %v small %d coarse %d",
+		SOLVER_SEARCH_VERSION,
+		SOLVER_TABLE_TIERS,
+		SMALL_SPOTS_BELOW,
+		COARSE_BELOW,
+		allocator = allocator,
+	)
+}
+
+Solver_Tier_Search :: enum u8 {
+	Not_Run, // not reached: an earlier tier decided the class
+	Unknown, // the best fixed line reached the double-dummy census, so nothing was searched
+	Ran_Out, // the search over the holding ran past the budget
+	Searched, // it finished
+}
+
+Solver_Search_Record :: struct {
+	tiers:      [len(SOLVER_TABLE_TIERS)]Solver_Tier_Search,
+	// At the tier that was `.Searched` (`Sd_Certified`'s fields): the search's own value, which no line exceeds;
+	// the mean of the best line the searches valued, -1 if none was; and whether no line was left untried
+	// because of the fixed line.
+	value:      f64,
+	line:       f64,
+	line_exact: bool,
 }
 
 // The highest small spot: the class's cards from here up are kept, those below it are counted.
@@ -155,18 +198,25 @@ The entry for a class, computed: the worst holding's certified line, narrated fo
 tier from `first` to `last` of `SOLVER_TABLE_TIERS` until a search finishes. An entry only when that line
 beats the best fixed line in the class's worst holding. The bake calls this for every class over all the
 tiers; the drift-guard test calls it at the one tier an entry records. `joint` is the entry's line as a
-joint table (`sd_policy_joint`), in the holding its search ran on.
+joint table (`sd_policy_joint`), in the holding its search ran on. `record`, when given, gets what each tier's
+search found (the tiers before `first` are left as they are).
 */
 solver_table_solve :: proc(
 	key: u32,
 	first := 0,
 	last := len(SOLVER_TABLE_TIERS) - 1,
 	allocator := context.allocator,
+	record: ^Solver_Search_Record = nil,
 ) -> (
 	entry: Solver_Table_Entry,
 	outcome: Solver_Table_Outcome,
 	joint: Suit_Joint_Table,
 ) {
+	if record != nil {
+		for &t in record.tiers[first:] {
+			t = .Not_Run
+		}
+	}
 	north, south := solver_table_holding(key)
 	fixed := expected_tricks(best_line_by_mean(north, south).dist.p)
 	tiers := SOLVER_TABLE_TIERS
@@ -181,6 +231,17 @@ solver_table_solve :: proc(
 		}
 		c := sd_certified_line(n, s, t.budget)
 		defer sd_certified_destroy(&c)
+		if record != nil {
+			switch {
+			case c.shortcut:
+				record.tiers[tier] = .Unknown
+			case !c.searched:
+				record.tiers[tier] = .Ran_Out
+			case:
+				record.tiers[tier] = .Searched
+				record.value, record.line, record.line_exact = c.search_value, c.search_line, c.search_line_exact
+			}
+		}
 		if !c.searched {
 			continue
 		}
@@ -205,6 +266,59 @@ solver_table_solve :: proc(
 		return entry, .Entry, tbl
 	}
 	return
+}
+
+/*
+A class decided again from its search record, with the fixed lines as they are now: `solver_table_solve`'s
+outcome, without searching - or, `search` true, the tier to search from, where the record cannot say (a line
+of the search's beats the fixed ones and must be built to be narrated; the record is from an earlier,
+shorter bake; or the search was not run). Each step is the one `solver_table_solve` and `sd_certified_line`
+take with these fixed lines: a tier whose search ran out is passed, the fixed line reaching the census decides
+at once, and a search whose lines all fall at or below the fixed line is `.No_Gain`.
+*/
+solver_table_replay :: proc(
+	key: u32,
+	rec: Solver_Search_Record,
+	first := 0,
+	last := len(SOLVER_TABLE_TIERS) - 1,
+) -> (
+	outcome: Solver_Table_Outcome,
+	from: int,
+	search: bool,
+) {
+	EPS :: 1e-9 // `sd_certified_line`'s and `solver_table_solve`'s
+	north, south := solver_table_holding(key)
+	fixed := expected_tricks(best_line_by_mean(north, south).dist.p)
+	tiers := SOLVER_TABLE_TIERS
+	for tier in first ..= last {
+		n, s, at := north, south, fixed
+		if tiers[tier].coarse {
+			perm := small_spot_perm(north, south, COARSE_BELOW)
+			n, s = perm_mask(north, perm), perm_mask(south, perm)
+			at = expected_tricks(best_line_by_mean(n, s).dist.p)
+		}
+		if at >= expected_tricks(suit_trick_distribution(n, s).p) - EPS {
+			return .No_Gain, tier, false
+		}
+		switch rec.tiers[tier] {
+		case .Ran_Out:
+			continue
+		case .Searched:
+			// No line of the search's can beat the fixed one: none is worth more than the search's value, and the
+			// best of those it valued (when it valued all it would) is not.
+			best := rec.value
+			if rec.line_exact {
+				best = min(best, rec.line)
+			}
+			if best <= at + EPS || best <= fixed + EPS {
+				return .No_Gain, tier, false
+			}
+			return .Entry, tier, true
+		case .Not_Run, .Unknown:
+			return .Out_Of_Budget, tier, true
+		}
+	}
+	return .Out_Of_Budget, last, false
 }
 
 // A joint table as `SUIT_SOLVER_JOINT` cells (see the header), its non-zero counts in order.

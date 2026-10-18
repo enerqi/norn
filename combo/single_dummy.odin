@@ -57,7 +57,15 @@ Sd_View :: struct {
 	win_rank:     int, // highest rank played so far in the current trick (-1 if none)
 	win_ns:       bool, // is an NS seat currently winning the trick?
 	trick_no:     int, // 0-based index of the current trick in this suit (0 = first round)
+	start:        [2]u16, // declarer's holdings before the suit was played, [0] North and [1] South
+	shown:        u8, // the defenders who have shown out (`SHOWN_E`, `SHOWN_W`): failed to follow at some trick
 }
+
+// `Sd_View.shown` and the lead's `shown`: which defenders have shown out of the suit. Public, and all a line
+// may know of who played what: a line that reads it can play a discovery (cash a top card, then finesse
+// whichever defender can still hold the honour).
+SHOWN_E :: u8(1)
+SHOWN_W :: u8(2)
 
 // A deterministic declarer strategy for ONE suit. `lead` picks which hand leads and the card; it is
 // consulted at the start of every trick (free entries — declarer is always on lead), and receives the
@@ -68,7 +76,7 @@ Sd_View :: struct {
 // evaluator falls back to that hand's lowest card if a line returns an illegal rank.
 Sd_Line :: struct {
 	name:    string,
-	lead:    proc(north, south, played: u16, trick_no: int) -> (seat: int, rank: int),
+	lead:    proc(north, south, played: u16, trick_no: int, start: [2]u16, shown: u8) -> (seat: int, rank: int),
 	partner: proc(v: Sd_View) -> int,
 }
 
@@ -86,20 +94,23 @@ highest_rank :: proc "contextless" (m: u16) -> int {
 
 // --- the fixed-line game driver ---------------------------------------------------------------
 
-// The memo key for a declarer-on-lead position: the whole four-hand layout plus the trick index. At a
-// lead point the fixed line is a pure function of PUBLIC state, and the public state is exactly (the four
-// holdings, this trick number) — so the eventual NS tricks depend on nothing else, and two E/W splits
-// that reach the SAME full layout at the SAME trick take the same value. The layout uses 13 rank bits per
-// hand (4×13 = 52) and trick_no ≤ 12 fits the next 4 bits, so the key packs losslessly into one u64
-// (faster to hash than a padded struct, and no uninitialised padding bytes to destabilise the hash).
+// The memo key for a declarer-on-lead position: the whole four-hand layout, the trick index and which
+// defenders have shown out. At a lead point the fixed line is a pure function of PUBLIC state - the holdings,
+// the trick number and the show-outs (`shown`) - so the eventual NS tricks depend on nothing else, and two E/W
+// splits that reach the SAME position take the same value. The show-outs are in the key because two splits can
+// reach the same holdings with different ones (a defender who followed with a last card and one who never had
+// a card), and a line that reads them plays on differently. The layout uses 13 rank bits per hand (4×13 = 52),
+// trick_no ≤ 12 fits the next 4 bits and the two show-out bits the next 2, so the key packs losslessly into one
+// u64 (faster to hash than a padded struct, and no uninitialised padding bytes to destabilise the hash).
 @(private)
-sd_key :: #force_inline proc "contextless" (hands: Suit_Layout, trick_no: int) -> u64 {
+sd_key :: #force_inline proc "contextless" (hands: Suit_Layout, trick_no: int, shown: u8) -> u64 {
 	return(
 		u64(hands[SEAT_N]) |
 		(u64(hands[SEAT_S]) << 13) |
 		(u64(hands[SEAT_E]) << 26) |
 		(u64(hands[SEAT_W]) << 39) |
-		(u64(u32(trick_no)) << 52) \
+		(u64(u32(trick_no)) << 52) |
+		(u64(shown) << 56) \
 	)
 }
 
@@ -119,18 +130,18 @@ sd_deal_tricks :: proc(line: Sd_Line, north, south, east, west: u16, memo: ^map[
 	hands[SEAT_E] = east
 	hands[SEAT_W] = west
 	if memo != nil {
-		return sd_from_lead(line, hands, 0, memo)
+		return sd_from_lead(line, hands, 0, {north, south}, 0, memo)
 	}
 	m := make(map[u64]int)
 	defer delete(m)
-	return sd_from_lead(line, hands, 0, &m)
+	return sd_from_lead(line, hands, 0, {north, south}, 0, &m)
 }
 
 // Position with declarer on lead: cash out the trivial cases, else consult the line for the lead and
 // play the trick. `trick_no` is the 0-based round index, threaded to the line so phased policies can
 // switch behaviour by round.
 @(private)
-sd_from_lead :: proc(line: Sd_Line, hands: Suit_Layout, trick_no: int, memo: ^map[u64]int) -> int {
+sd_from_lead :: proc(line: Sd_Line, hands: Suit_Layout, trick_no: int, start: [2]u16, shown: u8, memo: ^map[u64]int) -> int {
 	nn := card_count(hands[SEAT_N])
 	sn := card_count(hands[SEAT_S])
 	if nn + sn == 0 {
@@ -146,13 +157,13 @@ sd_from_lead :: proc(line: Sd_Line, hands: Suit_Layout, trick_no: int, memo: ^ma
 	// Terminals returned above (cheap, uncached, like Phase 1). Everything below is a genuine lead
 	// position keyed by (layout, trick_no) — memoise it so the converged positions shared across the
 	// E/W splits are solved once.
-	key := sd_key(hands, trick_no)
+	key := sd_key(hands, trick_no, shown)
 	if v, ok := memo[key]; ok {
 		return v
 	}
 
 	played := FULL_SUIT & ~(hands[SEAT_N] | hands[SEAT_S] | hands[SEAT_E] | hands[SEAT_W])
-	seat, rank := line.lead(hands[SEAT_N], hands[SEAT_S], played, trick_no)
+	seat, rank := line.lead(hands[SEAT_N], hands[SEAT_S], played, trick_no, start, shown)
 	// Guard against a malformed line: the lead hand must be NS and actually hold the card.
 	if !is_ns(seat) || hands[seat] & rank_bit(rank) == 0 {
 		seat = SEAT_N if hands[SEAT_N] != 0 else SEAT_S
@@ -162,7 +173,7 @@ sd_from_lead :: proc(line: Sd_Line, hands: Suit_Layout, trick_no: int, memo: ^ma
 	next := hands
 	next[seat] &= ~rank_bit(rank)
 	order := [4]int{seat, (seat + 1) % 4, (seat + 2) % 4, (seat + 3) % 4}
-	result := sd_trick(line, next, order, 1, seat, rank, rank, trick_no, memo)
+	result := sd_trick(line, next, order, 1, seat, rank, rank, trick_no, start, shown, memo)
 	memo[key] = result
 	return result
 }
@@ -178,18 +189,27 @@ sd_trick :: proc(
 	hands: Suit_Layout,
 	order: [4]int,
 	idx, win_seat, win_rank, last_rank, trick_no: int,
+	start: [2]u16,
+	shown: u8,
 	memo: ^map[u64]int,
 ) -> int {
 	if idx == 4 {
 		pt := 1 if is_ns(win_seat) else 0
-		return pt + sd_from_lead(line, hands, trick_no + 1, memo)
+		return pt + sd_from_lead(line, hands, trick_no + 1, start, shown, memo)
 	}
 
 	seat := order[idx]
 	hold := hands[seat]
 	if hold == 0 {
-		// Void follows nothing; `last_rank` carries the previous actually-played card unchanged.
-		return sd_trick(line, hands, order, idx + 1, win_seat, win_rank, last_rank, trick_no, memo)
+		// Void follows nothing; `last_rank` carries the previous actually-played card unchanged. A defender
+		// void here has shown out, which declarer sees.
+		now := shown
+		if seat == SEAT_E {
+			now |= SHOWN_E
+		} else if seat == SEAT_W {
+			now |= SHOWN_W
+		}
+		return sd_trick(line, hands, order, idx + 1, win_seat, win_rank, last_rank, trick_no, start, now, memo)
 	}
 
 	if is_ns(seat) {
@@ -206,6 +226,8 @@ sd_trick :: proc(
 			win_rank = win_rank,
 			win_ns   = is_ns(win_seat),
 			trick_no = trick_no,
+			start    = start,
+			shown    = shown,
 		}
 		r := line.partner(v)
 		if hold & rank_bit(r) == 0 {
@@ -217,7 +239,7 @@ sd_trick :: proc(
 		if r > win_rank {
 			ws, wr = seat, r
 		}
-		return sd_trick(line, next, order, idx + 1, ws, wr, r, trick_no, memo)
+		return sd_trick(line, next, order, idx + 1, ws, wr, r, trick_no, start, shown, memo)
 	}
 
 	// Defender seat: minimise NS tricks over every legal card.
@@ -233,7 +255,7 @@ sd_trick :: proc(
 		if r > win_rank {
 			ws, wr = seat, r
 		}
-		v := sd_trick(line, next, order, idx + 1, ws, wr, r, trick_no, memo)
+		v := sd_trick(line, next, order, idx + 1, ws, wr, r, trick_no, start, shown, memo)
 		if v < best {
 			best = v
 		}
@@ -404,7 +426,9 @@ sd_census_gap :: proc(north, south: u16, line: Sd_Line) -> (sd_mean, census_mean
 // knock out an ace: T 4 opposite Q J 7 made 0.41 tricks for the line chosen instead of 1 (2026-10-15).
 line_top_down :: Sd_Line {
 	name    = "top-down",
-	lead    = cash_lead,
+	lead    = proc(north, south, played: u16, trick_no: int, _: [2]u16, _: u8) -> (seat: int, rank: int) {
+		return cash_lead(north, south, played, trick_no)
+	},
 	partner = cash_partner,
 }
 

@@ -113,9 +113,21 @@ test_suit_line_summaries :: proc(t: ^testing.T) {
 // `combination_note` names the standard patterns from card geometry (aids plan B2).
 @(test)
 test_combination_note :: proc(t: ^testing.T) {
-	// AJ opposite KT: a genuine two-way finesse for the queen (a card above Q in both hands).
-	two_way := combination_note(mask(.Ace, .Jack), mask(.King, .Ten))
-	testing.expectf(t, strings.contains(two_way, "two-way"), "AJ/KT note = %q, want two-way", two_way)
+	// AJ2 opposite KT3: a genuine two-way finesse for the queen (a card above it and one to finesse with, in
+	// both hands).
+	two_way := combination_note(mask(.Ace, .Jack, .Two), mask(.King, .Ten, .Three))
+	testing.expectf(t, strings.contains(two_way, "two-way"), "AJ2/KT3 note = %q, want two-way", two_way)
+	// AJ opposite KT, doubletons: two tricks however it is played. No finesse to name.
+	doubletons := combination_note(mask(.Ace, .Jack), mask(.King, .Ten))
+	testing.expectf(t, doubletons == "", "AJ/KT note = %q, want none", doubletons)
+	// QJ86 opposite AK972: the geometry of a two-way for the ten, but a 4-0 split shows on the first round.
+	free := combination_note(mask(.Queen, .Jack, .Eight, .Six), mask(.Ace, .King, .Nine, .Seven, .Two))
+	testing.expectf(t, free == "", "QJ86/AK972 note = %q, want none", free)
+
+	// KJ85 opposite A4: a card above the queen in each hand, but only North can finesse (the jack is the one
+	// card below it) - one finesse, low to the jack. Not two-way, and not 8-ever at six cards either.
+	kj := combination_note(mask(.King, .Jack, .Eight, .Five), mask(.Ace, .Four))
+	testing.expectf(t, kj == "finesse — needs the Q onside", "KJ85/A4 note = %q, want a one-way finesse", kj)
 
 	// AQ opposite xx: a ONE-way finesse (the king must be onside), not two-way.
 	one_way := combination_note(mask(.Ace, .Queen), mask(.Three, .Two))
@@ -141,8 +153,8 @@ test_combination_note :: proc(t: ^testing.T) {
 @(test)
 test_suit_combo_advice :: proc(t: ^testing.T) {
 	n, s: norn.Hand_Summary
-	n.suits[.Spades] = holding(.Ace, .Jack) // two-way finesse suit
-	s.suits[.Spades] = holding(.King, .Ten)
+	n.suits[.Spades] = holding(.Ace, .Jack, .Two) // two-way finesse suit (as doubletons, AJ/KT is two tricks however played)
+	s.suits[.Spades] = holding(.King, .Ten, .Three)
 
 	advice := suit_combo_advice(n, s)
 	defer for ad in advice {

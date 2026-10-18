@@ -108,7 +108,7 @@ test_sd_finesse_line_recovers_census :: proc(t: ^testing.T) {
 
 	finesse := Sd_Line {
 		name = "finesse-queen",
-		lead = proc(north, south, played: u16, trick_no: int) -> (seat: int, rank: int) {
+		lead = proc(north, south, played: u16, trick_no: int, _: [2]u16, _: u8) -> (seat: int, rank: int) {
 			// Lead low from the hand that does NOT hold the queen (toward the tenace).
 			if south != 0 && south & (u16(1) << QUEEN) == 0 {
 				return SEAT_S, lowest_rank(south)

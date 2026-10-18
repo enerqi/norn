@@ -176,12 +176,13 @@ parse_pbn_deal :: proc(text: string) -> (board: Board, err: Pbn_Parse_Error) {
 	// The contract, when the record carried both `[Contract]` and `[Declarer]` (a full PBN record, or the
 	// hand-ocr replay metadata). Both are required: the declarer fixes the declaring side. Absent or a
 	// passed-out `[Contract "Pass"]` leaves `contract` nil.
-	if lvl, strain, cok := pbn_contract(text); cok {
+	if lvl, strain, doubling, cok := pbn_contract(text); cok {
 		if declarer, dok := pbn_declarer(text); dok {
 			board.contract = Contract {
 				level    = lvl,
 				strain   = strain,
 				declarer = declarer,
+				doubling = doubling,
 			}
 		}
 	}
@@ -363,27 +364,28 @@ pbn_play :: proc(text: string, deal: Deal, contract: Contract) -> Maybe(Play) {
 	return play
 }
 
-// The contract from a `[Contract "..."]` tag: level 1..7 plus denomination (`4H`, `3NT`, `4SX` — a
-// trailing `X`/`XX` doubling marker is ignored, as the downstream contract model carries no doubling).
-// ok=false when the tag is absent, is `Pass`/empty, or otherwise malformed.
+// The contract from a `[Contract "..."]` tag: level 1..7, denomination and doubling (`4H`, `3NT`, `4SX`,
+// `6NTXX`). ok=false when the tag is absent, is `Pass`/empty, or otherwise malformed.
 @(private = "file")
-pbn_contract :: proc(text: string) -> (level: int, strain: Contract_Strain, ok: bool) {
+pbn_contract :: proc(text: string) -> (level: int, strain: Contract_Strain, doubling: Doubling, ok: bool) {
 	val, found := pbn_tag_value(text, "Contract")
 	if !found || len(val) < 2 {
-		return 0, .NoTrumps, false
+		return 0, .NoTrumps, .None, false
 	}
 	if val[0] < '1' || val[0] > '7' {
-		return 0, .NoTrumps, false
+		return 0, .NoTrumps, .None, false
 	}
 	denom := val[1:]
+	xs := 0
 	for len(denom) > 0 && (denom[len(denom) - 1] == 'X' || denom[len(denom) - 1] == 'x') {
 		denom = denom[:len(denom) - 1]
+		xs += 1
 	}
 	s, sok := contract_strain_from_token(denom)
-	if !sok {
-		return 0, .NoTrumps, false
+	if !sok || xs > 2 {
+		return 0, .NoTrumps, .None, false
 	}
-	return int(val[0] - '0'), s, true
+	return int(val[0] - '0'), s, Doubling(xs), true
 }
 
 // The declarer seat from a `[Declarer "N"]` tag (N/E/S/W). ok=false when the tag is absent or its value
