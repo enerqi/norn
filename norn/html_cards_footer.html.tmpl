@@ -2384,6 +2384,9 @@
 				s += '<span class="recon">' + (ceil != null ? 'naive ceiling ' + ceil.toFixed(1) + ' (DD census) · ' : '') +
 					  (blind != null ? 'naive blind ' + blind.toFixed(1) + ' (SD census) · ' : '') +
 					  (exact ? 'double-dummy ' + etr(g).toFixed(1) + ' (exact)' : 'simulated ' + etr(g).toFixed(1) + ' (DDS whole-hand)') + '</span>';
+				// A sampling still going: these are the deals so far, and they sharpen as more arrive.
+				var sp = sampleProgress[idx];
+				if (sp && !exact) s += ' <span class="lead-note">· still sampling: ' + sp.done + ' of up to ' + sp.cap + ' deals so far</span>';
 				ccaSimBand.innerHTML = s;
 				setHidden(ccaSimBand, false);
 		  }
@@ -2525,7 +2528,8 @@
 		  // A 2-hand board's sampling, worked out after the page (`ncRequestSample`): its `.par` again, now carrying the
 		  // grid, the opening-lead sub-grids and the guess notes the advisor's page bakes into it. It replaces the one
 		  // the page has; a .combo already there reads it now, one arriving later reads it as its own page's do.
-		  window.ncAddSample = function (i, html) {
+		  // `provisional`: the deals so far, while the sampling goes on (the band says so until the last one).
+		  window.ncAddSample = function (i, html, provisional) {
 				var slide = slides[i];
 				if (!slide) return;
 				var holder = document.createElement('div');
@@ -2533,7 +2537,7 @@
 				var el = holder.querySelector('.par'), old = slide.querySelector('.par');
 				if (!el || !old) return;
 				old.parentNode.replaceChild(el, old);
-				delete sampleProgress[i];
+				if (!provisional) delete sampleProgress[i];
 				var combo = slide.querySelector('.combo');
 				if (!combo) return;
 				combo._sim = parseAttr(el, 'data-sim');
