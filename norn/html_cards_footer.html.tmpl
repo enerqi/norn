@@ -541,7 +541,9 @@
 		  // A board whose record carried the play (a LIN `pc|` run, a PBN `[Play]` section) has a hidden
 		  // `.play` element: the cards in order, who played each, each trick's winner, the deal, and — when the
 		  // analyser solved it — the declaring side's double-dummy total before every card, what each card
-		  // cost and the cards that would have kept the trick (deal_solve/play_cost.odin writes it). The bar
+		  // cost and the cards that would have kept the trick (deal_solve/play_cost.odin writes it). A solved play
+		  // the record stops short of (a claim) goes on to the last card double dummy: `d.rec` is where the record
+		  // ends, and the cards after it are drawn as the play-out, not as play. The bar
 		  // under the board steps through it: the hands shrink, the trick in progress sits in the middle of
 		  // the table, and a card that cost a trick is ringed and named. Keys: CTRL+SHIFT+arrow or `,` `.` step a
 		  // card, CTRL+arrow or `[` `]` a trick (the bare arrows and a/n/e/s/w are already the
@@ -574,17 +576,21 @@
 				return SUIT_SYM[su] ? con.charAt(0) + '<span class="ssym ' + su.toLowerCase() + '">' + SUIT_SYM[su] + '</span>' : con;
 		  }
 		  function sameSide(a, b) { return ('NS'.indexOf(a) < 0) === ('NS'.indexOf(b) < 0); }
+		  // How many of a play's cards the record has: the rest are the double-dummy play-out.
+		  function playRec(d) { return d.rec !== undefined ? d.rec : d.c.length; }
 		  function initPlay(s, i) {
 				var el = s.querySelector('.play');
 				var d = el ? parseAttr(el, 'data-play') : null;
 				if (!d || !d.c || !d.c.length) return;
 				var bar = document.createElement('div');
 				bar.className = 'playbar';
-				var tricks = '';
+				var tricks = '', rec = playRec(d);
 				for (var t = 0; t * 4 < d.c.length; t++) {
 					 var bad = false;
 					 for (var k = t * 4; k < Math.min(d.c.length, t * 4 + 4); k++) if (d.cost && d.cost[k] > 0) bad = true;
-					 tricks += '<button data-p="t' + (t + 1) + '"' + (bad ? ' class="costly" title="A card in this trick cost a trick"' : '') + '>' + (t + 1) + '</button>';
+					 var out = t * 4 + 3 >= rec;
+					 tricks += '<button data-p="t' + (t + 1) + '"' + (bad ? ' class="costly" title="A card in this trick cost a trick"' :
+						  out ? ' class="dd" title="Played out double dummy: the record stops before this trick ends"' : '') + '>' + (t + 1) + '</button>';
 				}
 				var anyBad = d.cost && d.cost.some(function (x) { return x > 0; });
 				bar.innerHTML =
@@ -594,7 +600,7 @@
 					 '<span class="pinfo"></span>' +
 					 '<button data-p="next" title="Forward a card (Ctrl+Shift+Right or . )">&#9654;</button>' +
 					 '<button data-p="tnext" title="Forward a trick (Ctrl+Right or ] )">|&#9654;</button>' +
-					 '<button data-p="end" title="To the end of the record">&#9654;&#9654;</button>' +
+					 '<button data-p="end" title="To the end of the record (again: to the end of the play-out)">&#9654;&#9654;</button>' +
 					 (anyBad ? '<button data-p="mistake" class="costly" title="To the next card that cost a trick">!</button>' : '') +
 					 '</div><div class="ptricks">' + tricks + '</div>' +
 					 (!d.dd && typeof window.ncRequestPlay === 'function' ? '<div class="pcalc"><button data-p="calc" ' +
@@ -619,7 +625,7 @@
 				else if (cmd === 'tnext') st = Math.floor(st / 4) * 4 + 4;
 				else if (cmd === 'tprev') st = Math.ceil(st / 4) * 4 - 4;
 				else if (cmd === 'start') st = 0;
-				else if (cmd === 'end') st = n;
+				else if (cmd === 'end') st = st < playRec(P.d) ? playRec(P.d) : n;
 				else if (cmd === 'mistake') {
 					 var j = st;
 					 while (j < n && !(P.d.cost[j] > 0)) j++;
@@ -632,7 +638,7 @@
 		  function renderPlay(i) {
 				var P = playOf(i);
 				if (!P) return;
-				var s = slides[i], d = P.d, st = P.step, n = d.c.length;
+				var s = slides[i], d = P.d, st = P.step, n = d.c.length, rec = playRec(d);
 				var gone = {};
 				for (var k = 0; k < st; k++) gone[d.c[k]] = true;
 				var toPlay = st < n ? d.by.charAt(st) : '';
@@ -665,6 +671,7 @@
 								var cls = 'pc';
 								if (last - first === 4 && d.win.charAt(t) === d.by.charAt(c)) cls += ' won';
 								if (d.cost && d.cost[c] > 0) cls += ' costly';
+								if (c >= rec) cls += ' dd';
 								cell[d.by.charAt(c)] = '<span class="' + cls + '">' + cardHTML(d.c[c]) + '</span>';
 						  }
 					 }
@@ -681,7 +688,7 @@
 				var decSide = 'NS'.indexOf(d.dec) >= 0 ? 'N/S' : 'E/W', defSide = decSide === 'N/S' ? 'E/W' : 'N/S';
 				var info = (tableOf(i) ? boardLabel(i) + ' &middot; ' : '') + conHTML(d.con) + ' ' + d.dec + ' &middot; ' + (t < 0 ? 'opening lead' : 'trick ' + (t + 1) + ' card ' + ((st - 1) % 4 + 1)) +
 					 ' &middot; ' + decSide + ' ' + dec + ' &ndash; ' + defSide + ' ' + (done - dec);
-				if (d.dd) info += ' &middot; <span title="Double dummy: the declaring side\'s total tricks with best play from here">DD ' + d.dd[st] + '</span>';
+				if (d.dd) info += ' &middot; <span title="Double dummy: the declaring side\'s total tricks with best play from here">DD ' + d.dd[Math.min(st, rec)] + '</span>';
 				P.bar.querySelector('.pinfo').innerHTML = info;
 				var note = '';
 				if (st > 0 && d.cost && d.cost[st - 1] > 0) {
@@ -689,15 +696,18 @@
 					 note = '<b class="bad">' + d.by.charAt(st - 1) + ' ' + cardHTML(d.c[st - 1]) + ' cost ' + lost +
 						  (lost === 1 ? ' trick' : ' tricks') + '</b> &middot; best: ' + best;
 				}
-				if (st === n) {
+				if (st === rec) {
 					 var end = [];
 					 if (d.err) end.push('the record stops at a bad card (' + d.err.replace(/_/g, ' ').toLowerCase() + ')');
 					 if (d.res !== undefined) {
-						  var claim = (n < 52 ? 'claim: ' : 'result: ') + d.res + ' trick' + (d.res === 1 ? '' : 's');
-						  if (d.dd && n < 52 && d.res !== d.dd[n]) claim += ' (double dummy ' + d.dd[n] + ')';
+						  var claim = (rec < 52 ? 'claim: ' : 'result: ') + d.res + ' trick' + (d.res === 1 ? '' : 's');
+						  if (d.dd && rec < 52 && d.res !== d.dd[rec]) claim += ' (double dummy ' + d.dd[rec] + ')';
 						  end.push(claim);
 					 }
+					 if (n > rec) end.push('&#9654; plays the rest out double dummy');
 					 if (end.length) note = (note ? note + ' &middot; ' : '') + end.join(' &middot; ');
+				} else if (st > rec) {
+					 note = '<i>Played out double dummy</i> after the record' + (st === n ? ': ' + decSide + ' ' + dec + ' &ndash; ' + defSide + ' ' + (done - dec) : '');
 				}
 				P.bar.querySelector('.pnote').innerHTML = note;
 				var bs = P.bar.querySelectorAll('.ptricks button');
