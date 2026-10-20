@@ -876,6 +876,11 @@ QR_JS_MARKER :: "/*{{QR_JS}}*/"
 // before any is written.
 share_player := ""
 
+// A LOOK for the card pages: CSS - rules for the page's own selectors (`.suit.c`, `.compass`, `.seat`, ...) -
+// written as one more `<style>` after the page's own, so it wins at equal specificity. Empty (the default) writes
+// the page exactly as before. Set like `share_player`, by the program writing the pages, before any is written.
+page_look_css := ""
+
 // `text` with the characters that would end or break an HTML attribute value replaced.
 @(private = "file")
 attribute_safe :: proc(text: string) -> string {
@@ -903,7 +908,13 @@ render_page_prologue :: proc(builder: ^strings.Builder, format: Output_Format, p
 	page, _ := strings.replace_all(header, "{{TITLE}}", title, context.temp_allocator)
 	page, _ = strings.replace_all(page, "{{SHARE_PLAYER}}", attribute_safe(share_player), context.temp_allocator)
 	stripped := strip_style_comments(page, context.temp_allocator)
-	strings.write_string(builder, split_oversized_style(stripped, context.temp_allocator))
+	styled := split_oversized_style(stripped, context.temp_allocator)
+	if look := strings.trim_space(page_look_css); look != "" && format == .Html_Cards {
+		if head := strings.index(styled, "</head>"); head >= 0 {
+			styled = strings.concatenate({styled[:head], "<style>", look, "</style>", styled[head:]}, context.temp_allocator)
+		}
+	}
+	strings.write_string(builder, styled)
 }
 
 // AN INLINE `<style>` IS CAPPED AT 32 KiB in Sciter, and past that the engine silently drops THE WHOLE BLOCK.

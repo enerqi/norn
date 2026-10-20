@@ -439,6 +439,12 @@
 		@media sciter {
 			/* The platform UI face, named the way this engine names it. */
 			body { font-family: system; }
+			/* The page's ground and its controls' ink, said outright. A browser leaves an unstyled page white
+			   with black buttons; this engine takes the SYSTEM's colours, so with Windows in dark mode the page
+			   came up black (the title, `--ink` on it, unreadable) and the buttons light text on their own light
+			   grounds. The selected/costly button rules are more specific and keep their colours. */
+			html { background: #fff; }
+			.toolbar button, .playbar button, .cca-panel button, .cca-panel select, .match-table button { color: var(--ink); }
 
 			/* Unitless line-heights, respelled in em. */
 			.stats { line-height: 1.5em; }
@@ -756,20 +762,20 @@
 		</div>
 		<div class="group">
 			<span class="lbl-txt">seats</span>
-			<button data-seat="" class="sel">All</button>
-			<button data-seat="n">N</button>
-			<button data-seat="e">E</button>
-			<button data-seat="s">S</button>
-			<button data-seat="w">W</button>
+			<button data-seat="" class="sel" title="Show all four hands on every board (key a)">All</button>
+			<button data-seat="n" title="Show only North's hand, the others face down - for working out the bidding or the play from that seat (key n)">N</button>
+			<button data-seat="e" title="Show only East's hand, the others face down (key e)">E</button>
+			<button data-seat="s" title="Show only South's hand, the others face down (key s)">S</button>
+			<button data-seat="w" title="Show only West's hand, the others face down (key w)">W</button>
 		</div>
 		<div class="group" title="Card size: the hands and the trick being played (keys m, l, x)">
 			<span class="lbl-txt">cards</span>
-			<button data-cards="" class="sel">M</button>
-			<button data-cards="l">L</button>
-			<button data-cards="xl">XL</button>
+			<button data-cards="" class="sel" title="Medium cards (key m)">M</button>
+			<button data-cards="l" title="Large cards (key l)">L</button>
+			<button data-cards="xl" title="Extra-large cards (key x)">XL</button>
 		</div>
 		<button id="nc-reset" title="Reset every board to the current seat default">Reset</button>
-		<button id="nc-par-toggle">Par</button>
+		<button id="nc-par-toggle" title="Show or hide the double-dummy par result and the per-suit lines under each board">Par</button>
 		<button id="nc-cca-toggle" title="Card Combination Analyser: open the full trick-chance table for the current board">CCA</button>
 		<!-- Every board on the page as ONE link, for the whole set rather than the board BBO link sends. -->
 		<button id="nc-share" title="Copy a link that opens all these deals, as this page, in any browser - nothing is uploaded">Share</button>
