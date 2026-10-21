@@ -23,6 +23,11 @@ import "../norn"
 // Carry out the full generation requested by `opts`, choosing scenarios from `registry`. Returns
 // ok = false with a message on a bad scenario name or an output error.
 run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) {
+	// For this run only: a process that runs more than once (the workbench, a test) must not carry one run's
+	// dealer into the next.
+	previous_dealer := norn.table_dealer
+	norn.table_dealer = opts.dealer
+	defer norn.table_dealer = previous_dealer
 	// A scenario name must resolve before we burn any RNG, so validate it up front.
 	scenario: Scenario
 	if opts.scenario != "" {

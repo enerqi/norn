@@ -35,6 +35,18 @@ test_parse_fixed_table :: proc(t: ^testing.T) {
 	testing.expect_value(t, opts.randomize_table, false)
 }
 
+// --dealer fixes the seat and leaves the table random; anything but one seat letter is refused.
+@(test)
+test_parse_dealer :: proc(t: ^testing.T) {
+	opts, ok, _ := parse_args({"--dealer", "N"})
+	testing.expect(t, ok, "--dealer N should parse")
+	testing.expect_value(t, opts.dealer.? or_else .South, norn.Seat.North)
+	testing.expect_value(t, opts.randomize_table, true)
+
+	_, bad, _ := parse_args({"--dealer", "north"})
+	testing.expect(t, !bad, "--dealer takes a letter, not a word")
+}
+
 // Count accepts long, short, and `=` forms.
 @(test)
 test_parse_count_forms :: proc(t: ^testing.T) {
@@ -146,6 +158,32 @@ test_parse_predeal_flag :: proc(t: ^testing.T) {
 
 	_, no_prefix, _ := parse_args({"--predeal", "AS,KS"})
 	testing.expect(t, !no_prefix, "a group with no SEAT: prefix should fail")
+}
+
+// A renamed scenario answers its former name too, but a CURRENT name always wins: an old name must not
+// shadow a scenario that is called that now, wherever the two sit in the registry.
+@(test)
+test_lookup_answers_a_former_name :: proc(t: ^testing.T) {
+	registry := []Scenario {
+		{name = "1n", formerly = "1n-opener", predicate = norn.accept_all},
+		{name = "x", formerly = "y", predicate = norn.accept_all},
+		{name = "y", predicate = norn.accept_all},
+	}
+
+	renamed, ok := lookup(registry, "1n-opener")
+	testing.expect(t, ok, "a former name should still be found")
+	testing.expect_value(t, renamed.name, "1n")
+
+	current, current_ok := lookup(registry, "y")
+	testing.expect(t, current_ok, "a current name should be found")
+	testing.expect_value(t, current.name, "y")
+
+	_, missing := lookup(registry, "nope")
+	testing.expect(t, !missing, "an unknown name should not be found")
+
+	testing.expect_value(t, scenario_label(registry[0]), "1n")
+	labelled := Scenario{name = "1hs_slam-try", label = "1♥/♠ – ? : slam try"}
+	testing.expect_value(t, scenario_label(labelled), "1♥/♠ – ? : slam try")
 }
 
 // select_scenarios: empty selector returns the whole registry; a named subset returns just those

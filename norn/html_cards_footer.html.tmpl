@@ -1345,6 +1345,9 @@
 		  // the N/S to E/W toggle just switches which one renders. ccaSide is the global choice.
 		  var ccaSide = 'ns';
 		  var ccaMode = 'exact'; // full-deal verdict mode: 'exact' (double-dummy) or 'blind' (sampled advisor)
+		  // A board sampled blind OPENS in blind (the sampling is why it was run: asked for, "surely on second
+		  // analyze of 200 it should say 200 sample"), until the reader picks a mode, which then sticks.
+		  var ccaModeTouched = false;
 		  var ccaObj = 'imps'; // scoring objective: 'imps' (make the target) or 'mps' (chase overtricks)
 		  var ccaStrain = 'nt'; // contract strain for the green whole-hand verdict (2-hand advisor only)
 		  var ccaLead = null;   // {seat, card} opening-lead condition, or null for the unconditioned verdict
@@ -1574,6 +1577,12 @@
 		  // the black rows is the double-dummy tax.
 		  // Friendly labels for the recommended blind line per suit.
 		  function lineLabel(n) { return n === 'top-down' ? 'cash' : n === 'duck-one' ? 'duck' : n === 'toward' ? 'lead toward' : n === 'cash-then-finesse' ? 'cash, finesse' : n === 'duck-unless-covered' ? 'duck unless covered' : (n || ''); }
+		  // At most `n` characters, cut at a word boundary with an ellipsis.
+		  function shortLabel(s, n) {
+				if (s.length <= n) return s;
+				var cut = s.lastIndexOf(' ', n - 1);
+				return s.slice(0, cut > n / 2 ? cut : n - 1).replace(/[ ,]+$/, '') + '…';
+		  }
 		  function escAttr(s) { return (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;'); }
 		  function ctTableHTML(S) {
 				var data = S.data, total = S.total, totalSd = S.totalSd, atl = S.atl, sd = S.sd, lines = S.lines, tips = S.tips, notes = S.notes, book = S.book;
@@ -1602,7 +1611,12 @@
 						  tip = tip ? (tip + '  ·  ' + clause) : clause;
 					 }
 					 // Flag a named combination on the line cell so the reader knows a tooltip is worth reading.
-					 var lnTxt = lines ? lineLabel(lines[i]) : '';
+					 // One line, SHORTENED in the text when long (the solver's lines run to ~50 characters and wrapped the
+					 // column into a tall block in a narrow panel); the whole label is the span's tooltip. Cut here rather
+					 // than by `text-overflow`: in a table cell the desktop engine sized the column without the cap and drew
+					 // the label over the E column (measured in `page-check`).
+					 var lnLabel = lines ? lineLabel(lines[i]) : '';
+					 var lnTxt = lnLabel ? '<span class="lnt" title="' + escAttr(lnLabel) + '">' + shortLabel(lnLabel, 22) + '</span>' : '';
 					 if (note) lnTxt += ' <span class="cflag" title="named combination — hover for the note">ⓘ</span>';
 					 h += '<td class="ln"' + (tip ? ' data-tip="' + escAttr(tip) + '"' : '') + '>' + lnTxt + '</td></tr>';
 					 // Blue single-dummy sub-row: the recommended blind line's spread for THIS suit (the E
@@ -1829,11 +1843,52 @@
 				var modeEl = document.getElementById('nc-cca-mode');
 				if (modeEl) setHidden(modeEl, !hasBlind);
 				if (!hasBlind) ccaMode = 'exact';
+				else if (!ccaModeTouched) ccaMode = 'blind';
+				syncBlindFade();
 				var exBtn = document.getElementById('nc-cca-exact'), blBtn = document.getElementById('nc-cca-blind');
 				if (exBtn) exBtn.classList.toggle('sel', ccaMode === 'exact');
 				if (blBtn) blBtn.classList.toggle('sel', ccaMode === 'blind');
 		  }
+		  // IN BLIND, THE HANDS DECLARER CANNOT SEE ARE FADED on the board, with a word saying so: the deal stays on
+		  // screen (it was given whole), but the verdict being read is for a declarer who sees only two hands.
+		  // Inline styles and a note element on the active board's defenders, only while the panel is open and reading
+		  // blind, and only touched when it changes. APPLIED ON A TIMER, NOT IN THE CALLER: changing the seats inside
+		  // the Exact button's own re-render crashed Sciter a frame later (access violation in `page-check`, whether
+		  // the change was a class, an inline style or the note - measured 2026-10-20); a zero timeout does not.
+		  var blindFadeT = null;
+		  function syncBlindFade() {
+				clearTimeout(blindFadeT);
+				blindFadeT = setTimeout(applyBlindFade, 0);
+		  }
+		  function applyBlindFade() {
+				var want = '', el = activeCombo();
+				if (ccaOpen && ccaMode === 'blind' && el && el._blind) want = ccaSide;
+				for (var i = 0; i < slides.length; i++) {
+					 var c = slides[i].querySelector('.compass');
+					 if (!c) continue;
+					 var to = i === idx ? want : '';
+					 if ((c.getAttribute('data-blind') || '') === to) continue; // only a real change touches the page
+					 if (to) c.setAttribute('data-blind', to); else c.removeAttribute('data-blind');
+					 var hidden = to === 'ns' ? ['e', 'w'] : to === 'ew' ? ['n', 's'] : [];
+					 ['n', 'e', 's', 'w'].forEach(function (k) {
+						  var seat = c.querySelector('.seat-' + k);
+						  if (!seat) return;
+						  var fade = hidden.indexOf(k) >= 0;
+						  seat.querySelectorAll('.suit').forEach(function (r) { r.style.opacity = fade ? '0.3' : ''; });
+						  var note = seat.querySelector('.blind-note');
+						  if (fade && !note) {
+								note = document.createElement('div');
+								note.className = 'blind-note';
+								note.textContent = 'unseen by declarer';
+								seat.appendChild(note);
+						  } else if (!fade && note) {
+								note.remove();
+						  }
+					 });
+				}
+		  }
 		  function renderCca(pos) {
+				syncBlindFade();
 				if (!ccaOpen) return;
 				syncSideToggle();
 				syncModeToggle();
@@ -2206,6 +2261,7 @@
 		  var exactBtn = document.getElementById('nc-cca-exact'), blindBtn = document.getElementById('nc-cca-blind');
 		  function setMode(m) {
 				ccaMode = m;
+				ccaModeTouched = true;
 				if (exactBtn) exactBtn.classList.toggle('sel', m === 'exact');
 				if (blindBtn) blindBtn.classList.toggle('sel', m === 'blind');
 				renderCca(true);

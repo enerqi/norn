@@ -120,13 +120,15 @@ main_program :: proc(registry: []Scenario, hooks := Gen_Hooks{}, argv: []string 
 validate_gen_hooks :: proc(registry: []Scenario, hooks: Gen_Hooks) -> (ok: bool, message: string) {
 	unknown: [dynamic]string
 	defer delete(unknown)
+	// A hook is found by the scenario's CURRENT name, so a former name (which `lookup` also answers) is
+	// as dead a key as a typo.
 	for name in hooks.dd_filters {
-		if _, found := lookup(registry, name); !found {
+		if s, found := lookup(registry, name); !found || s.name != name {
 			append(&unknown, fmt.tprintf("dd_filter %q", name))
 		}
 	}
 	for name in hooks.dd_annotators {
-		if _, found := lookup(registry, name); !found {
+		if s, found := lookup(registry, name); !found || s.name != name {
 			append(&unknown, fmt.tprintf("dd_annotator %q", name))
 		}
 	}
@@ -170,6 +172,7 @@ Options:
                               emitted); all scenarios, or the --scenario subset. The rate counts a
                               scenario's double-dummy filter too, matching what generation keeps
       --fixed-table           handviewer/html formats: fix vulnerability & dealer (default: randomise)
+      --dealer N|E|S|W        handviewer/html formats: that seat deals every deal; vulnerability stays random
       --par                   html formats: caption every deal with its double-dummy par and what
                               each side makes (needs a solver the program supplies). Slower: those
                               scenarios run serially (the solver isn't reentrant)
@@ -183,15 +186,15 @@ Examples:
   norn -n 12 --predeal "N:AS,KS,QS"        # North always holds the top 3 spades
   norn -n 12 --smartstack "N 20-21 balanced" # North: balanced 20-21 hcp, built directly
   norn -n 12 --smartstack "S 10-13 6+,x,x,x" # South: 6+ spades, 10-13 hcp
-  norn --scenario 1c-any -n 12 -f pretty   # 12 deals where North opens 1C
-  norn -S 2c-opener -f handviewer          # BBO handviewer query strings
-  norn -S 2c-opener -n 24 -f html-handviewer -o x.html # one scenario as a BBO-iframe page
-  norn -S 2c-opener -n 24 -f html-cards -o x.html      # ... as an offline card carousel
+  norn --scenario 1c -n 12 -f pretty       # 12 deals where North opens 1C
+  norn -S 2c -f handviewer                 # BBO handviewer query strings
+  norn -S 2c -n 24 -f html-handviewer -o x.html # one scenario as a BBO-iframe page
+  norn -S 2c -n 24 -f html-cards -o x.html      # ... as an offline card carousel
   norn --html-dir ./deals -n 48            # every scenario -> ./deals/<name>.html (BBO iframes)
   norn --html-dir ./deals -f html-cards -n 48 # ... as offline card carousels
-  norn --html-dir ./deals -S 1c-any,2c-opener # just those two -> ./deals/<name>.html
+  norn --html-dir ./deals -S 1c,2c          # just those two -> ./deals/<name>.html
   norn --frequency 1000000                 # acceptance rate of every scenario over 1M deals
-  norn --frequency 1000000 -S 2c-opener    # just one scenario's rate over 1M deals
+  norn --frequency 1000000 -S 2c           # just one scenario's rate over 1M deals
   norn --list                              # show all scenarios
 `
 	os.write_string(handle, usage)

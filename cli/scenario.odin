@@ -27,11 +27,19 @@ gone, and with it the state where a compiled predicate silently overrides an int
 
 Nothing here replaces anything: `predicate = proc(b: norn.Deal_Summary) -> bool { ... }` still compiles
 untouched, because Odin converts a proc literal into the matching union variant implicitly.
+
+THE NAME IS AN ID, THE LABEL IS WHAT A PERSON READS. `name` becomes a file name (`<name>.html`) and a
+command-line argument, so it is ASCII and shell-safe; `label` is the auction in standard notation with suit
+glyphs (`1♥/♠ – ? : slam try`), for lists and headings. Empty means "show the name". `formerly` is the name
+the scenario had before a rename: `lookup` still answers it, so a recipe, a script or a remembered selection
+written against the old name keeps working.
 */
 Scenario :: struct {
 	name:        string,
+	label:       string,
 	description: string,
 	predicate:   norn.Condition,
+	formerly:    string,
 }
 
 // Was this scenario's condition parsed rather than compiled? What tells a user file's entries apart from
@@ -47,10 +55,22 @@ scenario_title :: proc(s: Scenario) -> string {
 	return s.description if s.description != "" else s.name
 }
 
-// Find a scenario by exact name in `registry`. Returns ok = false if none matches.
+// What a list or heading shows for a scenario: its label, else its name.
+scenario_label :: proc(s: Scenario) -> string {
+	return s.label if s.label != "" else s.name
+}
+
+// Find a scenario by exact name in `registry`, else by the name it had before a rename (`formerly`).
+// Current names are searched first, across the WHOLE registry, so an old name can never shadow a scenario
+// that is called that now. Returns ok = false if neither matches.
 lookup :: proc(registry: []Scenario, name: string) -> (scenario: Scenario, ok: bool) {
 	for s in registry {
 		if s.name == name {
+			return s, true
+		}
+	}
+	for s in registry {
+		if s.formerly != "" && s.formerly == name {
 			return s, true
 		}
 	}

@@ -107,6 +107,9 @@ Options :: struct {
 	// For the handviewer/html formats: randomise each deal's vulnerability and dealer (the default,
 	// for practice variety). `--fixed-table` clears this for deterministic output.
 	randomize_table: bool,
+	// Who deals every randomised table (`--dealer N`), the vulnerability still random; nil = a random dealer.
+	// Installed as `norn.table_dealer` when the run starts.
+	dealer:          Maybe(norn.Seat),
 	// Cards fixed to seats before dealing (set by --predeal); nil means a fully random deal. Applies
 	// to every generation path (plain, html export, frequency).
 	predeal:         Maybe(norn.Predeal),
@@ -193,6 +196,20 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool, message: string)
 
 		case "--fixed-table":
 			opts.randomize_table = false
+
+		case "--dealer":
+			value, got, why := take_value(has_inline, inline_value, args, &i, flag)
+			if !got {
+				return opts, false, why
+			}
+			seat, seat_ok := norn.Seat{}, false
+			if len(value) == 1 {
+				seat, seat_ok = norn.seat_from_letter(value[0])
+			}
+			if !seat_ok {
+				return opts, false, fmt.tprintf("--dealer takes one seat letter, N, E, S or W, not %q", value)
+			}
+			opts.dealer = seat
 
 		case "--par":
 			opts.par = true

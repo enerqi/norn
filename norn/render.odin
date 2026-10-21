@@ -299,8 +299,19 @@ DEALER_DRAW_ORDER := [SEAT_COUNT]Seat{.North, .South, .East, .West}
 random_table :: proc() -> (v: Vulnerability, dealer: Seat) {
 	v = Vulnerability(rand.int_max(len(Vulnerability)))
 	dealer = DEALER_DRAW_ORDER[rand.int_max(SEAT_COUNT)]
+	// The dealer is still DRAWN when it is fixed, so a seeded run deals the same deals and vulnerabilities
+	// either way - only who deals them changes.
+	if fixed, ok := table_dealer.?; ok {
+		dealer = fixed
+	}
 	return
 }
+
+// Who deals every randomised table, or nil for a random dealer (the default). The vulnerability stays random:
+// what practice wants fixed is the SEAT - a scenario saying "North opens" means North dealt, or the page shows
+// the dealer's left-hand opponent passing hands the scenario never checked. Set like `share_player`, by the
+// program writing the pages, before any is written (`--dealer` in `cli`).
+table_dealer: Maybe(Seat)
 
 // Handviewer vulnerability codes (none / NS / EW / both); the dealer code is the seat's own letter.
 @(private = "file")
