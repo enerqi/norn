@@ -118,7 +118,8 @@ Pbn_Parse_Error :: enum {
 // Parse a PBN `[Deal]` tag into a `Board`. `text` may be a whole line containing the tag
 // (`[Deal "N:..."]`, with any surrounding text ignored) or the bare deal value (`N:...`). On failure
 // the returned board is zero and `err` says why. The parse is strict: exactly four hand fields, each
-// either `-` (unknown) or a full 13-card `S.H.D.C` hand, all cards across the board distinct.
+// either `-` (unknown) or a full 13-card `S.H.D.C` hand, all cards across the board distinct. A single
+// `-` beside three given hands is filled in with the remaining cards: the deal is fully known.
 parse_pbn_deal :: proc(text: string) -> (board: Board, err: Pbn_Parse_Error) {
 	value := pbn_deal_value(text)
 	if value == "" {
@@ -168,6 +169,17 @@ parse_pbn_deal :: proc(text: string) -> (board: Board, err: Pbn_Parse_Error) {
 	}
 	if board.known == {} {
 		return {}, .No_Hands
+	}
+	// Three hands given and one `-`: that hand is not unknown, it is the 13 cards no other hand holds (as
+	// LIN's omitted fourth hand is). A screenshot read with one hand missed arrives like this.
+	if card(board.known) == SEAT_COUNT - 1 {
+		for seat in Seat {
+			if seat not_in board.known {
+				hand, _ := lin_remaining_hand(&seen) // 39 distinct cards placed: exactly 13 remain
+				board.deal[seat] = hand
+				board.known += {seat}
+			}
+		}
 	}
 	first_card, has_first_card := pbn_first_play_card(text)
 	if has_first_card {

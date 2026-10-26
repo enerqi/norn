@@ -102,6 +102,20 @@ test_parse_pbn_two_hand :: proc(t: ^testing.T) {
 	testing.expect_value(t, suit_mask(board.deal[.South], .Spades), u16(0))
 }
 
+// Three hands and one `-` (a screenshot read with North missed): North is the 13 cards nobody else holds,
+// so the board is fully known.
+@(test)
+test_parse_pbn_three_hands_fill_the_fourth :: proc(t: ^testing.T) {
+	board, err := parse_pbn_deal(`[Deal "N:- A97632.T3.JT42.8 K.KQ97542.Q75.K6 JT854.J6.K9.T975"]`)
+	testing.expect_value(t, err, Pbn_Parse_Error.None)
+	testing.expect_value(t, board.known, bit_set[Seat]{.North, .East, .South, .West})
+	full, ferr := parse_pbn_deal(`[Deal "N:Q.A8.A863.AQJ432 A97632.T3.JT42.8 K.KQ97542.Q75.K6 JT854.J6.K9.T975"]`)
+	testing.expect_value(t, ferr, Pbn_Parse_Error.None)
+	for suit in Suit {
+		testing.expect_value(t, suit_mask(board.deal[.North], suit), suit_mask(full.deal[.North], suit))
+	}
+}
+
 // A void suit (three trailing dots) round-trips: N holds all spades, three void suits.
 @(test)
 test_parse_pbn_void_suits :: proc(t: ^testing.T) {

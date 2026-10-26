@@ -145,8 +145,8 @@
 		.seat.is-dealer .lbl { box-shadow: 0 0 0 3px #fff, 0 0 0 6px var(--sel); }
 		/* Face-down defender on a 2-hand (declarer + dummy) board: pill + a big "?" placeholder. */
 		.seat.facedown { opacity: 0.9; }
-		/* The note on a hand declarer cannot see, while the CCA panel reads BLIND (`syncBlindFade`). */
-		.seat .blind-note { font-size: 0.6em; font-style: italic; color: #888; }
+		/* The note on a hand redealt at random, while the CCA panel reads Random layouts (`syncRedealtFade`). */
+		.seat .redealt-note { font-size: 0.6em; font-style: italic; color: #888; }
 		.seat.facedown .unknown-hand {
 			font-size: 2.4em; color: #9fb0c0; text-align: center; padding: 0.5em 0.7em 0.2em; line-height: 1;
 		}
@@ -180,7 +180,10 @@
 			font-family: 'Consolas', 'Courier New', monospace;
 		}
 		:where(html) .combo { margin-top: clamp(0.3rem, 0.8vh, 0.7rem); font-size: clamp(0.55rem, 1.35vh, 0.9rem); }
-		.combo .cmini { font-weight: 700; color: var(--sel); letter-spacing: 0.05em; margin-right: 0.45rem; }
+		/* A button (it opens the CCA panel), drawn as the link it is. */
+		.combo .cmini { font: inherit; background: none; border: none; padding: 0; cursor: pointer;
+			font-weight: 700; color: var(--sel); letter-spacing: 0.05em; margin-right: 0.45rem; }
+		.combo .cmini:hover { text-decoration: underline; }
 		/* Play-through bar under a board whose record carried the play (see renderPlay in the footer). */
 		.playbar { text-align: center; color: #555; }
 		:where(html) .playbar { margin-top: clamp(0.3rem, 0.8vh, 0.7rem); font-size: clamp(0.8rem, 1.5vh, 1.05rem); }
@@ -229,7 +232,6 @@
 		/* Suits-collapsed (user toggle): hide the per-suit rows (♠♥♦♣ + their blind sub-rows), leaving the
 		   tot / ≥k / sd totals — saves vertical height when the viewport is short. */
 		.cca-panel.suits-collapsed .ct tbody tr[class*="suit-"] { display: none; }
-		#nc-cca-narrow.sel, #nc-cca-rows.sel { color: var(--sel); }
 		.cca-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem; margin-bottom: 0.45rem; }
 		.cca-head b { color: var(--ink); }
 		.cca-sub { color: #888; font-size: 0.85rem; }
@@ -242,7 +244,8 @@
 		.cca-side { margin-left: auto; }
 		.cca-side, .cca-obj, .cca-strain, .cca-mode { display: flex; align-items: center; gap: 0.15rem; }
 		.cca-mode[hidden] { display: none; }
-		.cca-side .sidebtn.sel, .cca-obj .sidebtn.sel, .cca-strain .sidebtn.sel, .cca-mode .sidebtn.sel { background: var(--sel); color: #fff; border-color: var(--sel); }
+		/* A head toggle that is ON (width narrowed, suits collapsed) is filled like the picked side or objective. */
+		.cca-head .x.sel, .cca-side .sidebtn.sel, .cca-obj .sidebtn.sel, .cca-strain .sidebtn.sel, .cca-mode .sidebtn.sel { background: var(--sel); color: #fff; border-color: var(--sel); }
 		.cca-side .sidesep, .cca-obj .sidesep, .cca-mode .sidesep { color: #bbb; }
 		/* Contract-strain picker (only shown on a board carrying baked DDS-sample data). The red suits get
 		   their colour so the strain reads at a glance. */
@@ -729,6 +732,19 @@
 			   than `max-content`, because the header's summary text changes with the trick target and the panel
 			   would resize on every step of the slider. */
 			#nc-cca-body { overflow-x: scroll-indicator; }
+			/* NARROWED, `width: *` BOUNDS the body to the panel: left `auto` it grew to its table, which widened
+			   everything in the panel with it, so the panel clipped its head and band instead of wrapping them
+			   and scrolling the table. And the table keeps its own width inside it: squeezed to the body, its
+			   `line` column wrapped a word a line and every row stood three or four lines tall. Both measured
+			   in page-check's narrowed snapshot; both only when narrowed, as at full width they wrapped the E
+			   and line columns that fit before. */
+			.cca-panel.narrow #nc-cca-body { width: *; }
+			.cca-panel.narrow #nc-cca-body .ct { width: max-content; }
+			/* That width leaves out the wrapping E and line cells (measured, scrolled to the right: "1.0 / 1.0" on
+			   two lines, each label on two), so they are given room outright: a label is at most 22 characters
+			   (`shortLabel`) plus its note mark, and "10.0 / 10.0" is 11. */
+			.cca-panel.narrow .ct .ln { min-width: 24ch; }
+			.cca-panel.narrow .ct .etr { min-width: 11ch; }
 
 			/* The seat's position pill: `display: inline-block` is reported but behaves as a block, so the
 			   pill spanned the whole hand (measured 189px inside a 209px card) instead of hugging its

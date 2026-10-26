@@ -274,7 +274,8 @@ parse_lin_hand :: proc(field: string, seen: ^[DECK_SIZE]bool) -> (hand: Hand, er
 }
 
 // Build the hand of every card not yet in `seen` (the omitted fourth hand). It must total exactly 13.
-@(private = "file")
+// The PBN reader uses it too, for a `-` beside three given hands.
+@(private)
 lin_remaining_hand :: proc(seen: ^[DECK_SIZE]bool) -> (hand: Hand, err: Lin_Parse_Error) {
 	count := 0
 	for card in full_deck() {

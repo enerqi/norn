@@ -7,8 +7,8 @@
 				<span class="cca-side" title="Which partnership's tricks to analyse">
 					 <button class="sidebtn sel" id="nc-cca-ns">N/S</button><span class="sidesep">|</span><button class="sidebtn" id="nc-cca-ew">E/W</button>
 				</span>
-				<span class="cca-mode" id="nc-cca-mode" hidden title="Exact = double-dummy on the known deal; Blind = play it as if you can't see the other two hands (sampled)">
-					 <button class="sidebtn sel" id="nc-cca-exact">Exact</button><span class="sidesep modesep">|</span><button class="sidebtn" id="nc-cca-blind">Blind</button>
+				<span class="cca-mode" id="nc-cca-mode" hidden title="This deal: double-dummy on the cards as dealt. Random layouts: the other two hands redealt at random many times, each solved double-dummy - how often this side makes when the rest of the deal is unknown.">
+					 <button class="sidebtn sel" id="nc-cca-deal">This deal</button><span class="sidesep modesep">|</span><button class="sidebtn" id="nc-cca-layouts">Random layouts</button>
 				</span>
 				<span class="cca-obj" title="Scoring: IMPs = make the contract; MPs = chase overtricks while better than even">
 					 <button class="sidebtn sel" id="nc-cca-imps">IMPs</button><span class="sidesep">|</span><button class="sidebtn" id="nc-cca-mps">MPs</button>
@@ -21,7 +21,7 @@
 				</span>
 				<button class="x" id="nc-cca-opp-btn" hidden title="Enter a known opponent length to re-weight the odds (vacant space / a-posteriori)">length &#9656;</button>
 				<button class="x" id="nc-cca-rows" title="Collapse the per-suit rows (show only the totals) to save height">suits &#9662;</button>
-				<button class="x" id="nc-cca-narrow" title="Narrow the panel (keeps the hands visible on small screens; the trick table scrolls sideways)">&#8596;</button>
+				<button class="x" id="nc-cca-narrow" title="Narrow the panel (keeps the hands visible on small screens; the trick table scrolls sideways)">narrow</button>
 				<button class="help" id="nc-cca-help" title="What is this?">?</button>
 				<button class="x" id="nc-cca-close" title="Close">&#10005;</button>
 		  </div>
@@ -142,7 +142,7 @@
 				<p><b>MPs</b> (pairs / matchpoints): you're ranked against everyone else in your contract, so
 					<i>overtricks win boards</i>. The tool then chases the extra trick while it stays better than
 					even &mdash; it aims for the <b>highest</b> number of tricks whose chance is still at least
-					50%. The headline shows that "aim" (and still tells you the plain make chance).</p>
+					50%. The headline shows that "aim" (and still tells you the plain chance of making).</p>
 				<h3>Winner count &amp; combinations</h3>
 				<p>Under the board number the panel shows your <b>sure tricks</b> &mdash; the tricks guaranteed on
 					<i>every</i> layout &mdash; and, when that falls short of the slider target, how many more you must
@@ -167,8 +167,8 @@
 					moving to another board clears them automatically (they belong to one holding).</p>
 				<h3>Panel layout</h3>
 				<p>Two buttons at the top right resize the panel when it crowds the cards on a small screen:
-					<b>&#8596;</b> <i>narrow</i> caps the width so it stops covering the hands (the trick table then
-					scrolls sideways inside), and <b>&#9662;/&#9656;</b> <i>collapse</i> folds the per-suit rows away,
+					<b>narrow</b> narrows the panel so it stops covering the hands, and the trick table scrolls sideways
+					inside (<b>widen</b> puts it back); <b>suits &#9662;</b> folds the per-suit rows away,
 					leaving just the totals. Both are remembered between boards.</p>
 				<h3>The small print</h3>
 				<p>It treats the four suits independently and assumes you can always get to the right hand ("free
@@ -1344,8 +1344,11 @@
 		  // adaptive P(>=t) make curve, for BOTH partnerships (data-ns.., data-ew..). We keep both sides so
 		  // the N/S to E/W toggle just switches which one renders. ccaSide is the global choice.
 		  var ccaSide = 'ns';
-		  var ccaMode = 'exact'; // full-deal verdict mode: 'exact' (double-dummy) or 'blind' (sampled advisor)
-		  // A board sampled blind OPENS in blind (the sampling is why it was run: asked for, "surely on second
+		  // Full-deal verdict mode: 'deal' (double-dummy on the cards as dealt) or 'layouts' (the other two hands
+		  // redealt at random, each layout solved double-dummy). NOT "blind": every layout is still played seeing all
+		  // 52 cards, and "blind" on this page means single-dummy (the blind suit line, "achievable playing blind").
+		  var ccaMode = 'deal';
+		  // A board with random layouts baked OPENS on them (the sampling is why it was run: asked for, "surely on second
 		  // analyze of 200 it should say 200 sample"), until the reader picks a mode, which then sticks.
 		  var ccaModeTouched = false;
 		  var ccaObj = 'imps'; // scoring objective: 'imps' (make the target) or 'mps' (chase overtricks)
@@ -1416,9 +1419,9 @@
 				// that pair duplicated + mislabelled, so the toggle locks here) or 'all' (full deal — both real).
 				var metaEl = slide ? slide.querySelector('.cca-meta') : null;
 				el._known = metaEl ? (metaEl.getAttribute('data-known') || 'all') : 'all';
-				// Full-deal BLIND advisor grids per side ({ns:{n,lvl,strain,g,ach,..}, ew:{..}}) baked when a
-				// known deal is sampled — lets the panel toggle exact double-dummy ↔ "play it blind".
-				el._blind = simEl ? parseAttr(simEl, 'data-sim-blind') : null;
+				// Full-deal RANDOM-LAYOUTS grids per side ({ns:{n,lvl,strain,g,ach,..}, ew:{..}}) baked when a
+				// known deal is sampled — lets the panel toggle this deal's double-dummy ↔ random layouts.
+				el._layouts = simEl ? parseAttr(simEl, 'data-sim-layouts') : null;
 		  }
 		  function sideData(el) { return el._sides ? el._sides[ccaSide] : null; }
 
@@ -1546,13 +1549,13 @@
 				return parts.length ? parts.join(', ') : 'no minimums';
 		  }
 		  // The opening-lead sub-grids in force for the active board, side, and mode. A 2-hand board carries
-		  // them flat on el._leads. A full deal carries them per side inside the BLIND advisor (el._blind[side]
-		  // .leads) — so the lead picker appears ONLY in Blind mode (exact mode returns null -> picker hidden),
+		  // them flat on el._leads. A full deal carries them per side inside its random layouts (el._layouts[side]
+		  // .leads) — so the lead picker appears ONLY on random layouts (this deal returns null -> picker hidden),
 		  // and follows the N/S<->E/W toggle to that side's real defenders.
 		  function activeLeads(el) {
 				if (!el) return null;
-				if (el._blind && ccaMode === 'blind') {
-					 var bs = el._blind[ccaSide] || el._blind.ns || el._blind.ew;
+				if (el._layouts && ccaMode === 'layouts') {
+					 var bs = el._layouts[ccaSide] || el._layouts.ns || el._layouts.ew;
 					 return (bs && bs.leads) ? bs.leads : null;
 				}
 				return el._leads || null;
@@ -1562,7 +1565,8 @@
 		  function comboLine(el) {
 				var S = sideData(el); if (!S || !S.total) return;
 				var t = el._target, dd = (tail(S.total, t) * 100).toFixed(0), r = recommend(S, t);
-				var s = '<span class="cmini">CCA ' + ccaSide.toUpperCase() + ' ' + ccaObj.toUpperCase() + '</span> ';
+				// The badge is a link to the CCA panel (toggles it, as the toolbar button does).
+				var s = '<button class="cmini" title="Open the card combination analyser">CCA ' + ccaSide.toUpperCase() + ' ' + ccaObj.toUpperCase() + '</button> ';
 				if (ccaObj === 'mps' && r.aim > t) {
 					 s += 'aim ' + r.aim + ': SD ' + (r.aimPct * 100).toFixed(0) + '% &middot; make ' + t + ': SD ' + (r.makePct * 100).toFixed(0) + '%';
 				} else {
@@ -1570,6 +1574,8 @@
 				}
 				s += ' &middot; E[tot] = ' + etr(S.total).toFixed(1) + (S.totalSd ? ' / ' + etr(S.totalSd).toFixed(1) : '');
 				el.innerHTML = s;
+				var badge = el.querySelector('.cmini');
+				if (badge) badge.onclick = function () { setCca(!ccaOpen); };
 		  }
 		  // The full per-suit table for the active board & side. Per-suit rows + the "tot"/"≥k" pair are
 		  // the double-dummy CENSUS (ceiling). The "sd" row is a realistic single-dummy line's shape; the
@@ -1835,51 +1841,51 @@
 				var sep = document.querySelector('.cca-side .sidesep'); if (sep) sep.style.display = lock ? 'none' : '';
 				if (ccaSide !== prev) combos.forEach(comboLine); // refresh inline badges to the locked side
 		  }
-		  // Show the Exact↔Blind mode toggle only when the active board has a blind advisor baked (a full deal
-		  // rendered with --sample); on boards without it, force exact so the band never reads a missing grid.
+		  // Show the This deal↔Random layouts toggle only when the active board has random layouts baked (a full
+		  // deal rendered with --sample); on boards without them, force 'deal' so the band never reads a missing grid.
 		  function syncModeToggle() {
 				var el = activeCombo();
-				var hasBlind = !!(el && el._blind);
+				var hasLayouts = !!(el && el._layouts);
 				var modeEl = document.getElementById('nc-cca-mode');
-				if (modeEl) setHidden(modeEl, !hasBlind);
-				if (!hasBlind) ccaMode = 'exact';
-				else if (!ccaModeTouched) ccaMode = 'blind';
-				syncBlindFade();
-				var exBtn = document.getElementById('nc-cca-exact'), blBtn = document.getElementById('nc-cca-blind');
-				if (exBtn) exBtn.classList.toggle('sel', ccaMode === 'exact');
-				if (blBtn) blBtn.classList.toggle('sel', ccaMode === 'blind');
+				if (modeEl) setHidden(modeEl, !hasLayouts);
+				if (!hasLayouts) ccaMode = 'deal';
+				else if (!ccaModeTouched) ccaMode = 'layouts';
+				syncRedealtFade();
+				var dealBtn = document.getElementById('nc-cca-deal'), layBtn = document.getElementById('nc-cca-layouts');
+				if (dealBtn) dealBtn.classList.toggle('sel', ccaMode === 'deal');
+				if (layBtn) layBtn.classList.toggle('sel', ccaMode === 'layouts');
 		  }
-		  // IN BLIND, THE HANDS DECLARER CANNOT SEE ARE FADED on the board, with a word saying so: the deal stays on
-		  // screen (it was given whole), but the verdict being read is for a declarer who sees only two hands.
+		  // ON RANDOM LAYOUTS, THE TWO REDEALT HANDS ARE FADED on the board, with a word saying so: the deal stays on
+		  // screen (it was given whole), but the verdict being read is over random layouts of those two hands.
 		  // Inline styles and a note element on the active board's defenders, only while the panel is open and reading
-		  // blind, and only touched when it changes. APPLIED ON A TIMER, NOT IN THE CALLER: changing the seats inside
-		  // the Exact button's own re-render crashed Sciter a frame later (access violation in `page-check`, whether
+		  // random layouts, and only touched when it changes. APPLIED ON A TIMER, NOT IN THE CALLER: changing the seats
+		  // inside the This deal button's own re-render crashed Sciter a frame later (access violation in `page-check`, whether
 		  // the change was a class, an inline style or the note - measured 2026-10-20); a zero timeout does not.
-		  var blindFadeT = null;
-		  function syncBlindFade() {
-				clearTimeout(blindFadeT);
-				blindFadeT = setTimeout(applyBlindFade, 0);
+		  var redealtFadeT = null;
+		  function syncRedealtFade() {
+				clearTimeout(redealtFadeT);
+				redealtFadeT = setTimeout(applyRedealtFade, 0);
 		  }
-		  function applyBlindFade() {
+		  function applyRedealtFade() {
 				var want = '', el = activeCombo();
-				if (ccaOpen && ccaMode === 'blind' && el && el._blind) want = ccaSide;
+				if (ccaOpen && ccaMode === 'layouts' && el && el._layouts) want = ccaSide;
 				for (var i = 0; i < slides.length; i++) {
 					 var c = slides[i].querySelector('.compass');
 					 if (!c) continue;
 					 var to = i === idx ? want : '';
-					 if ((c.getAttribute('data-blind') || '') === to) continue; // only a real change touches the page
-					 if (to) c.setAttribute('data-blind', to); else c.removeAttribute('data-blind');
+					 if ((c.getAttribute('data-redealt') || '') === to) continue; // only a real change touches the page
+					 if (to) c.setAttribute('data-redealt', to); else c.removeAttribute('data-redealt');
 					 var hidden = to === 'ns' ? ['e', 'w'] : to === 'ew' ? ['n', 's'] : [];
 					 ['n', 'e', 's', 'w'].forEach(function (k) {
 						  var seat = c.querySelector('.seat-' + k);
 						  if (!seat) return;
 						  var fade = hidden.indexOf(k) >= 0;
 						  seat.querySelectorAll('.suit').forEach(function (r) { r.style.opacity = fade ? '0.3' : ''; });
-						  var note = seat.querySelector('.blind-note');
+						  var note = seat.querySelector('.redealt-note');
 						  if (fade && !note) {
 								note = document.createElement('div');
-								note.className = 'blind-note';
-								note.textContent = 'unseen by declarer';
+								note.className = 'redealt-note';
+								note.textContent = 'redealt at random';
 								seat.appendChild(note);
 						  } else if (!fade && note) {
 								note.remove();
@@ -1888,7 +1894,7 @@
 				}
 		  }
 		  function renderCca(pos) {
-				syncBlindFade();
+				syncRedealtFade();
 				if (!ccaOpen) return;
 				syncSideToggle();
 				syncModeToggle();
@@ -1999,6 +2005,12 @@
 						  var drawn = ccaPanel.getBoundingClientRect().width;
 						  var scale = drawn > 0 ? drawn / ccaCssW : 1; // screen px per CSS px, zoom included
 						  var w = Math.ceil(Math.min(tw / scale + pad, (vw - 2 * M) / scale));
+						  // NARROWED (the head's `narrow` button): three fifths of that, applied here because a declared
+						  // cap does not cap this width (above); the table scrolls sideways in the body and the head
+						  // wraps. Before this the toggle only re-wrapped the head - 680px to 660 (reported). A share of
+						  // the table, not the browser's 26rem: rem and em both read 10px in this engine, and 260px cut
+						  // the head's side buttons and its close button off (measured, page-check's snapshots).
+						  if (ccaNarrow) w = Math.ceil(w * 0.6);
 						  if (Math.abs(w - ccaCssW) > 1) { ccaCssW = w; s.setProperty('width', w + 'px'); }
 					 }
 					 // BIGGER WHEN THERE IS ROOM (asked for: larger text "for poor eyesight"). The whole panel is
@@ -2153,7 +2165,15 @@
 		  var narrowBtn = document.getElementById('nc-cca-narrow');
 		  function applyNarrow() {
 				ccaPanel.classList.toggle('narrow', ccaNarrow);
-				if (narrowBtn) narrowBtn.classList.toggle('sel', ccaNarrow);
+				if (narrowBtn) {
+					 // WORDS, saying what a press does: `narrow`, then `widen` (filled while narrowed). A bare ↔ that
+					 // never changed said neither what it did nor whether it was on, and arrows for the two states
+					 // read the wrong way round, small (both reported).
+					 narrowBtn.classList.toggle('sel', ccaNarrow);
+					 narrowBtn.textContent = ccaNarrow ? 'widen' : 'narrow';
+					 narrowBtn.title = ccaNarrow ? 'Widen the panel again (the trick table no longer scrolls sideways)'
+						  : 'Narrow the panel (keeps the hands visible on small screens; the trick table scrolls sideways)';
+				}
 		  }
 		  applyNarrow();
 		  if (narrowBtn) narrowBtn.onclick = function () {
@@ -2256,18 +2276,18 @@
 		  }
 		  if (nsBtn) nsBtn.onclick = function () { setSide('ns'); };
 		  if (ewBtn) ewBtn.onclick = function () { setSide('ew'); };
-		  // Exact ↔ Blind mode (full deals only): switch the verdict band between double-dummy and the
-		  // sampled "play it as if you can't see all four hands" advisor for the shown side.
-		  var exactBtn = document.getElementById('nc-cca-exact'), blindBtn = document.getElementById('nc-cca-blind');
+		  // This deal ↔ Random layouts (full deals only): switch the verdict band between double-dummy on the cards
+		  // as dealt and the shown side's random layouts (the other two hands redealt, each layout solved).
+		  var dealBtn = document.getElementById('nc-cca-deal'), layoutsBtn = document.getElementById('nc-cca-layouts');
 		  function setMode(m) {
 				ccaMode = m;
 				ccaModeTouched = true;
-				if (exactBtn) exactBtn.classList.toggle('sel', m === 'exact');
-				if (blindBtn) blindBtn.classList.toggle('sel', m === 'blind');
+				if (dealBtn) dealBtn.classList.toggle('sel', m === 'deal');
+				if (layoutsBtn) layoutsBtn.classList.toggle('sel', m === 'layouts');
 				renderCca(true);
 		  }
-		  if (exactBtn) exactBtn.onclick = function () { setMode('exact'); };
-		  if (blindBtn) blindBtn.onclick = function () { setMode('blind'); };
+		  if (dealBtn) dealBtn.onclick = function () { setMode('deal'); };
+		  if (layoutsBtn) layoutsBtn.onclick = function () { setMode('layouts'); };
 		  // IMPs <-> MPs objective toggle: global, re-render overlay + inline lines.
 		  var impsBtn = document.getElementById('nc-cca-imps'), mpsBtn = document.getElementById('nc-cca-mps');
 		  function setObj(o) {
@@ -2310,10 +2330,10 @@
 		  // picked (and present for this board), else the unconditioned base grid. Both carry {g, n}.
 		  // Resolve the verdict-band source for the active board, side, mode, and opening lead into one
 		  // descriptor {g, n, exact, lvl, strain, ach, taxpts, pvt, note}. Full deals carry BOTH an exact
-		  // double-dummy grid per side (el._sim.ns/ew spikes) and, when sampled, a blind advisor per side
-		  // (el._blind.ns/ew); the mode toggle picks between them. 2-hand boards carry the flat sample grid.
+		  // double-dummy grid per side (el._sim.ns/ew spikes) and, when sampled, random layouts per side
+		  // (el._layouts.ns/ew); the mode toggle picks between them. 2-hand boards carry the flat sample grid.
 		  // Condition a sampled source on the picked opening lead (if any and present for the active leads),
-		  // swapping in that lead's sub-grid + honest sub-n. Shared by the blind and 2-hand sample sources.
+		  // swapping in that lead's sub-grid + honest sub-n. Shared by the full deal's random layouts and the 2-hand sample.
 		  function condLead(el, base) {
 				var leads = activeLeads(el);
 				if (ccaLead && leads && leads.seats) {
@@ -2330,16 +2350,16 @@
 				return base;
 		  }
 		  function activeSimSrc(el) {
-				var sim = el && el._sim, blind = el && el._blind;
-				// Full-deal BLIND mode: the DDS-sampled advisor for the shown side (same shape as 2-hand), so it
-				// takes the same opening-lead conditioning (leads baked per side inside el._blind[side]).
-				if (blind && ccaMode === 'blind') {
-					 var bs = blind[ccaSide] || blind.ns || blind.ew;
+				var sim = el && el._sim, layouts = el && el._layouts;
+				// Full deal on RANDOM LAYOUTS: the DDS-sampled grid for the shown side (same shape as 2-hand), so it
+				// takes the same opening-lead conditioning (leads baked per side inside el._layouts[side]).
+				if (layouts && ccaMode === 'layouts') {
+					 var bs = layouts[ccaSide] || layouts.ns || layouts.ew;
 					 if (bs) return condLead(el, { g: bs.g, n: bs.n, exact: false, lvl: bs.lvl, strain: bs.strain,
 											ach: bs.ach, taxpts: bs.taxpts, pvt: bs.pvt, note: null });
 				}
 				if (!sim) return null;
-				// Full-deal EXACT: one spike grid per side, so the band follows the N/S↔E/W toggle.
+				// Full deal, THIS DEAL: one spike grid per side, so the band follows the N/S↔E/W toggle.
 				if (sim.exact) {
 					 return { g: sim[ccaSide] || sim.ns, n: 1, exact: true, lvl: sim.lvl, strain: sim.strain, note: null };
 				}
@@ -2366,7 +2386,7 @@
 				var p = sampleProgress[idx];
 				if (sampleAsked[idx]) {
 					 ccaSimBand.innerHTML = '<b>Whole-hand (simulated):</b> sampling the hidden hands\u2026' +
-						  (p ? ' <span class="lead-note">' + p.done + ' of up to ' + p.cap + ' deals</span>' : '');
+						  (p ? ' <span class="lead-note">' + p.done + ' of up to ' + p.cap + ' layouts</span>' : '');
 				} else {
 					 ccaSimBand.innerHTML = '<b>Whole-hand (simulated):</b> not worked out. ' +
 						  '<button id="nc-sample" title="Deals the two hidden hands up to 300 times and solves each deal double dummy, in this browser">' +
@@ -2400,7 +2420,7 @@
 						  ' <span class="lead-note">(known deal, both defenders visible)</span>';
 				} else {
 					 s = '<b>Whole-hand (simulated):</b> ' + contractLabel(t, ccaStrain) +
-						  ' makes <b>' + (mk * 100).toFixed(0) + '%</b> (±' + se.toFixed(0) + '%, ' + src.n + ' deals)';
+						  ' makes <b>' + (mk * 100).toFixed(0) + '%</b> (±' + se.toFixed(0) + '%, ' + src.n + ' layouts)';
 					 if (src.note) s += ' <span class="lead-note">given ' + src.note + '</span>';
 					 // The achievable (misguess-tax) rung: the make-% docked for the dominant blind two-way guess.
 					 // Baked per contract, so only meaningful when the picker sits on that exact (strain, level).
@@ -2442,7 +2462,7 @@
 					  (exact ? 'double-dummy ' + etr(g).toFixed(1) + ' (exact)' : 'simulated ' + etr(g).toFixed(1) + ' (DDS whole-hand)') + '</span>';
 				// A sampling still going: these are the deals so far, and they sharpen as more arrive.
 				var sp = sampleProgress[idx];
-				if (sp && !exact) s += ' <span class="lead-note">· still sampling: ' + sp.done + ' of up to ' + sp.cap + ' deals so far</span>';
+				if (sp && !exact) s += ' <span class="lead-note">· still sampling: ' + sp.done + ' of up to ' + sp.cap + ' layouts so far</span>';
 				ccaSimBand.innerHTML = s;
 				setHidden(ccaSimBand, false);
 		  }
@@ -2461,11 +2481,11 @@
 					 });
 				});
 				ccaLeadSel.innerHTML = html;
-				// Auto-seed from the recorded opening lead (baked per side on the blind advisor) until the user
+				// Auto-seed from the recorded opening lead (baked per side with the random layouts) until the user
 				// picks for themselves. Only on the side the lead defends; a card absent from this side's options
 				// is dropped by the has-check below.
-				if (!ccaLeadTouched && !ccaLead && ccaMode === 'blind' && el && el._blind) {
-					 var bl = el._blind[ccaSide];
+				if (!ccaLeadTouched && !ccaLead && ccaMode === 'layouts' && el && el._layouts) {
+					 var bl = el._layouts[ccaSide];
 					 if (bl && bl.lead && bl.lead.seat && bl.lead.card) ccaLead = { seat: bl.lead.seat, card: bl.lead.card };
 				}
 				var want = ccaLead ? (ccaLead.seat + '|' + ccaLead.card) : '', has = false;
