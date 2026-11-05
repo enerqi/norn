@@ -40,13 +40,38 @@ union variant implicitly (measured before this was written), so `generate_accept
 
 `nil` is the fourth thing a union gives for free: no condition at all, which means keep every deal.
 */
-Contextual_Predicate :: proc(summary: Deal_Summary, userdata: rawptr) -> bool
+//
+// `table` is the board's dealer and vulnerability, for a condition that reads them (`Interpreted_Predicate.table`
+// set); the zero table otherwise.
+Contextual_Predicate :: proc(summary: Deal_Summary, table: Table, userdata: rawptr) -> bool
 
 // An interpreted hook: the walker, plus the program it walks. One `data` per hook rather than one shared
 // across all three, because each is registered separately and nothing forces them to come from one file.
 Interpreted_Predicate :: struct {
-	call: Contextual_Predicate,
-	data: rawptr,
+	call:  Contextual_Predicate,
+	data:  rawptr,
+	// Set when the condition reads the board's dealer or vulnerability (a scenario about SEAT: a third-seat
+	// preempt, a favourable-vulnerability overcall). See `Table_Draw`.
+	table: Maybe(Table_Draw),
+}
+
+/*
+WHAT A CONDITION THAT READS THE TABLE GETS DEALT AT. The dealer and vulnerability are otherwise drawn when a
+kept deal is RENDERED, after its condition has passed - which is why no condition could ask about them. For one
+that does, the table is drawn BEFORE the condition, per deal dealt, and the deal is rendered at that same table.
+Either half may be FIXED by the scenario (`dealer`, `vulnerability`); the rest is drawn at random.
+
+ONLY those conditions draw early. Every other run keeps the random stream it always had (deal, then a table only
+for a kept deal), so a seeded run of an existing scenario writes the same page byte for byte.
+
+The run's fixed dealer (`table_dealer`, `--dealer`) does NOT apply here: a scenario that says which seat it is
+in decides who deals, and a dealer fixed from outside would make "third seat" a condition that never holds.
+And the table is drawn whatever the format and `randomize_table` say, since the condition needs one; a format
+that shows no table still writes none.
+*/
+Table_Draw :: struct {
+	dealer:        Maybe(Seat),
+	vulnerability: Maybe(Vulnerability),
 }
 
 Condition :: union {
@@ -56,14 +81,29 @@ Condition :: union {
 
 // Does this condition keep the deal? A nil condition, and a variant whose proc is nil, both keep it — the
 // same "no condition means accept" the plain `Predicate` path always had.
-condition_holds :: proc(condition: Condition, summary: Deal_Summary) -> bool {
+condition_holds :: proc(condition: Condition, summary: Deal_Summary, table := Table{}) -> bool {
 	switch v in condition {
 	case Predicate:
 		return v == nil || v(summary)
 	case Interpreted_Predicate:
-		return v.call == nil || v.call(summary, v.data)
+		return v.call == nil || v.call(summary, table, v.data)
 	}
 	return true
+}
+
+// Does the condition read the board's table, and what does it fix? See `Table_Draw`.
+condition_table :: proc(condition: Condition) -> (draw: Table_Draw, reads: bool) {
+	if v, ok := condition.(Interpreted_Predicate); ok {
+		return v.table.?
+	}
+	return {}, false
+}
+
+// The table a condition that reads one is checked at (`draw_condition_table`, in `render.odin` beside the other
+// draws), or the zero table for one that does not - drawing nothing, so the random stream is untouched.
+@(private)
+condition_table_for :: proc(draw: Table_Draw, reads: bool) -> Table {
+	return draw_condition_table(draw) if reads else {}
 }
 
 // A second-stage condition over the RAW dealt cards, run only on deals the cheap `Predicate`
@@ -216,6 +256,7 @@ generate_accepted :: proc(
 	attempts: int,
 ) {
 	pd, has_predeal := predeal.?
+	draw, reads_table := condition_table(accept)
 	// Page-oriented formats (Html) wrap the run in a header/footer; per-deal formats emit nothing
 	// here. The prologue/epilogue bracket the whole accepted set, not each deal.
 	render_page_prologue(builder, format, page_title)
@@ -225,6 +266,8 @@ generate_accepted :: proc(
 		}
 		deal := next_deal(pd, has_predeal, smartstack)
 		attempts += 1
+		// A condition about the seat is checked at the table the deal will be shown at (`Table_Draw`).
+		table := condition_table_for(draw, reads_table)
 		// Build the index once per deal; the predicate (and all its evaluator calls) read it. Only
 		// when the cheap summary predicate passes do we pay for the optional raw-deal filter (e.g. a
 		// double-dummy solve), so the expensive stage runs on the survivors, not every deal.
@@ -232,13 +275,15 @@ generate_accepted :: proc(
 		// condition first, the raw-deal filter only on what it kept. Folding them into a single expression
 		// — even one that short-circuits — invites the next edit to hoist the filter, and a hoisted filter
 		// runs a double-dummy solve on EVERY deal instead of on the survivors.
-		if !condition_holds(accept, summarize_deal(deal)) {
+		if !condition_holds(accept, summarize_deal(deal), table) {
 			continue
 		}
 		if !filter_keeps(deal_filter, deal) {
 			continue
 		}
-		table := draw_table(format, randomize_table)
+		if !reads_table {
+			table = draw_table(format, randomize_table)
+		}
 		render_deal_at(builder, deal, format, table)
 		annotate_deal(annotate, builder, deal, format, table)
 		strings.write_byte(builder, '\n')
@@ -271,17 +316,19 @@ collect_accepted :: proc(
 	attempts: int,
 ) {
 	pd, has_predeal := predeal.?
+	draw, reads_table := condition_table(accept)
 	for accepted < count {
 		if max_attempts > 0 && attempts >= max_attempts {
 			break
 		}
 		deal := next_deal(pd, has_predeal, smartstack)
 		attempts += 1
-		if !condition_holds(accept, summarize_deal(deal)) {
+		table := condition_table_for(draw, reads_table)
+		if !condition_holds(accept, summarize_deal(deal), table) {
 			continue
 		}
 		append(deals, deal)
-		append(tables, draw_table(format, randomize_table))
+		append(tables, table if reads_table else draw_table(format, randomize_table))
 		accepted += 1
 	}
 	return
@@ -319,30 +366,41 @@ collect_filtered :: proc(
 	attempts: int,
 ) {
 	pd, has_predeal := predeal.?
+	draw, reads_table := condition_table(accept)
 	round := make([dynamic]Deal, 0, FILTER_BATCH)
 	defer delete(round)
+	round_tables := make([dynamic]Table, 0, FILTER_BATCH)
+	defer delete(round_tables)
 	for accepted < count && (max_attempts == 0 || attempts < max_attempts) {
 		clear(&round)
+		clear(&round_tables)
 		for len(round) < FILTER_BATCH && (max_attempts == 0 || attempts < max_attempts) {
 			deal := next_deal(pd, has_predeal, smartstack)
 			attempts += 1
-			if condition_holds(accept, summarize_deal(deal)) {
+			table := condition_table_for(draw, reads_table)
+			if condition_holds(accept, summarize_deal(deal), table) {
 				append(&round, deal)
+				append(&round_tables, table)
 			}
 		}
 		if len(round) == 0 {
 			break
 		}
 		solve(round[:])
-		for deal in round {
+		for deal, i in round {
 			if accepted < count && filter_keeps(filter, deal) {
 				append(deals, deal)
+				if reads_table {
+					append(tables, round_tables[i]) // the table the condition was checked at
+				}
 				accepted += 1
 			}
 		}
 	}
-	for _ in 0 ..< accepted {
-		append(tables, draw_table(format, randomize_table))
+	if !reads_table {
+		for _ in 0 ..< accepted {
+			append(tables, draw_table(format, randomize_table))
+		}
 	}
 	return
 }
@@ -384,9 +442,11 @@ count_accepted :: proc(
 	accepted: int,
 ) {
 	pd, has_predeal := predeal.?
+	draw, reads_table := condition_table(accept)
 	for _ in 0 ..< trials {
 		deal := next_deal(pd, has_predeal, smartstack)
-		if condition_holds(accept, summarize_deal(deal)) && filter_keeps(deal_filter, deal) {
+		table := condition_table_for(draw, reads_table)
+		if condition_holds(accept, summarize_deal(deal), table) && filter_keeps(deal_filter, deal) {
 			accepted += 1
 		}
 	}

@@ -2674,7 +2674,13 @@
 		  // the view size (`setViewUnits`), and with no `vh` left in the stylesheet the carousel's own height no
 		  // longer follows the view's (measured: it stayed 558px from a 900px view down to 560 and back), so a
 		  // watch on it alone missed a window growing taller.
-		  function watchedSize() { return viewport.clientWidth + 'x' + viewport.clientHeight + ':' + viewW() + 'x' + viewH(); }
+		  // NOT the carousel's HEIGHT, which the page changes itself: it is the tallest board laid out, so a step that
+		  // brings a taller board into the layout window (or a reveal beside the active one) changed it, the watch read
+		  // that as a resize, and the resize path parked every board but the active one in the middle of the slide-in
+		  // - the incoming boards blank until it settled, "the odd hand out of 32", and at a short view a loop between
+		  // two layouts (reported 2026-11-02; the dumps had the carousel 316px tall in one state and 394px in the
+		  // other). The view's own size is what a real resize changes, and it is read here.
+		  function watchedSize() { return viewport.clientWidth + ':' + viewW() + 'x' + viewH(); }
 		  var seenSize = watchedSize();
 		  setInterval(function () {
 				var size = watchedSize();

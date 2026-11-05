@@ -458,6 +458,13 @@
 			   came up black (the title, `--ink` on it, unreadable) and the buttons light text on their own light
 			   grounds. The selected/costly button rules are more specific and keep their colours. */
 			html { background: #fff; }
+			/* THE PAGE'S OWN SCROLLBAR TAKES NO WIDTH. A short view (250% display scaling) with a taller board beside
+			   the active one LOOPED (reported 2026-11-02, two dumps from the real window): the page overflowed, its
+			   scrollbar took 16px, the size watch saw the width change and laid out the active board alone, the page
+			   fitted, the scrollbar went, the width changed back, the neighbours returned - and round again. An
+			   indicator is drawn over the content, so the width no longer depends on the height. No sideways
+			   scroll either: the carousel scrolls itself, and the page scrolled sideways during the loop. */
+			html { overflow-x: hidden; overflow-y: scroll-indicator; }
 			.toolbar button, .playbar button, .cca-panel button, .cca-panel select, .match-table button { color: var(--ink); }
 
 			/* Unitless line-heights, respelled in em. */

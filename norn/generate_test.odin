@@ -8,6 +8,7 @@ package norn
 	is what we assert on.
 */
 
+import "core:fmt"
 import "core:math/rand"
 import "core:strings"
 import "core:testing"
@@ -283,9 +284,106 @@ Hcp_Floor :: struct {
 }
 
 @(private = "file")
-at_least :: proc(summary: Deal_Summary, userdata: rawptr) -> bool {
+at_least :: proc(summary: Deal_Summary, _: Table, userdata: rawptr) -> bool {
 	rule := (^Hcp_Floor)(userdata)
 	return hcp(summary[rule.seat]) >= rule.min
+}
+
+// A condition on the TABLE alone: North is in `seat` (1 = North dealt, 2 = West dealt, ...) and North-South
+// are vulnerable. Reads nothing of the hands.
+@(private = "file")
+Seat_Rule :: struct {
+	seat: int,
+}
+
+@(private = "file")
+north_in_seat_vulnerable :: proc(_: Deal_Summary, table: Table, userdata: rawptr) -> bool {
+	rule := (^Seat_Rule)(userdata)
+	dealer, has_dealer := table.dealer.?
+	if !has_dealer {
+		return false
+	}
+	position := (int(Seat.North) - int(dealer) + SEAT_COUNT) %% SEAT_COUNT + 1
+	return position == rule.seat && vulnerable(table.vulnerability, .North)
+}
+
+/*
+A CONDITION THAT READS THE TABLE is checked at the table the deal is then SHOWN at (`Table_Draw`). Third seat
+vulnerable is 1 dealer in 4 times 2 vulnerabilities in 4. Every kept deal's table, as the annotator was handed
+it and as the handviewer query wrote it, must satisfy the rule the condition applied.
+*/
+@(test)
+test_a_condition_on_the_table_is_shown_at_that_table :: proc(t: ^testing.T) {
+	state: rand.Xoshiro256_Random_State
+	context.random_generator = seeded_xoshiro(&state, 31)
+	third := Seat_Rule{3}
+	condition := Interpreted_Predicate{call = north_in_seat_vulnerable, data = &third, table = Table_Draw{}}
+
+	kept := count_accepted_seeded(8000, condition, 11)
+	testing.expectf(t, kept > 600 && kept < 1400, "3rd seat vulnerable should be about 1 in 8 of 8000 (got %d)", kept)
+
+	echo :: proc(builder: ^strings.Builder, deal: Deal, format: Output_Format, table: Table) {
+		strings.write_string(builder, " table=")
+		strings.write_int(builder, int(table.dealer.? or_else .North))
+		strings.write_byte(builder, ',')
+		strings.write_int(builder, int(table.vulnerability))
+	}
+	builder := strings.builder_make()
+	defer strings.builder_destroy(&builder)
+	// randomize_table FALSE: the condition still gets a drawn table, and the deal is shown at it.
+	accepted, _ := generate_accepted(&builder, 12, .Handviewer, condition, 1_000_000, annotate = Deal_Annotator(echo))
+	testing.expect_value(t, accepted, 12)
+	lines := strings.split_lines(strings.trim_right(strings.to_string(builder), "\n"))
+	defer delete(lines)
+	for line in lines {
+		tail := line[strings.last_index(line, " table=") + len(" table="):]
+		comma := strings.index_byte(tail, ',')
+		dealer := Seat(strings_int(tail[:comma]))
+		vul := Vulnerability(strings_int(tail[comma + 1:]))
+		shown := Table{vulnerability = vul, dealer = dealer}
+		testing.expectf(t, north_in_seat_vulnerable({}, shown, &third), "kept a deal whose table breaks the rule: %s", tail)
+		// And the rendered handviewer query carries that same table (`d=` is the dealer's letter).
+		letters := "nesw"
+		testing.expectf(t, strings.contains(line, fmt.tprintf("d=%c", letters[int(dealer)])), "rendered at another dealer: %s", line)
+	}
+
+	// A FIXED dealer: every table has South dealing (South, West, then North third), so only the vulnerability
+	// varies - half the tables keep. And fixing the vulnerability as well keeps them all.
+	south := Interpreted_Predicate{call = north_in_seat_vulnerable, data = &third, table = Table_Draw{dealer = Seat.South}}
+	fixed_kept := count_accepted_seeded(8000, south, 11)
+	testing.expectf(t, fixed_kept > 3400 && fixed_kept < 4600, "South dealing fixed: half the tables are N-S vulnerable (got %d)", fixed_kept)
+	both := Interpreted_Predicate {
+		call  = north_in_seat_vulnerable,
+		data  = &third,
+		table = Table_Draw{dealer = Seat.South, vulnerability = Vulnerability.Both},
+	}
+	testing.expect_value(t, count_accepted_seeded(500, both, 11), 500)
+}
+
+// A condition that does NOT read the table leaves the random stream as it was: the same page as a compiled
+// predicate saying the same thing.
+@(test)
+test_a_condition_not_on_the_table_keeps_the_stream :: proc(t: ^testing.T) {
+	floor := Hcp_Floor{.North, 18}
+	pages: [2]string
+	for i in 0 ..< 2 {
+		state: rand.Xoshiro256_Random_State
+		context.random_generator = seeded_xoshiro(&state, 77)
+		b := strings.builder_make(context.temp_allocator)
+		condition := Condition(north_18plus) if i == 0 else Condition(Interpreted_Predicate{call = at_least, data = &floor})
+		generate_accepted(&b, 6, .Html_Cards, condition, 1_000_000, randomize_table = true, page_title = "t")
+		pages[i] = strings.to_string(b)
+	}
+	testing.expect(t, pages[0] == pages[1], "an interpreted condition that ignores the table changed the page")
+}
+
+@(private = "file")
+strings_int :: proc(text: string) -> int {
+	n := 0
+	for c in transmute([]u8)text {
+		n = n * 10 + int(c - '0')
+	}
+	return n
 }
 
 @(test)
@@ -297,8 +395,8 @@ test_a_contextual_predicate_reads_its_rule_from_userdata :: proc(t: ^testing.T) 
 	loose := Hcp_Floor{.North, 6}
 	strict := Hcp_Floor{.North, 20}
 
-	kept_loose := count_accepted_seeded(2000, Interpreted_Predicate{at_least, &loose}, 7)
-	kept_strict := count_accepted_seeded(2000, Interpreted_Predicate{at_least, &strict}, 7)
+	kept_loose := count_accepted_seeded(2000, Interpreted_Predicate{call = at_least, data = &loose}, 7)
+	kept_strict := count_accepted_seeded(2000, Interpreted_Predicate{call = at_least, data = &strict}, 7)
 	testing.expect(t, kept_loose > 0, "a 6+ hcp North should be common")
 	testing.expectf(
 		t,
@@ -313,7 +411,7 @@ test_a_contextual_predicate_reads_its_rule_from_userdata :: proc(t: ^testing.T) 
 		&builder,
 		5,
 		.Line,
-		Interpreted_Predicate{at_least, &loose},
+		Interpreted_Predicate{call = at_least, data = &loose},
 		max_attempts = 200_000,
 	)
 	testing.expect_value(t, accepted, 5)
@@ -323,7 +421,7 @@ test_a_contextual_predicate_reads_its_rule_from_userdata :: proc(t: ^testing.T) 
 	// rule about which won; a `Condition` is one or the other, so the impossible threshold below cannot be
 	// quietly overridden by a compiled predicate sitting beside it.
 	none := Hcp_Floor{.North, 41} // impossible: 40 hcp in the pack
-	blocked := count_accepted_seeded(500, Interpreted_Predicate{at_least, &none}, 7)
+	blocked := count_accepted_seeded(500, Interpreted_Predicate{call = at_least, data = &none}, 7)
 	testing.expect_value(t, blocked, 0)
 
 	// A nil condition keeps everything, which is the fourth state a union gives for nothing.

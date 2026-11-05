@@ -307,6 +307,22 @@ random_table :: proc() -> (v: Vulnerability, dealer: Seat) {
 	return
 }
 
+// The table a condition that reads one is checked at (`Table_Draw` in `generate.odin`): what the scenario
+// fixes, the rest drawn in `random_table`'s order. Both halves are drawn even when fixed, so fixing one does not
+// shift the stream the other is drawn from. `table_dealer` is NOT consulted - the scenario decides the seat.
+draw_condition_table :: proc(draw: Table_Draw) -> (table: Table) {
+	table.vulnerability = Vulnerability(rand.int_max(len(Vulnerability)))
+	dealer := DEALER_DRAW_ORDER[rand.int_max(SEAT_COUNT)]
+	if fixed, ok := draw.vulnerability.?; ok {
+		table.vulnerability = fixed
+	}
+	if fixed, ok := draw.dealer.?; ok {
+		dealer = fixed
+	}
+	table.dealer = dealer
+	return
+}
+
 // Who deals every randomised table, or nil for a random dealer (the default). The vulnerability stays random:
 // what practice wants fixed is the SEAT - a scenario saying "North opens" means North dealt, or the page shows
 // the dealer's left-hand opponent passing hands the scenario never checked. Set like `share_player`, by the
