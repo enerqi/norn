@@ -2162,13 +2162,15 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 					wg    = &wg,
 				}
 			}
+			// STACK MEMORY HANDED TO THE POOL, on purpose: `wg` is waited on below, before this block ends, so no
+			// task outlives the arrays it points into. `rawptr` says so to the compiler, which warns otherwise.
 			for suit in norn.Suit {
-				thread.pool_add_task(&g_pool, context.allocator, suit_census_task, &ns_ct[suit])
-				thread.pool_add_task(&g_pool, context.allocator, suit_census_task, &ew_ct[suit])
+				thread.pool_add_task(&g_pool, context.allocator, suit_census_task, rawptr(&ns_ct[suit]))
+				thread.pool_add_task(&g_pool, context.allocator, suit_census_task, rawptr(&ew_ct[suit]))
 			}
 			for i in 0 ..< 4 {
-				thread.pool_add_task(&g_pool, context.allocator, suit_sd_task, &ns_st[i])
-				thread.pool_add_task(&g_pool, context.allocator, suit_sd_task, &ew_st[i])
+				thread.pool_add_task(&g_pool, context.allocator, suit_sd_task, rawptr(&ns_st[i]))
+				thread.pool_add_task(&g_pool, context.allocator, suit_sd_task, rawptr(&ew_st[i]))
 			}
 			sync.wait_group_wait(&wg)
 			// Drain the pool's done list so `tasks_done` does not grow across the batch (results are already
@@ -2207,8 +2209,9 @@ annotate :: proc(builder: ^strings.Builder, deal: norn.Deal, format: norn.Output
 				cand = ew_cand,
 				wg   = &wg2,
 			}
-			thread.pool_add_task(&g_pool, context.allocator, sd_finish_task, &ns_sdt)
-			thread.pool_add_task(&g_pool, context.allocator, sd_finish_task, &ew_sdt)
+			// On the stack too, and waited for (`wg2`) before the block ends - see the suit tasks above.
+			thread.pool_add_task(&g_pool, context.allocator, sd_finish_task, rawptr(&ns_sdt))
+			thread.pool_add_task(&g_pool, context.allocator, sd_finish_task, rawptr(&ew_sdt))
 
 			a = finish_census(ns_tables) // cheap; runs under the two pooled SD assembles
 			ew = finish_census(ew_tables)
