@@ -377,6 +377,69 @@ test_a_condition_not_on_the_table_keeps_the_stream :: proc(t: ^testing.T) {
 	testing.expect(t, pages[0] == pages[1], "an interpreted condition that ignores the table changed the page")
 }
 
+// A condition with an ALTERNATIVE: North 18+ (the core) or North exactly 17 (the alternative "17 upgraded").
+@(private = "file")
+eighteen_or_upgraded :: proc(summary: Deal_Summary, _: Table, _: rawptr) -> bool {
+	return hcp(summary[.North]) >= 17
+}
+
+@(private = "file")
+why_eighteen_or_upgraded :: proc(summary: Deal_Summary, _: Table, _: rawptr) -> string {
+	return "" if hcp(summary[.North]) >= 18 else "17 upgraded"
+}
+
+/*
+WHY A DEAL QUALIFIED goes on its card: a deal only the alternative kept carries the alternative's name, a deal the
+core kept carries nothing, the batched path writes the same page, and the counts split by the same reasons.
+*/
+@(test)
+test_a_deal_kept_by_an_alternative_says_so :: proc(t: ^testing.T) {
+	condition := Interpreted_Predicate{call = eighteen_or_upgraded, explain = why_eighteen_or_upgraded}
+	state: rand.Xoshiro256_Random_State
+	context.random_generator = seeded_xoshiro(&state, 23)
+	page := strings.builder_make(context.temp_allocator)
+	generate_accepted(&page, 24, .Html_Cards, condition, 1_000_000, randomize_table = true, page_title = "t")
+	text := strings.to_string(page)
+
+	boards := strings.split(text, `<div class="compass"`, context.temp_allocator)[1:]
+	testing.expect_value(t, len(boards), 24)
+	labelled := 0
+	for board in boards {
+		if strings.contains(board, `<div class="why"`) {
+			labelled += 1
+			testing.expect(t, strings.contains(board, ">17 upgraded</div>"), "the label names the alternative")
+		}
+	}
+	testing.expectf(t, labelled > 0 && labelled < 24, "some boards from each (got %d labelled of 24)", labelled)
+
+	// The same deals dealt first and written afterwards carry the same labels.
+	context.random_generator = seeded_xoshiro(&state, 23)
+	deals: [dynamic]Deal
+	tables: [dynamic]Table
+	defer delete(deals)
+	defer delete(tables)
+	collect_accepted(&deals, &tables, 24, .Html_Cards, condition, 1_000_000, randomize_table = true)
+	batched := strings.builder_make(context.temp_allocator)
+	render_accepted(&batched, .Html_Cards, deals[:], tables[:], page_title = "t", accept = condition)
+	testing.expect(t, strings.to_string(batched) == text, "the batched page differs")
+	for deal in deals {
+		label := condition_label(condition, summarize_deal(deal))
+		testing.expect_value(t, label, "" if hcp(summarize_deal(deal)[.North]) >= 18 else "17 upgraded")
+	}
+
+	// Counted by reason: the two add up to the whole, and the core is the usual 18+ count.
+	labels := make(map[string]int, context.temp_allocator)
+	kept := count_accepted_seeded(20_000, condition, 5, labels = &labels)
+	testing.expect_value(t, labels[""] + labels["17 upgraded"], kept)
+	testing.expect_value(t, labels[""], count_accepted_seeded(20_000, north_18plus, 5))
+
+	// A format with nowhere to show it writes nothing extra.
+	context.random_generator = seeded_xoshiro(&state, 23)
+	line := strings.builder_make(context.temp_allocator)
+	generate_accepted(&line, 24, .Line, condition, 1_000_000)
+	testing.expect(t, !strings.contains(strings.to_string(line), "upgraded"), "a Line page carries no label")
+}
+
 @(private = "file")
 strings_int :: proc(text: string) -> int {
 	n := 0

@@ -48,11 +48,36 @@ Contextual_Predicate :: proc(summary: Deal_Summary, table: Table, userdata: rawp
 // An interpreted hook: the walker, plus the program it walks. One `data` per hook rather than one shared
 // across all three, because each is registered separately and nothing forces them to come from one file.
 Interpreted_Predicate :: struct {
-	call:  Contextual_Predicate,
-	data:  rawptr,
+	call:    Contextual_Predicate,
+	data:    rawptr,
 	// Set when the condition reads the board's dealer or vulnerability (a scenario about SEAT: a third-seat
 	// preempt, a favourable-vulnerability overcall). See `Table_Draw`.
-	table: Maybe(Table_Draw),
+	table:   Maybe(Table_Draw),
+	// Set when the condition can say WHY it kept a deal. See `Contextual_Explain`.
+	explain: Contextual_Explain,
+}
+
+/*
+WHY A KEPT DEAL QUALIFIED. A condition can be a strict core plus named, looser ALTERNATIVES ("14 upgraded", "3rd
+seat, light"), and a deal let in only by an alternative is a debatable one: its card says so, so a reader can skip
+it knowingly instead of the scenario shutting it out. Asked only of deals the condition KEPT, with the same summary
+and table; "" means the core kept it (nothing to say). The string must outlive the run - it is the condition's own.
+*/
+Contextual_Explain :: proc(summary: Deal_Summary, table: Table, userdata: rawptr) -> string
+
+// Which alternative of `condition` kept this deal, or "" (the core, or a condition that has no alternatives).
+condition_label :: proc(condition: Condition, summary: Deal_Summary, table := Table{}) -> string {
+	if v, ok := condition.(Interpreted_Predicate); ok && v.explain != nil {
+		return v.explain(summary, table, v.data)
+	}
+	return ""
+}
+
+// Does the condition have alternatives to name? A run without them never summarises a kept deal twice.
+@(private)
+condition_explains :: proc(condition: Condition) -> bool {
+	v, ok := condition.(Interpreted_Predicate)
+	return ok && v.explain != nil
 }
 
 /*
@@ -275,16 +300,20 @@ generate_accepted :: proc(
 		// condition first, the raw-deal filter only on what it kept. Folding them into a single expression
 		// — even one that short-circuits — invites the next edit to hoist the filter, and a hoisted filter
 		// runs a double-dummy solve on EVERY deal instead of on the survivors.
-		if !condition_holds(accept, summarize_deal(deal), table) {
+		summary := summarize_deal(deal)
+		if !condition_holds(accept, summary, table) {
 			continue
 		}
 		if !filter_keeps(deal_filter, deal) {
 			continue
 		}
+		// Asked at the table the condition was checked at, before a table-blind run draws the one it shows.
+		label := condition_label(accept, summary, table)
 		if !reads_table {
 			table = draw_table(format, randomize_table)
 		}
 		render_deal_at(builder, deal, format, table)
+		render_deal_label(builder, format, label)
 		annotate_deal(annotate, builder, deal, format, table)
 		strings.write_byte(builder, '\n')
 		accepted += 1
@@ -406,6 +435,8 @@ collect_filtered :: proc(
 }
 
 // THE WRITING HALF: the page `generate_accepted` would have written for these deals, each at its table.
+// `accept` is the condition that kept them, asked again only for WHY (`condition_label`); a table-blind
+// condition is asked at the zero table, as it was when it kept the deal.
 render_accepted :: proc(
 	builder: ^strings.Builder,
 	format: Output_Format,
@@ -413,10 +444,16 @@ render_accepted :: proc(
 	tables: []Table,
 	annotate: Annotator = nil,
 	page_title := "",
+	accept: Condition = nil,
 ) {
+	_, reads_table := condition_table(accept)
+	explains := condition_explains(accept)
 	render_page_prologue(builder, format, page_title)
 	for deal, i in deals {
 		render_deal_at(builder, deal, format, tables[i])
+		if explains {
+			render_deal_label(builder, format, condition_label(accept, summarize_deal(deal), tables[i] if reads_table else {}))
+		}
 		annotate_deal(annotate, builder, deal, format, tables[i])
 		strings.write_byte(builder, '\n')
 	}
@@ -432,12 +469,16 @@ render_accepted :: proc(
 // counts only if it passes BOTH the cheap summary predicate and the raw-deal filter, so the measured
 // rate matches what generation would actually keep (e.g. after a double-dummy filter). nil measures
 // the predicate alone. As in generation, the filter is evaluated only on deals the predicate keeps.
+//
+// `labels`, when given, counts the kept deals by WHY they were kept (`condition_label`; "" is the core): what
+// each of a scenario's alternatives adds. The keys are the condition's own strings.
 count_accepted :: proc(
 	trials: int,
 	accept: Condition,
 	predeal: Maybe(Predeal) = nil,
 	smartstack: ^Smart_Stack = nil,
 	deal_filter: Filter = nil,
+	labels: ^map[string]int = nil,
 ) -> (
 	accepted: int,
 ) {
@@ -446,8 +487,12 @@ count_accepted :: proc(
 	for _ in 0 ..< trials {
 		deal := next_deal(pd, has_predeal, smartstack)
 		table := condition_table_for(draw, reads_table)
-		if condition_holds(accept, summarize_deal(deal), table) && filter_keeps(deal_filter, deal) {
+		summary := summarize_deal(deal)
+		if condition_holds(accept, summary, table) && filter_keeps(deal_filter, deal) {
 			accepted += 1
+			if labels != nil {
+				labels[condition_label(accept, summary, table)] += 1
+			}
 		}
 	}
 	return
@@ -465,10 +510,11 @@ count_accepted_seeded :: proc(
 	predeal: Maybe(Predeal) = nil,
 	smartstack: ^Smart_Stack = nil,
 	deal_filter: Filter = nil,
+	labels: ^map[string]int = nil,
 ) -> (
 	accepted: int,
 ) {
 	state: rand.Xoshiro256_Random_State
 	context.random_generator = seeded_xoshiro(&state, seed)
-	return count_accepted(trials, accept, predeal, smartstack, deal_filter)
+	return count_accepted(trials, accept, predeal, smartstack, deal_filter, labels)
 }

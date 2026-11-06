@@ -108,7 +108,15 @@ run :: proc(registry: []Scenario, opts: Options) -> (ok: bool, message: string) 
 			if !opts.prepare(deals[:]) {
 				fmt.eprintln("norn: the batch solve failed - solving one deal at a time")
 			}
-			norn.render_accepted(&builder, opts.format, deals[:], tables[:], annotate, scenario_title(scenario))
+			norn.render_accepted(
+				&builder,
+				opts.format,
+				deals[:],
+				tables[:],
+				annotate,
+				scenario_title(scenario),
+				accept = scenario.predicate,
+			)
 		} else {
 			accepted, attempts = norn.generate_accepted(
 				&builder,
@@ -272,7 +280,15 @@ collect_filtered :: proc(job: ^Export_Task, prepare: Annotation_Prepare) {
 // Second half, once `prepare` has solved its deals: write the page.
 render_worker :: proc(t: thread.Task) {
 	job := cast(^Export_Task)t.data
-	norn.render_accepted(job.builder, job.format, job.deals[:], job.tables[:], job.annotate, job.page_title)
+	norn.render_accepted(
+		job.builder,
+		job.format,
+		job.deals[:],
+		job.tables[:],
+		job.annotate,
+		job.page_title,
+		accept = job.predicate,
+	)
 }
 
 // Batch-export every scenario in `registry` to `<mode.dir>/<name>.html`, each an HTML page of

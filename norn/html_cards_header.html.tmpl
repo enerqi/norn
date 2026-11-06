@@ -76,6 +76,12 @@
 			box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 			font-family: 'Consolas', 'Courier New', monospace; font-size: 1.05rem; line-height: 1.5;
 		}
+		/* Why the deal is here, when a scenario's looser alternative let it in: the felt's top-left corner. */
+		.why {
+			position: absolute; top: 1.1rem; left: 1.4rem; max-width: 30%;
+			background: #fff4c2; color: #5a4300; border: 1px solid #d9b84a; border-radius: 8px; padding: 0.3rem 0.6rem;
+			font-family: system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; font-size: 0.95rem; font-weight: 600;
+		}
 		.stats .splits { margin-top: 0.35rem; border-top: 1px solid #ddd; padding-top: 0.3rem; }
 		.stats .split { display: flex; justify-content: flex-end; align-items: baseline; gap: 0.45rem; }
 		.stats .split .pct { color: #888; min-width: 4.3em; text-align: right; }
@@ -534,6 +540,7 @@
 			.slide { width: max-content; }
 			.seat { width: max-content; }
 			.compass > .seat { margin-left: 1*; margin-right: 1*; }
+			.compass > .why { position: static; width: max-content; margin-left: 1*; margin-right: 1*; }
 			.cca-side { margin-left: 1*; }
 			/* The coil (the engine's spelling of the browser's `margin-left: auto`) PINS THE SLIDER TO THE RIGHT
 			   EDGE of the row, and that is what keeps it still: the headline beside it is a sentence whose
@@ -790,6 +797,7 @@
 				margin: 0 0 0.2rem; padding: 0.15rem 0.4rem; font-size: 0.82rem; line-height: 1.3;
 			}
 			.stats .splits { display: none; } /* HCP totals only on phones */
+			.why { position: static; width: max-content; max-width: 90%; margin: 0 auto 0.2rem; padding: 0.1rem 0.5rem; font-size: 0.8rem; }
 			.table { font-size: 1rem; padding: 0.45rem 0.7rem; }
 			.dtag { font-size: 0.7rem; margin: 0.25rem 0 0.3rem; }
 			.track { gap: 20px; }

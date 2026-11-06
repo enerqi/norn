@@ -401,6 +401,10 @@
 					 if (sib.nodeType === 1 && sib.classList && sib.classList.contains('compass')) break;
 					 slide.appendChild(sib);
 				}
+				// Why the deal is here (a scenario's looser alternative): a pill on the felt, opposite the HCP box.
+				var why = slide.querySelector(':scope > .why');
+				// FIRST in the felt: on a phone it is a line above the board rather than a corner pill.
+				if (why) c.insertBefore(why, c.firstChild);
 				return slide;
 		  });
 

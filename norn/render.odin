@@ -917,6 +917,25 @@ attribute_safe :: proc(text: string) -> string {
 	return out
 }
 
+/*
+WHY THIS DEAL IS ON THE PAGE, when it is not the scenario's core that kept it (`condition_label`): a pill on the
+board naming the looser alternative that let it in ("14 upgraded"), so the debatable deals are marked as debatable.
+Written after the board's `.compass`, which the page's script groups with it and moves it into (the felt's
+top-left corner, the HCP box having the top-right). Only a card page shows it; "" writes nothing.
+*/
+render_deal_label :: proc(builder: ^strings.Builder, format: Output_Format, label: string) {
+	if label == "" || format != .Html_Cards {
+		return
+	}
+	safe := attribute_safe(label)
+	fmt.sbprintf(
+		builder,
+		`<div class="why" title="On this page through the scenario's &quot;%s&quot; alternative, not its main condition">%s</div>`,
+		safe,
+		safe,
+	)
+}
+
 // Write the once-per-run prologue for `format`. Only the HTML formats have one (the page header);
 // every other format opens with nothing. `page_title` (empty -> "Practice Deals") fills both the
 // document `<title>` and the on-page `<h1>` via the `{{TITLE}}` token baked into the header literals.
