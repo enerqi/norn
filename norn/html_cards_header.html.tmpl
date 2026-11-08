@@ -618,6 +618,10 @@
 			   overridden here). */
 			.slide.active .compass { box-shadow: none; outline: 3px solid var(--sel); }
 			.seat { box-shadow: none; border: 1px solid rgba(0,0,0,0.18); }
+			/* ...but not round a hand that is down to its pill while another is focused: the browsers' rule takes its
+			   shadow and ground away, and this border was left as an empty frame round N, E and S (reported). */
+			.slide.only-n .seat:not(.seat-n), .slide.only-e .seat:not(.seat-e),
+			.slide.only-s .seat:not(.seat-s), .slide.only-w .seat:not(.seat-w) { border-color: transparent; }
 			.seat.is-dealer .lbl { box-shadow: none; outline: 3px solid var(--sel); outline-offset: 3px; }
 			.seat.to-play .lbl { box-shadow: none; outline: 3px solid #ffd54a; }
 			.trk .pc { box-shadow: none; border: 1px solid rgba(0,0,0,0.25); }
@@ -641,10 +645,10 @@
 			.track > .slide { margin-right: 40px; }
 			.compass > * { margin-bottom: 0.9rem; }
 			.compass .mid { flow: horizontal; }
-			/* North above the West/East row that is tucked up beside it: this engine does not let the pointer
-			   through the row's empty space (`pointer-events` above, measured), so the row took the hover of
-			   North's lower lines and its HCP tooltip never showed. */
-			.compass > .seat-n { position: relative; z-index: 1; }
+			/* North above the tucked West/East row, and South's pill lit and clickable inside it, are the page
+			   SCRIPT's (`tuckHands`, `pillAt`): a hand positioned by a rule here stopped being repainted after a
+			   focus and Reveal all (reported, North and South both). */
+			.slide:not([class*="only-"]) .seat .lbl.hot { filter: brightness(1.12); }
 			.compass .mid > .seat-w { margin-right: 3rem; }
 			.compass .mid > .seat-e { margin-left: 3rem; }
 			/* ...and the row centred: a horizontal flow puts its slack on the right, which left the trick off the

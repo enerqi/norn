@@ -424,6 +424,16 @@
 				s.classList.remove('only-n', 'only-e', 'only-s', 'only-w');
 				var seat = seatFor(i);
 				if (seat) s.classList.add('only-' + seat);
+				// Each hand told DIRECTLY too. The desktop engine restyles a descendant for the slide's class only at
+				// its next pass: after Reveal all, South's own box still measured as its pill (77x98) while its suits
+				// were laid out full size (real-window log), so the tuck measured the stale box and South jumped when
+				// the 380ms re-tuck corrected it. A class on the element itself restyles it at once (the Par captions'
+				// trap, below). `folded` is styled by nothing; a browser restyles either way.
+				var seats = s.querySelectorAll('.compass .seat');
+				for (var k = 0; k < seats.length; k++) {
+					 if (seat && !seats[k].classList.contains('seat-' + seat)) seats[k].classList.add('folded');
+					 else seats[k].classList.remove('folded');
+				}
 				var table = s.querySelector('.table');
 				if (table) {
 					 // A board with a play keeps its trick when a hand is focused (renderPlay adds the button under it).
@@ -456,6 +466,8 @@
 				mid.style.removeProperty('position');
 				S.style.removeProperty('margin-top');
 				S.style.removeProperty('position');
+				N.style.removeProperty('position');
+				N.style.removeProperty('z-index');
 				W.style.removeProperty('min-width');
 				E.style.removeProperty('min-width');
 				if (seatFor(i)) return; // one hand enlarged: that layout is its own
@@ -490,6 +502,11 @@
 					 if (up > 1) {
 						  mid.style.setProperty('margin-top', -Math.floor(up * k) + 'px');
 						  mid.style.setProperty('position', 'relative');
+						  // On the desktop North goes above the lifted row, or the row takes the hover of North's lower
+						  // lines (its HCP tooltip never showed). Set HERE, inline and only while tucked, never by a
+						  // stylesheet rule: a hand positioned by a rule was not repainted after a focus and Reveal
+						  // all (reported) - this way each reveal sets it afresh after the hands are restyled.
+						  if (DESKTOP) { N.style.setProperty('position', 'relative'); N.style.setProperty('z-index', '1'); }
 					 }
 				}
 				if (clear(so)) {
@@ -497,8 +514,9 @@
 					 // In a BROWSER South is positioned as well, for the same hit-testing reason: the lifted
 					 // (positioned) middle row is otherwise above South, and South's pill, now inside the row's band,
 					 // took no clicks (reported). Both positioned, the later one - South - is on top. NOT in the desktop
-					 // engine: its hit-testing never had this fault (page-check: every seat's pill takes a click), and
-					 // a positioned South there brought back the Par button's stale redraw (reported).
+					 // engine: a positioned South there stopped being repainted (reported twice: the Par button, and
+					 // South left drawn as its pill after Reveal all). It has the same click fault, and the board's
+					 // click handler finds South's pill by its rect instead (`pillAt`).
 					 if (lift > 1) {
 						  S.style.setProperty('margin-top', -Math.floor(lift * k) + 'px');
 						  if (!DESKTOP) S.style.setProperty('position', 'relative');
@@ -922,7 +940,41 @@
 		  // Delegated board clicks. A hand's pill is its "compass icon": click it — only from the
 		  // 4-hand view — to focus that hand. When a hand is focused the centre marker is a "Reveal
 		  // all" button back to four hands. You cannot jump hand->hand; reveal all first.
+		  // The pill under a point, by its RECT. South is tucked up into the band of the lifted middle row, and the
+		  // desktop engine gives a click there to the row (`.mid`) whatever is positioned: South positioned above it
+		  // took the clicks but then stopped being repainted at all - Reveal all, a card-size change, nothing drew
+		  // it until the window lost focus (reported). So no layering: a click that found no pill asks the rects.
+		  function pillAt(slideEl, x, y) {
+				var pills = slideEl.querySelectorAll('.compass .seat .lbl');
+				for (var p = 0; p < pills.length; p++) {
+					 var r = pills[p].getBoundingClientRect();
+					 if (r.width && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return pills[p];
+				}
+				return null;
+		  }
+		  // ...and its HOVER by rect too, on the desktop, where that pill under the row never sees the pointer: the
+		  // pill under the pointer gets `hot` (lit like a hovered pill) and the row the hand cursor.
+		  var hotPill = null;
+		  if (DESKTOP) track.addEventListener('mousemove', function (e) {
+				var slideEl = e.target.closest('.slide');
+				var i = slideEl ? slides.indexOf(slideEl) : -1;
+				var pill = null;
+				if (i >= 0 && !seatFor(i) && !e.target.closest('.lbl') && e.target.closest('.compass')) pill = pillAt(slideEl, e.clientX, e.clientY);
+				if (pill === hotPill) return;
+				if (hotPill) {
+					 hotPill.classList.remove('hot');
+					 var was = hotPill.closest('.compass');
+					 if (was) was.style.removeProperty('cursor');
+				}
+				hotPill = pill;
+				if (pill) {
+					 pill.classList.add('hot');
+					 var c = pill.closest('.compass');
+					 if (c) c.style.setProperty('cursor', 'pointer');
+				}
+		  });
 		  track.addEventListener('click', function (e) {
+				if (hotPill) { hotPill.classList.remove('hot'); var hc = hotPill.closest('.compass'); if (hc) hc.style.removeProperty('cursor'); hotPill = null; }
 				var slideEl = e.target.closest('.slide');
 				if (!slideEl) return;
 				var i = slides.indexOf(slideEl);
@@ -934,6 +986,7 @@
 					 return;
 				}
 				var lbl = e.target.closest('.lbl');
+				if (!lbl && !seatFor(i)) lbl = pillAt(slideEl, e.clientX, e.clientY);
 				if (!lbl) return;
 				if (seatFor(i)) return; // single-hand view: Reveal all before switching
 				var seatEl = lbl.closest('.seat');
