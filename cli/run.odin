@@ -13,6 +13,7 @@ package cli
 import "core:fmt"
 import "core:math/rand"
 import "core:os"
+import "core:slice"
 import "core:strings"
 import si "core:sys/info"
 import "core:thread"
@@ -530,6 +531,9 @@ Freq_Task :: struct {
 	// function value, safe to share across workers.
 	deal_filter: norn.Deal_Filter,
 	result:      ^int,
+	// The kept deals by WHY they were kept (norn's `condition_label`: "" for the scenario's own lines, else the
+	// name of the alternative that let the deal in). Each task's own map, so no two workers write one.
+	labels:      ^map[string]int,
 }
 
 // Thread-pool body: run one scenario's measurement. Self-contained — `count_accepted_seeded`
@@ -543,6 +547,7 @@ freq_worker :: proc(t: thread.Task) {
 		job.predeal,
 		job.smartstack,
 		job.deal_filter,
+		job.labels,
 	)
 }
 
@@ -607,7 +612,15 @@ measure_frequencies :: proc(
 	defer delete(results)
 	jobs := make([]Freq_Task, len(selected))
 	defer delete(jobs)
+	labels := make([]map[string]int, len(selected))
+	defer {
+		for &m in labels {
+			delete(m)
+		}
+		delete(labels)
+	}
 	for s, i in selected {
+		labels[i] = make(map[string]int)
 		jobs[i] = Freq_Task {
 			mode.trials,
 			scenario_seed(seed, i),
@@ -616,6 +629,7 @@ measure_frequencies :: proc(
 			ss,
 			opts.dd_filters[s.name], // nil unless the scenario has a double-dummy filter
 			&results[i],
+			&labels[i],
 		}
 	}
 
@@ -680,9 +694,34 @@ measure_frequencies :: proc(
 			mode.trials,
 			100.0 * f64(results[i]) / f64(mode.trials),
 		)
+		write_alternative_counts(&builder, labels[i], mode.trials)
 	}
 
 	return write_output(opts.output, strings.to_string(builder))
+}
+
+// Under a scenario's line, the deals kept ONLY through one of its alternatives, one line each, most first: how
+// much each widens the scenario. Nothing for a scenario with none (every kept deal is labelled "").
+@(private = "file")
+write_alternative_counts :: proc(builder: ^strings.Builder, labels: map[string]int, trials: int) {
+	Count :: struct {
+		name:  string,
+		count: int,
+	}
+	counts := make([dynamic]Count, 0, len(labels), context.temp_allocator)
+	width := 0
+	for name, count in labels {
+		if name == "" {
+			continue
+		}
+		append(&counts, Count{name, count})
+		width = max(width, len(name) + 2)
+	}
+	slice.sort_by(counts[:], proc(a, b: Count) -> bool {return a.count > b.count || a.count == b.count && a.name < b.name})
+	for c in counts {
+		quoted := fmt.tprintf("\"%s\"", c.name)
+		fmt.sbprintfln(builder, "    only through %-*s  %d  (%.4f%%)", width, quoted, c.count, 100.0 * f64(c.count) / f64(trials))
+	}
 }
 
 // Attempt budget per scenario in `export_all_html`, so a rare condition under-fills rather than

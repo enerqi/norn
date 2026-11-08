@@ -6,6 +6,7 @@ package cli
 	parse_args is pure, so every branch can be checked directly with no process side effects.
 */
 
+import "core:os"
 import "core:strings"
 import "core:testing"
 
@@ -381,4 +382,37 @@ test_par_captions_the_scenarios_without_their_own :: proc(t: ^testing.T) {
 	opts.par_annotator = par
 	testing.expect(t, annotator_for(opts, "captioned") == own, "--par does not replace a scenario's own")
 	testing.expect(t, annotator_for(opts, "bare") == par, "--par captions the rest")
+}
+
+// `--frequency` splits a scenario's count by WHY each deal was kept: one line under the scenario for each
+// alternative, the deals it alone let in, and none for the core.
+@(test)
+test_frequency_names_what_each_alternative_adds :: proc(t: ^testing.T) {
+	ten_plus :: proc(summary: norn.Deal_Summary, table: norn.Table, userdata: rawptr) -> bool {
+		return norn.hcp(summary[.North]) >= 10
+	}
+	why :: proc(summary: norn.Deal_Summary, table: norn.Table, userdata: rawptr) -> string {
+		return "ten or eleven" if norn.hcp(summary[.North]) < 12 else ""
+	}
+	registry := []Scenario {
+		{name = "twelve", predicate = norn.Interpreted_Predicate{call = ten_plus, explain = why}},
+		{name = "plain", predicate = norn.Interpreted_Predicate{call = ten_plus}},
+	}
+	path := "target/test-frequency-alternatives.txt"
+	opts := Options {
+		output = path,
+		seed   = 3,
+	}
+	ok, message := measure_frequencies(registry, opts, Measure_Frequency{trials = 4000})
+	testing.expectf(t, ok, "measure failed: %s", message)
+	data, read := os.read_entire_file(path, context.temp_allocator)
+	testing.expect(t, read == nil, "the output was written")
+	text := string(data)
+	lines := strings.split_lines(strings.trim_space(text), context.temp_allocator)
+	testing.expectf(t, len(lines) == 3, "a line for each scenario and one for the alternative: %q", text)
+	if len(lines) == 3 {
+		testing.expect(t, strings.has_prefix(lines[0], "twelve"), lines[0])
+		testing.expect(t, strings.has_prefix(lines[1], `    only through "ten or eleven"`), lines[1])
+		testing.expect(t, strings.has_prefix(lines[2], "plain"), lines[2])
+	}
 }

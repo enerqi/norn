@@ -170,7 +170,9 @@ Options:
                               for the offline card carousel, <name>.html
       --frequency N           measure each scenario's acceptance rate over N deals and exit (no deals
                               emitted); all scenarios, or the --scenario subset. The rate counts a
-                              scenario's double-dummy filter too, matching what generation keeps
+                              scenario's double-dummy filter too, matching what generation keeps; a
+                              scenario with named alternatives gets a line for each, the deals it alone
+                              let in
       --fixed-table           handviewer/html formats: fix vulnerability & dealer (default: randomise)
       --dealer N|E|S|W        handviewer/html formats: that seat deals every deal; vulnerability stays random
       --par                   html formats: caption every deal with its double-dummy par and what
