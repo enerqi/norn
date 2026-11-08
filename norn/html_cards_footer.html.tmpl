@@ -955,17 +955,24 @@
 		  // ...and its HOVER by rect too, on the desktop, where that pill under the row never sees the pointer: the
 		  // pill under the pointer gets `hot` (lit like a hovered pill) and the row the hand cursor.
 		  var hotPill = null;
+		  function clearHot() {
+				if (!hotPill) return;
+				hotPill.classList.remove('hot');
+				var was = hotPill.closest('.compass');
+				if (was) was.style.removeProperty('cursor');
+				hotPill = null;
+		  }
+		  // The pointer leaving the track from that pill (off the page, or out of the window) has no move to clear it.
+		  if (DESKTOP) track.addEventListener('mouseout', function (e) {
+				if (!e.relatedTarget || !track.contains(e.relatedTarget)) clearHot();
+		  });
 		  if (DESKTOP) track.addEventListener('mousemove', function (e) {
 				var slideEl = e.target.closest('.slide');
 				var i = slideEl ? slides.indexOf(slideEl) : -1;
 				var pill = null;
 				if (i >= 0 && !seatFor(i) && !e.target.closest('.lbl') && e.target.closest('.compass')) pill = pillAt(slideEl, e.clientX, e.clientY);
 				if (pill === hotPill) return;
-				if (hotPill) {
-					 hotPill.classList.remove('hot');
-					 var was = hotPill.closest('.compass');
-					 if (was) was.style.removeProperty('cursor');
-				}
+				clearHot();
 				hotPill = pill;
 				if (pill) {
 					 pill.classList.add('hot');
@@ -974,7 +981,7 @@
 				}
 		  });
 		  track.addEventListener('click', function (e) {
-				if (hotPill) { hotPill.classList.remove('hot'); var hc = hotPill.closest('.compass'); if (hc) hc.style.removeProperty('cursor'); hotPill = null; }
+				clearHot();
 				var slideEl = e.target.closest('.slide');
 				if (!slideEl) return;
 				var i = slides.indexOf(slideEl);
