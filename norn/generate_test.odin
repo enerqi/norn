@@ -528,3 +528,32 @@ test_the_annotator_gets_the_rendered_table :: proc(t: ^testing.T) {
 	}
 	testing.expect(t, len(tables) > 1, "a random table should vary over 16 deals")
 }
+
+// A CONDITION'S FIXED CARDS are dealt, not waited for: a whole hand fixed to North comes up on every deal, where
+// reject sampling would never meet it. The run's predeal is added to them, and a clash with it deals from the
+// condition's alone.
+@(test)
+test_a_condition_deals_its_fixed_cards :: proc(t: ^testing.T) {
+	ace_of_spades :: proc(summary: Deal_Summary, table: Table, userdata: rawptr) -> bool {
+		return holds(summary[.North], .Spades, .Ace)
+	}
+	own: Predeal
+	predeal_add(&own, .North, make_card(.Spades, .Ace))
+	condition := Interpreted_Predicate{call = ace_of_spades, predeal = own}
+	testing.expect_value(t, count_accepted_seeded(500, condition, 3), 500)
+
+	run: Predeal
+	predeal_add(&run, .South, make_card(.Hearts, .King))
+	pd, has := condition_predeal(condition, run)
+	testing.expect(t, has && pd.counts[.North] == 1 && pd.counts[.South] == 1, "the run's card is added to the condition's")
+
+	clash: Predeal
+	predeal_add(&clash, .East, make_card(.Spades, .Ace))
+	pd, has = condition_predeal(condition, clash)
+	testing.expect(t, has && pd.counts[.North] == 1 && pd.counts[.East] == 0, "a clash deals from the condition's cards alone")
+
+	_, has = condition_predeal(Condition(north_18plus), nil)
+	testing.expect(t, !has, "no predeal anywhere, none dealt")
+	pd, has = condition_predeal(Condition(north_18plus), run)
+	testing.expect(t, has && pd.counts[.South] == 1, "a compiled condition keeps the run's")
+}

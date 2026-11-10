@@ -55,6 +55,9 @@ Interpreted_Predicate :: struct {
 	table:   Maybe(Table_Draw),
 	// Set when the condition can say WHY it kept a deal. See `Contextual_Explain`.
 	explain: Contextual_Explain,
+	// CARDS THE CONDITION FIXES to seats (a scenario's `north holds: AKQ32.K2..`): dealt by construction rather than
+	// waited for, which a whole fixed hand needs - reject sampling would never meet it. See `condition_predeal`.
+	predeal: Maybe(Predeal),
 }
 
 /*
@@ -122,6 +125,48 @@ condition_table :: proc(condition: Condition) -> (draw: Table_Draw, reads: bool)
 		return v.table.?
 	}
 	return {}, false
+}
+
+/*
+WHAT A RUN DEALS FROM: the run's predeal (`--predeal`) with the condition's own fixed cards added. A condition
+that fixes cards still TESTS them as well (its `call` must), so whatever this returns, a deal without them is
+never kept: the predeal is how they are dealt fast, never what makes them hold. That is why a clash is settled
+simply - a card the run puts in another seat, or a seat given more than 13 - by dealing from the condition's
+cards alone; the run's then hold only by chance, as any condition the run cannot meet. With smartstack, which
+lays out a seat itself, nothing is predealt and the condition's test does the work.
+*/
+condition_predeal :: proc(condition: Condition, run: Maybe(Predeal)) -> (pd: Predeal, has: bool) {
+	own, fixes := Predeal{}, false
+	if v, ok := condition.(Interpreted_Predicate); ok {
+		own, fixes = v.predeal.?
+	}
+	if !fixes {
+		return run.?
+	}
+	merged, has_run := run.?
+	if !has_run {
+		return own, true
+	}
+	for seat in Seat {
+		for k in 0 ..< own.counts[seat] {
+			card := own.cards[seat][k]
+			already := false
+			for other in Seat {
+				for j in 0 ..< merged.counts[other] {
+					if merged.cards[other][j] == card {
+						already = true
+						if other != seat {
+							return own, true
+						}
+					}
+				}
+			}
+			if !already && !predeal_add(&merged, seat, card) {
+				return own, true
+			}
+		}
+	}
+	return merged, true
 }
 
 // The table a condition that reads one is checked at (`draw_condition_table`, in `render.odin` beside the other
@@ -280,7 +325,7 @@ generate_accepted :: proc(
 	accepted: int,
 	attempts: int,
 ) {
-	pd, has_predeal := predeal.?
+	pd, has_predeal := condition_predeal(accept, predeal)
 	draw, reads_table := condition_table(accept)
 	// Page-oriented formats (Html) wrap the run in a header/footer; per-deal formats emit nothing
 	// here. The prologue/epilogue bracket the whole accepted set, not each deal.
@@ -344,7 +389,7 @@ collect_accepted :: proc(
 	accepted: int,
 	attempts: int,
 ) {
-	pd, has_predeal := predeal.?
+	pd, has_predeal := condition_predeal(accept, predeal)
 	draw, reads_table := condition_table(accept)
 	for accepted < count {
 		if max_attempts > 0 && attempts >= max_attempts {
@@ -394,7 +439,7 @@ collect_filtered :: proc(
 	accepted: int,
 	attempts: int,
 ) {
-	pd, has_predeal := predeal.?
+	pd, has_predeal := condition_predeal(accept, predeal)
 	draw, reads_table := condition_table(accept)
 	round := make([dynamic]Deal, 0, FILTER_BATCH)
 	defer delete(round)
@@ -482,7 +527,7 @@ count_accepted :: proc(
 ) -> (
 	accepted: int,
 ) {
-	pd, has_predeal := predeal.?
+	pd, has_predeal := condition_predeal(accept, predeal)
 	draw, reads_table := condition_table(accept)
 	for _ in 0 ..< trials {
 		deal := next_deal(pd, has_predeal, smartstack)
