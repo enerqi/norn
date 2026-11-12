@@ -19,7 +19,7 @@
 				<span class="cca-lead" id="nc-cca-lead" hidden title="Condition the simulated make-% on the opening lead (a defender holding that exact card)">
 					 <span class="lbl-txt">lead</span><select id="nc-cca-lead-sel"><option value="">none</option></select>
 				</span>
-				<button class="x" id="nc-cca-opp-btn" hidden title="Enter a known opponent length to re-weight the odds (vacant space / a-posteriori)">length &#9656;</button>
+				<button class="x" id="nc-cca-opp-btn" hidden title="Tell it a defender's known length in a suit (from the bidding or the play) and the odds are worked out again">length &#9656;</button>
 				<button class="x" id="nc-cca-rows" title="Collapse the per-suit rows (show only the totals) to save height">suits &#9662;</button>
 				<button class="x" id="nc-cca-narrow" title="Narrow the panel (keeps the hands visible on small screens; the trick table scrolls sideways)">narrow</button>
 				<button class="help" id="nc-cca-help" title="What is this?">?</button>
@@ -185,6 +185,43 @@
 				<p>The double-dummy <b>par</b> caption on the board is the honest whole-deal number &mdash; it
 					plays all four suits together <i>with</i> entries and tempo, so when combo and par disagree,
 					trust par. Combo's job is the per-suit "what's available", not the race.</p>
+		  </div>
+	 </div>
+	 <!-- The toolbar's ?: how to use the page itself, for a reader who has never seen one. The CCA panel keeps its
+	      own ? for its table. -->
+	 <div class="cca-help" id="nc-page-help-modal" hidden>
+		  <div class="cca-help-card">
+				<button class="x" id="nc-page-help-close" title="Close (Esc)">&#10005;</button>
+				<h2>How to use this page</h2>
+				<p>Each card on the table is one <b>board</b>: four hands around a compass, the dealer and vulnerability
+					marked, and the auction when it has one. Step through them with <b>&#9664; &#9654;</b>, the arrow
+					keys, or the mouse wheel.</p>
+				<h3>The toolbar</h3>
+				<p><b>seats</b> &mdash; <b>All</b> shows every hand; <b>N</b>, <b>E</b>, <b>S</b> or <b>W</b> shows
+					only that seat's, the others face down, to work out the bidding or the play from there (keys
+					<b>a n e s w</b>). <b>Reveal all</b>, in the middle of the table, turns the rest face up. <b>cards</b> &mdash; the card size (keys
+					<b>m l x</b>). <b>Reset</b> puts every board back to the seat chosen.</p>
+				<p><b>Par</b> shows or hides the lines under each board. <b>CCA</b> opens the Card Combination
+					Analyser, which works out the odds of each suit for one side; its own <b>?</b> explains its table.
+					<b>BBO link</b> copies this one board as a BBO hand-viewer link. <b>Share</b> copies a link that
+					rebuilds every board of the page in anyone's browser (nothing is uploaded: the deals are in the link
+					itself), and <b>QR</b> shows it as a code for a phone. <b>Table</b>, on a page of played boards,
+					lists them all judged against double dummy.</p>
+				<h3>Under a board</h3>
+				<p><b>Par</b> is the contract and score both sides would reach bidding perfectly with every card in
+					view &mdash; each side going as high as is worth it and no higher. <i>Double dummy</i> means every
+					card visible and best play by everyone, so par is what the cards can do, not what players at the
+					table usually do. "Par: NS 420 [4&spades; NS]" is North-South scoring 420 in four spades; the list
+					after <i>make</i> is every contract each side can make.</p>
+				<p>The per-suit lines (when the page has them) say how to play each suit with no clue to where the
+					missing cards are. A small coloured tag on the board names the alternative of the scenario that let
+					this deal in, when it was not the main one.</p>
+				<h3>A played board</h3>
+				<p>A board with its play recorded has a bar of tricks under it: step card by card or trick by trick
+					(the buttons, or <b>ctrl+arrows</b>). A card that gave a trick away, double dummy, is marked, and
+					<b>!</b> jumps to the next one; on a page opened from a link, <b>What did each card cost?</b> works
+					that out first. Where the record
+					stops early (a claim), the rest is played out double dummy and drawn as such.</p>
 		  </div>
 	 </div>
 	 <div class="cca-tip" id="nc-cca-tip" hidden></div>
@@ -2589,6 +2626,15 @@
 		  if (helpBtn) helpBtn.onclick = function () { setHidden(helpModal, false); };
 		  if (helpClose) helpClose.onclick = function () { setHidden(helpModal, true); };
 		  if (helpModal) helpModal.onclick = function (e) { if (e.target === helpModal) setHidden(helpModal, true); };
+		  // The toolbar's ?: the page's own help, closed the same three ways (its x, a click outside the card, Escape).
+		  var pageHelp = document.getElementById('nc-page-help-modal');
+		  var pageHelpBtn = document.getElementById('nc-page-help'), pageHelpClose = document.getElementById('nc-page-help-close');
+		  if (pageHelpBtn && pageHelp) pageHelpBtn.onclick = function () { setHidden(pageHelp, false); };
+		  if (pageHelpClose) pageHelpClose.onclick = function () { setHidden(pageHelp, true); };
+		  if (pageHelp) pageHelp.onclick = function (e) { if (e.target === pageHelp) setHidden(pageHelp, true); };
+		  document.addEventListener('keydown', function (e) {
+				if ((e.key === 'Escape' || e.code === 'Escape') && pageHelp && !isHidden(pageHelp)) setHidden(pageHelp, true);
+		  });
 		  // Hover tooltip: the detailed play narration for a suit's recommended line (delegation, since the
 		  // table is rebuilt on every nav / toggle).
 		  var tipEl = document.getElementById('nc-cca-tip');
