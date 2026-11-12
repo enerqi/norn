@@ -51,6 +51,10 @@ Board :: struct {
 	// The dealer and the vulnerability the record gives: LIN's `md|` dealer digit and `sv|`, PBN's `[Dealer]` and
 	// `[Vulnerable]`. A record that names neither leaves no dealer and nobody vulnerable.
 	conditions:   Table,
+	// The auction as the record writes it, with its alerts and explanations (LIN `mb|` / `an|`, PBN `[Auction]` and
+	// its `[Note]`s), nil when it has none; and the commentary placed in it (LIN `nt|`, PBN `{...}`). auction.odin.
+	auction:      Maybe(Auction),
+	commentary:   Commentary,
 }
 
 // An opening lead: the card led and the seat that led it. One value rather than two loose fields because
@@ -196,6 +200,13 @@ parse_pbn_deal :: proc(text: string) -> (board: Board, err: Pbn_Parse_Error) {
 				declarer = declarer,
 				doubling = doubling,
 			}
+		}
+	}
+	board.auction, board.commentary = pbn_auction(text)
+	// No `[Contract]` tag, but an auction: the contract is the one it reaches.
+	if auction, has := board.auction.?; has && !auction.cut && board.contract == nil {
+		if contract, ok := auction_contract(auction); ok {
+			board.contract = contract
 		}
 	}
 	if contract, has := board.contract.?; has && board.known == {.North, .East, .South, .West} {

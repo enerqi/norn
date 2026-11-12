@@ -10,7 +10,8 @@ import "core:strings"
 	vulnerability (`sv|`), the auction (`mb|`) and the played cards (`pc|`). This reader turns the `md|`
 	deal into the same `Board` that `parse_pbn_deal` yields, so a hand pasted from one of those sites can
 	be fed into norn/odin-sims exactly like a PBN `[Deal]` tag, and reads the auction (-> `contract`) and
-	the play (-> `play`, see play.odin) when the record carries them. Names and `sv|` are not read here;
+	the play (-> `play`, see play.odin) when the record carries them, and the auction as written with its
+	alerts and explanations plus the `nt|` commentary (-> `auction`, `commentary`, see auction.odin);
 	a multi-board vugraph file is split by `split_lin_boards` first.
 
 	The `md|` value looks like:
@@ -121,6 +122,7 @@ parse_lin_deal :: proc(text: string) -> (board: Board, err: Lin_Parse_Error) {
 			board.contract = contract
 			board.play = lin_play(text, board.deal, contract)
 		}
+		board.auction, board.commentary = lin_auction(text, dealer)
 	}
 	return board, .None
 }
@@ -168,25 +170,15 @@ lin_dealer_seat :: proc "contextless" (d: u8) -> (seat: Seat, ok: bool) {
 // Collect the auction's call tokens in order — the value of each `mb|` token (a bid `1S`, a pass `p`, a
 // double `d`, a redouble `r`) left to right. The returned strings alias into `text`; the backing dynamic
 // array is the caller's to free (pass `context.temp_allocator` to avoid that). Empty when there is no
-// auction in the record.
+// auction in the record. Read token by token, so a comment's text (`nt|Tomb|`) is never taken for a call.
 @(private = "file")
 lin_auction_calls :: proc(text: string, allocator := context.allocator) -> [dynamic]string {
 	calls := make([dynamic]string, allocator)
-	rest := text
-	for {
-		mi := strings.index(rest, "mb|")
-		if mi < 0 {
-			break
+	pos := 0
+	for tok in lin_next_token(text, &pos) {
+		if tok.key == "mb" {
+			append(&calls, tok.value)
 		}
-		rest = rest[mi + len("mb|"):]
-		val := rest
-		if bar := strings.index_byte(rest, '|'); bar >= 0 {
-			val = rest[:bar]
-			rest = rest[bar + 1:]
-		} else {
-			rest = ""
-		}
-		append(&calls, val)
 	}
 	return calls
 }
@@ -196,26 +188,13 @@ lin_auction_calls :: proc(text: string, allocator := context.allocator) -> [dyna
 // characters (ten is `T`, never `10`), so the value is exactly two bytes.
 @(private = "file")
 lin_first_pc_card :: proc(text: string) -> (card: Card, ok: bool) {
-	pi := strings.index(text, "pc|")
-	if pi < 0 {
-		return {}, false
+	pos := 0
+	for tok in lin_next_token(text, &pos) {
+		if tok.key == "pc" {
+			return lin_card(tok.value)
+		}
 	}
-	val := text[pi + len("pc|"):]
-	if bar := strings.index_byte(val, '|'); bar >= 0 {
-		val = val[:bar]
-	}
-	if len(val) < 2 {
-		return {}, false
-	}
-	suit, sok := suit_from_letter(val[0])
-	if !sok {
-		return {}, false
-	}
-	rank, rok := rank_from_char(val[1])
-	if !rok {
-		return {}, false
-	}
-	return make_card(suit, rank), true
+	return {}, false
 }
 
 // Extract the `md` value from `text`: the token after `md|`, up to the next `|` (or end of input). If
