@@ -665,7 +665,7 @@
 					 (!d.dd && typeof window.ncRequestPlay === 'function' ? '<div class="pcalc"><button data-p="calc" ' +
 						  'title="Solves every position of this play double dummy, in this browser: a second or so on a desktop, ' +
 						  'a few on a phone">What did each card cost? (slow)</button></div>' : '') +
-					 '<div class="pnote"></div>';
+					 '<div class="pnote"></div><div class="pcmt"></div>';
 				var compass = s.querySelector('.compass');
 				s.insertBefore(bar, compass ? compass.nextSibling : null);
 				bar.addEventListener('click', function (e) {
@@ -769,10 +769,94 @@
 					 note = '<i>Played out double dummy</i> after the record' + (st === n ? ': ' + decSide + ' ' + dec + ' &ndash; ' + defSide + ' ' + (done - dec) : '');
 				}
 				P.bar.querySelector('.pnote').innerHTML = note;
+				var said = s._notes ? s._notes.comments.filter(function (c) { return c.p > 0 && c.p === st; }) : [];
+				P.bar.querySelector('.pcmt').innerHTML = said.map(function (c) { return noteHTML(c.t); }).join(' ');
 				var bs = P.bar.querySelectorAll('.ptricks button');
 				for (var b = 0; b < bs.length; b++) bs[b].classList.toggle('cur', b === t);
 		  }
 		  slides.forEach(initPlay); // drawn by applyAll() at the end of the script, with the seats
+
+		  // --- The auction and the commentary ----------------------------------------------------------
+		  // A board whose record carried them (an analysed LIN or PBN: its calls with their alerts, a vugraph
+		  // commentator's `nt|` lines, a PBN's `{...}`) has a hidden `.board-notes`: `d` the dealer, `calls` each
+		  // call (`c` as written - P X XX 1S 3N -, `a` alerted, `x` the explanation), `comments` each comment (`t`
+		  // its text, `k` the calls made before it, `p` the cards played before it). The panel under the board draws
+		  // the bidding diagram, the alerts by number, and the prose: before the auction, after a call, after it. A
+		  // comment in the play shows on the play bar when it reaches its card; with no play bar, in the panel under
+		  // its trick. Text: a blank line is a paragraph, `!s` / `\S` (either case, any suit) a suit symbol. Every
+		  // call carries `data-call` and every comment `data-cmt` (its index), which the workbench's editing reads.
+		  function noteHTML(t) {
+				var h = String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+				h = h.replace(/[!\\]([shdcSHDC])/g, function (m, su) {
+					 su = su.toUpperCase();
+					 return '<span class="ssym ' + su.toLowerCase() + '">' + SUIT_SYM[su] + '</span>';
+				});
+				return h.split(/\n\s*\n/).join('</p><p>').replace(/\n/g, '<br>');
+		  }
+		  function callHTML(c) {
+				if (c === 'P') return 'Pass';
+				if (c === 'X' || c === 'XX') return '<span class="bad">' + c + '</span>';
+				return c.slice(1) === 'N' ? c.charAt(0) + 'NT' : conHTML(c);
+		  }
+		  var notesOpen = true; // one choice for every board: a reader who folds the notes wants them folded
+		  function initNotes(s, i) {
+				var el = s.querySelector('.board-notes');
+				var N = el ? parseAttr(el, 'data-notes') : null;
+				if (!N) return;
+				N.calls = N.calls || [];
+				N.comments = N.comments || [];
+				s._notes = N;
+				var html = '', notes = [];
+				var prose = function (k) {
+					 var out = '';
+					 N.comments.forEach(function (c, j) {
+						  if (c.k !== k || (c.p > 0 && s._play)) return;
+						  var when = '';
+						  if (c.p > 0) when = '<span class="when">Trick ' + Math.ceil(c.p / 4) + ':</span> ';
+						  else if (k > 0 && k < N.calls.length) when = '<span class="when">After ' + callHTML(N.calls[k - 1].c) + ':</span> ';
+						  out += '<p data-cmt="' + j + '">' + when + noteHTML(c.t) + '</p>';
+					 });
+					 return out;
+				};
+				html += prose(0);
+				if (N.calls.length) {
+					 var COLS = 'WNES', at = COLS.indexOf(N.d || 'N');
+					 html += '<table class="bid"><tr><th>West</th><th>North</th><th>East</th><th>South</th></tr><tr>';
+					 for (var e = 0; e < at; e++) html += '<td></td>';
+					 N.calls.forEach(function (c, j) {
+						  if (at === 4) { html += '</tr><tr>'; at = 0; }
+						  var mark = '';
+						  if (c.x) { notes.push(j); mark = '<sup>' + notes.length + '</sup>'; }
+						  else if (c.a) mark = '<sup>!</sup>';
+						  html += '<td data-call="' + j + '"' + (c.x ? ' title="' + String(c.x).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;') + '"' : '') + '>' +
+								callHTML(c.c) + mark + '</td>';
+						  at++;
+					 });
+					 html += '</tr></table>';
+					 if (notes.length) {
+						  html += '<div class="alerts">' + notes.map(function (j, n) {
+								return '<sup>' + (n + 1) + '</sup> ' + callHTML(N.calls[j].c) + ': ' + noteHTML(N.calls[j].x);
+						  }).join(' &middot; ') + '</div>';
+					 }
+					 for (var k = 1; k < N.calls.length; k++) html += prose(k);
+				}
+				html += prose(N.calls.length);
+				var panel = document.createElement('div');
+				panel.className = 'notes' + (notesOpen ? '' : ' closed');
+				panel.innerHTML = '<div class="nhead">' + (N.calls.length ? 'Auction' : '') +
+					 (N.calls.length && N.comments.length ? ' &amp; ' : '') + (N.comments.length ? 'notes' : '') + '</div>' +
+					 '<div class="nbody">' + html + '</div>';
+				panel.querySelector('.nhead').addEventListener('click', function () {
+					 notesOpen = !notesOpen;
+					 slides.forEach(function (t) {
+						  var p = t.querySelector('.notes');
+						  if (p) p.classList.toggle('closed', !notesOpen);
+					 });
+				});
+				var after = s._play ? s._play.bar : s.querySelector('.compass');
+				s.insertBefore(panel, after ? after.nextSibling : null);
+		  }
+		  slides.forEach(initNotes);
 		  // A board's play WITH its costs, from the player (`html` is the `.play` element): it replaces the one the
 		  // page has, and the bar is built again at the card it was showing.
 		  window.ncAddPlay = function (i, html) {
